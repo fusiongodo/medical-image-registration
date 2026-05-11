@@ -7,6 +7,11 @@ from exact_sync.v1.api_client import ApiClient
 from exact_sync.v1.api.image_registration_api import ImageRegistrationApi
 from exact_sync.v1.api.images_api import ImagesApi
 
+
+"""
+Download registered image pairs with annotations.
+"""
+
 configuration = Configuration()
 configuration.username = 'alha7503'
 configuration.password = os.getenv("EXACT_PASSWORD") or getpass.getpass("EXACT password: ")
