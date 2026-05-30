@@ -4,3 +4,5 @@
 data/exact/
 *.DS_Store
 *.pyc
+
+.idea/
