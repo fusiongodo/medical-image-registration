@@ -21,9 +21,9 @@ client = ApiClient(configuration)
 image_registration_api = ImageRegistrationApi(client)
 images_api = ImagesApi(client)
 
-DATASET_DIR = Path("dataset/images")
+DATASET_DIR = Path("data/images")
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
-LABEL_FILE = Path("dataset/labels.json")
+LABEL_FILE = Path("data/labels.json")
 
 MAX_DATA_BYTES = 50 * 1024 * 1024 * 1024
 current_data_bytes = 0
