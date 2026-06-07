@@ -1,9 +1,10 @@
 """
 Shared tile loading and rendering utilities.
 
-load_tile_gray(job, page_cache) -> np.ndarray (CNN_H, CNN_W) float32
+is_background_tile(job) -> bool
+load_tile_gray(job, page_cache, side) -> np.ndarray (CNN_H, CNN_W) float32
 render_tile_with_keypoints(ax, img, pts_xy, title, ...) -> None
-render_tile_grid(jobs, page_cache, ncols, kp_color, kp_size) -> None
+render_tile_grid(jobs, page_cache, ncols, kp_color, kp_size, min_thresh, show_moving, exclude_background) -> None
 """
 
 import math
@@ -14,19 +15,57 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 
-def load_tile_gray(job: dict, page_cache: dict | None = None) -> np.ndarray:
+def _load_page_crop_gray(
+    path: str,
+    pyramid_page_idx: int,
+    grid: int,
+    x_idx: int,
+    y_idx: int,
+    cnn_input_height: int,
+    cnn_input_width: int,
+    page_cache: dict,
+) -> np.ndarray:
+    key = (str(path), pyramid_page_idx)
+    if key not in page_cache:
+        with tifffile.TiffFile(path) as slide:
+            page_cache[key] = slide.pages[pyramid_page_idx].asarray()
+
+    page = page_cache[key]
+    H, W = page.shape[:2]
+    tile_w = W // grid
+    tile_h = H // grid
+    x0, y0 = x_idx * tile_w, y_idx * tile_h
+    x1 = W if x_idx == grid - 1 else x0 + tile_w
+    y1 = H if y_idx == grid - 1 else y0 + tile_h
+    crop = page[y0:y1, x0:x1]
+
+    pil = Image.fromarray(crop.astype(np.uint8) if crop.dtype != np.uint8 else crop).convert("L")
+    pil = pil.resize((cnn_input_width, cnn_input_height), resample=Image.BILINEAR)
+    return np.array(pil, dtype=np.float32) / 255.0
+
+
+def is_background_tile(job: dict) -> bool:
+    """Return the precomputed binary_mask_excluded flag from the job dict."""
+    return bool(job.get("binary_mask_excluded", False))
+
+
+def load_tile_gray(
+    job: dict,
+    page_cache: dict | None = None,
+    side: str = "fixed",
+) -> np.ndarray:
     """
-    Load the fixed tile referenced by a keypoint-annotation job dict.
+    Load a tile from a keypoint-annotation job dict.
 
     Parameters
     ----------
     job : dict
         Entry from {OS}_he_keypoint_annotations_superpoint.json.
-        Required keys: fixed_path, pyramid_page_idx, grid, x_idx, y_idx,
-                       cnn_input_height, cnn_input_width.
     page_cache : dict | None
-        Optional dict keyed by (fixed_path, pyramid_page_idx) to avoid
-        re-reading the same TIFF page across multiple calls.
+        Optional dict keyed by (path, pyramid_page_idx) to avoid
+        re-reading the same TIFF page across calls.
+    side : str
+        "fixed" or "moving" — which image of the pair to load.
 
     Returns
     -------
@@ -36,26 +75,17 @@ def load_tile_gray(job: dict, page_cache: dict | None = None) -> np.ndarray:
     if page_cache is None:
         page_cache = {}
 
-    key = (job["fixed_path"], int(job["pyramid_page_idx"]))
-    if key not in page_cache:
-        with tifffile.TiffFile(job["fixed_path"]) as slide:
-            page_cache[key] = slide.pages[int(job["pyramid_page_idx"])].asarray()
-
-    page = page_cache[key]
-    H, W = page.shape[:2]
-
-    grid = job["grid"]
-    x_idx, y_idx = job["x_idx"], job["y_idx"]
-    tile_w = W // grid
-    tile_h = H // grid
-    x0, y0 = x_idx * tile_w, y_idx * tile_h
-    x1 = W if x_idx == grid - 1 else x0 + tile_w
-    y1 = H if y_idx == grid - 1 else y0 + tile_h
-    crop = page[y0:y1, x0:x1]
-
-    pil = Image.fromarray(crop.astype(np.uint8) if crop.dtype != np.uint8 else crop).convert("L")
-    pil = pil.resize((job["cnn_input_width"], job["cnn_input_height"]), resample=Image.BILINEAR)
-    return np.array(pil, dtype=np.float32) / 255.0
+    path = job["fixed_path"] if side == "fixed" else job["moving_path"]
+    return _load_page_crop_gray(
+        path,
+        int(job["pyramid_page_idx"]),
+        job["grid"],
+        job["x_idx"],
+        job["y_idx"],
+        job["cnn_input_height"],
+        job["cnn_input_width"],
+        page_cache,
+    )
 
 
 def render_tile_with_keypoints(
@@ -99,10 +129,12 @@ def render_tile_with_keypoints(
 def render_tile_grid(
     jobs: list[dict],
     page_cache: dict | None = None,
-    ncols: int = 5,
+    ncols: int = 2,
     kp_color: str = "lime",
     kp_size: int = 8,
     min_thresh: float | None = None,
+    show_moving: bool = False,
+    exclude_background: bool | None = None,
 ) -> None:
     """
     Render a grid of tiles with their stored fixed_keypoints_cnn overlaid.
@@ -119,9 +151,25 @@ def render_tile_grid(
     kp_size : int
     min_thresh : float | None
         When set, only jobs whose conf_thresh >= min_thresh are rendered.
+    exclude_background : bool | None
+        None  — show all tiles (default).
+        True  — show only tissue tiles (binary_mask_excluded == False).
+        False — show only background tiles (binary_mask_excluded == True).
+    show_moving : bool
+        When True, renders the moving tile in the row directly below each
+        fixed-tile row.  Layout for ncols=4, n=7:
+            Row 0 (fixed):  job0 job1 job2 job3 job4
+            Row 1 (moving): job0 job1 job2 job3 job4
+            Row 2 (fixed):  job5 job6  —    —    —
+            Row 3 (moving): job5 job6  —    —    —
     """
     if min_thresh is not None:
         jobs = [j for j in jobs if j.get("conf_thresh", 0.0) >= min_thresh]
+
+    if exclude_background is True:
+        jobs = [j for j in jobs if not is_background_tile(j)]
+    elif exclude_background is False:
+        jobs = [j for j in jobs if is_background_tile(j)]
 
     n = len(jobs)
     if n == 0:
@@ -130,26 +178,48 @@ def render_tile_grid(
     if page_cache is None:
         page_cache = {}
 
-    nrows = math.ceil(n / ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3, nrows * 3))
+    rows_per_group = 2 if show_moving else 1
+    n_groups = math.ceil(n / ncols)
+    total_rows = n_groups * rows_per_group
+
+    fig, axes = plt.subplots(total_rows, ncols, figsize=(ncols * 3, total_rows * 3))
     axes = np.array(axes).reshape(-1)
 
+    used = set()
     for i, job in enumerate(jobs):
-        img = load_tile_gray(job, page_cache)
+        group = i // ncols
+        col = i % ncols
+        fixed_ax_idx = group * rows_per_group * ncols + col
+
         pts_xy = job.get("fixed_keypoints_cnn")
         n_kp = len(pts_xy) if pts_xy else 0
-        title = (
-            f"depth={job['crop_depth']} "
-            f"count={n_kp} "
-            f"thresh={job['conf_thresh']:.3f}"
-        )
+        thresh = job.get("conf_thresh")
+        thresh_str = f"  thresh={thresh:.3f}" if thresh is not None else ""
+        fixed_title = f"f: pair_id={job['pair_id']} depth={job['crop_depth']} x_idx={job['x_idx']} y_idx={job['y_idx']}"
+        #fixed_title = f"fixed  depth={job['crop_depth']}  {n_kp} kp{thresh_str}  pair_id={job['pair_id']} x_idx={job['x_idx']} y_idx={job['y_idx']}"
+
         render_tile_with_keypoints(
-            axes[i], img, pts_xy, title,
+            axes[fixed_ax_idx],
+            load_tile_gray(job, page_cache, side="fixed"),
+            pts_xy, fixed_title,
             kp_color=kp_color, kp_size=kp_size,
         )
+        used.add(fixed_ax_idx)
 
-    for ax in axes[n:]:
-        ax.axis("off")
+        if show_moving:
+            moving_ax_idx = (group * rows_per_group + 1) * ncols + col
+            render_tile_with_keypoints(
+                axes[moving_ax_idx],
+                load_tile_gray(job, page_cache, side="moving"),
+                None,
+                f"m: depth={job['crop_depth']} pair_id={job['pair_id']} x_idx={job['x_idx']} y_idx={job['y_idx']}",
+                kp_color=kp_color, kp_size=kp_size,
+            )
+            used.add(moving_ax_idx)
+
+    for idx, ax in enumerate(axes):
+        if idx not in used:
+            ax.axis("off")
 
     plt.tight_layout()
     plt.show()
