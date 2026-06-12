@@ -6,3 +6,6 @@ data/exact/
 *.pyc
 
 .idea/
+
+introducing_superpoint/runs/
+remote/logs/
