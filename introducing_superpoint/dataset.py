@@ -55,6 +55,7 @@ class StainPairKeypointDataset(Dataset):
         return len(self.tile_jobs)
 
     def _load_page_array(self, path, pyramid_page_idx):
+        path = conf.resolve(path)
         key = (str(path), int(pyramid_page_idx))
         if key not in self._page_cache:
             with tifffile.TiffFile(path) as slide:
@@ -82,7 +83,7 @@ class StainPairKeypointDataset(Dataset):
         return TF.to_tensor(image)
 
     def _load_side(self, job, side):
-        path = job["fixed_path"] if side == "fixed" else job["moving_path"]
+        path = conf.job_image_path(job, side)
         page = self._load_page_array(path, job["pyramid_page_idx"])
         tile = self._crop_tile(page, job["x_idx"], job["y_idx"], job["grid"])
         return self._tile_to_tensor(tile)

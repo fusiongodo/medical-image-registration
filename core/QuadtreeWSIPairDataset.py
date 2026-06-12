@@ -37,6 +37,7 @@ class QuadtreeWSIPairDataset(Dataset):
         return len(self.tile_jobs)
 
     def _load_page_array(self, path, pyramid_page_idx):
+        path = conf.resolve(path)
         key = (str(path), int(pyramid_page_idx))
 
         if key not in self._page_cache:
@@ -88,12 +89,12 @@ class QuadtreeWSIPairDataset(Dataset):
         job = self.tile_jobs[idx]
 
         fixed_page = self._load_page_array(
-            path=job["fixed_path"],
+            path=conf.job_image_path(job, "fixed"),
             pyramid_page_idx=job["pyramid_page_idx"],
         )
 
         moving_page = self._load_page_array(
-            path=job["moving_path"],
+            path=conf.job_image_path(job, "moving"),
             pyramid_page_idx=job["pyramid_page_idx"],
         )
 

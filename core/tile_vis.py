@@ -8,11 +8,16 @@ render_tile_grid(jobs, page_cache, ncols, kp_color, kp_size, min_thresh, show_mo
 """
 
 import math
+import sys
+from pathlib import Path
 
 import tifffile
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+import conf
 
 
 def _load_page_crop_gray(
@@ -25,6 +30,7 @@ def _load_page_crop_gray(
     cnn_input_width: int,
     page_cache: dict,
 ) -> np.ndarray:
+    path = conf.resolve(path)
     key = (str(path), pyramid_page_idx)
     if key not in page_cache:
         with tifffile.TiffFile(path) as slide:
@@ -75,9 +81,9 @@ def load_tile_gray(
     if page_cache is None:
         page_cache = {}
 
-    path = job["fixed_path"] if side == "fixed" else job["moving_path"]
+    path = conf.job_image_path(job, side)
     return _load_page_crop_gray(
-        path,
+        str(conf.to_relative(path)),
         int(job["pyramid_page_idx"]),
         job["grid"],
         job["x_idx"],

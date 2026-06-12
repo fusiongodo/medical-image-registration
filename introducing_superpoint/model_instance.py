@@ -20,8 +20,8 @@ importlib.reload(conf)
 from superpoint_pytorch import default_config
 
 
-DEFAULT_RUN_DIR = Path(__file__).resolve().parent / "runs"
-DEFAULT_WEIGHTS = Path(__file__).resolve().parent / "superpoint_v6_from_tf.pth"
+DEFAULT_RUN_DIR = conf.resolve("introducing_superpoint/runs")
+DEFAULT_WEIGHTS = conf.resolve("introducing_superpoint/superpoint_v6_from_tf.pth")
 
 
 def checkpoint_timestamp(when=None) -> str:
@@ -114,7 +114,7 @@ class ModelInstance:
             "name": self.name,
             "parent": self.parent,
             "config": _config_to_dict(self.config),
-            "pth_path": str(self.pth_path),
+            "pth_path": conf.to_relative(self.pth_path),
             "resume_epoch": self.resume_epoch,
             "resume_sample_idx": self.resume_sample_idx,
             "epoch_logs": [asdict(entry) for entry in self.epoch_logs],
@@ -143,8 +143,8 @@ class ModelInstance:
             num_workers=config_dict.get("num_workers", 0),
             max_batches_per_epoch=config_dict.get("max_batches_per_epoch"),
             kpi_every_instances=config_dict.get("kpi_every_instances", 720),
-            weights_init=Path(config_dict.get("weights_init", str(DEFAULT_WEIGHTS))),
-            run_dir=Path(config_dict.get("run_dir", str(DEFAULT_RUN_DIR))),
+            weights_init=conf.resolve(config_dict.get("weights_init", conf.to_relative(DEFAULT_WEIGHTS))),
+            run_dir=conf.resolve(config_dict.get("run_dir", conf.to_relative(DEFAULT_RUN_DIR))),
         )
         epoch_logs = []
         for entry in payload.get("epoch_logs", []):
@@ -167,7 +167,7 @@ class ModelInstance:
             resume_sample_idx = 0
         last_pth_path = None
         if payload.get("pth_path"):
-            last_pth_path = Path(payload["pth_path"])
+            last_pth_path = conf.resolve(payload["pth_path"])
 
         return cls(
             name=payload["name"],
@@ -213,6 +213,6 @@ def should_resume_training(instance: ModelInstance) -> bool:
 
 def _config_to_dict(config: TrainingConfig) -> dict:
     data = asdict(config)
-    data["weights_init"] = str(config.weights_init)
-    data["run_dir"] = str(config.run_dir)
+    data["weights_init"] = conf.to_relative(Path(config.weights_init))
+    data["run_dir"] = conf.to_relative(Path(config.run_dir))
     return data

@@ -25,7 +25,7 @@ from model_instance import (
 from dataset import StainPairKeypointDataset, make_loader
 import utils
 
-DEFAULT_WEIGHTS = Path(__file__).resolve().parent / "superpoint_v6_from_tf.pth"
+DEFAULT_WEIGHTS = conf.resolve("introducing_superpoint/superpoint_v6_from_tf.pth")
 PROGRESS_EVERY_BATCHES = 10
 
 
@@ -250,7 +250,7 @@ def _maybe_checkpoint_window(
             epoch=epoch,
             sample_idx=samples_seen,
             timestamp=timestamp,
-            pth_path=str(path),
+            pth_path=conf.to_relative(path),
             repeatability=kpis["repeatability"],
             precision=kpis["precision"],
             recall=kpis["recall"],

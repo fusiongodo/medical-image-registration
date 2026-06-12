@@ -1,29 +1,27 @@
 import os
 import getpass
 import json
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+import conf
+
 from exact_sync.v1.configuration import Configuration
 from exact_sync.v1.api_client import ApiClient
 from exact_sync.v1.api.image_registration_api import ImageRegistrationApi
 from exact_sync.v1.api.images_api import ImagesApi
 
 
-"""
-Download registered image pairs with annotations.
-"""
-
 configuration = Configuration()
-configuration.username = 'alha7503'
+configuration.username = "alha7503"
 configuration.password = os.getenv("EXACT_PASSWORD") or getpass.getpass("EXACT password: ")
 configuration.host = "https://exact.hs-flensburg.de"
 
 client = ApiClient(configuration)
 image_registration_api = ImageRegistrationApi(client)
 images_api = ImagesApi(client)
-
-DATASET_DIR = Path("data/images")
-DATASET_DIR.mkdir(parents=True, exist_ok=True)
-LABEL_FILE = Path("data/labels.json")
 
 MAX_DATA_BYTES = 50 * 1024 * 1024 * 1024
 current_data_bytes = 0
@@ -45,8 +43,8 @@ for reg in registrations:
     matrix = reg.transformation_matrix
     error = reg.registration_error
 
-    src_path = DATASET_DIR / f"{src_id}.data"
-    tgt_path = DATASET_DIR / f"{tgt_id}.data"
+    src_path = conf.resolve(conf.image_relpath(src_id))
+    tgt_path = conf.resolve(conf.image_relpath(tgt_id))
 
     try:
         if not src_path.exists():
@@ -63,17 +61,21 @@ for reg in registrations:
             "source_image_id": src_id,
             "target_image_id": tgt_id,
             "registration_error": error,
-            "transformation_matrix": matrix
+            "transformation_matrix": matrix,
         })
-        
-        print(f"Successfully processed pair: {src_id} -> {tgt_id}. Total size so far: {current_data_bytes / (1024**3):.2f} GB")
+
+        print(
+            f"Successfully processed pair: {src_id} -> {tgt_id}. "
+            f"Total size so far: {current_data_bytes / (1024**3):.2f} GB"
+        )
 
     except Exception as e:
         print(f"Failed to process pair {src_id} -> {tgt_id}. Error: {e}")
         continue
 
-print(f"\nWriting labels to {LABEL_FILE}...")
-with open(LABEL_FILE, "w") as f:
+print(f"\nWriting labels to {conf.LABELS_PATH}...")
+conf.LABELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+with open(conf.LABELS_PATH, "w", encoding="utf-8") as f:
     json.dump(dataset_labels, f, indent=4)
 
 print("Done! Dataset is ready for training.")
