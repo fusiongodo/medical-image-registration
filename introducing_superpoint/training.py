@@ -177,6 +177,7 @@ def _make_train_loader(config, epoch, dataset=None):
         batch_size=config.batch_size,
         shuffle=True,
         num_workers=config.num_workers,
+        pin_memory=torch.cuda.is_available(),
         generator=generator,
         dataset=dataset,
     )

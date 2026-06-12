@@ -42,7 +42,10 @@ logger = logging.getLogger("gdrive_sync")
 
 def _ensure_rclone():
     if shutil.which("rclone") is None:
-        raise RuntimeError("rclone not found. Install with: brew install rclone")
+        raise RuntimeError(
+            "rclone not found. macOS: brew install rclone | "
+            "Linux/RunPod: curl https://rclone.org/install.sh | sudo bash"
+        )
 
 
 def _remote_configured():
