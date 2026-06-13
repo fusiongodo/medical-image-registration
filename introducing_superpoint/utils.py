@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-
+#greedily assign nearest neighbour within radius
 def _match_keypoints_single(logits_b, gt, cell_size, radius, dustbin_idx=64):
     """
     logits_b: (65, Hc, Wc)
@@ -14,10 +14,10 @@ def _match_keypoints_single(logits_b, gt, cell_size, radius, dustbin_idx=64):
 
     with torch.no_grad():
         scores = prob[:dustbin_idx].max(dim=0).values
-        det_mask = (scores > 0.5) & (prob[dustbin_idx] < 0.5)
+        det_mask = (scores > 0.015)
         det_cells = det_mask.nonzero(as_tuple=False)
         det_px = det_cells.float() * cell_size + cell_size / 2
-
+    # N, M = number of keypoints in GT, DET
     N = gt.shape[0]
     M = det_cells.shape[0]
     gt_px = gt[:, :2]
@@ -59,8 +59,8 @@ def _match_keypoints_single(logits_b, gt, cell_size, radius, dustbin_idx=64):
         "matched_det_ids": matched_det_ids,
         "matched_gt_ids": matched_gt_ids,
         "tp": len(matches),
-        "fp": M - len(matched_det_ids),
-        "fn": N - len(matched_gt_ids),
+        "fp": M - len(matches),
+        "fn": N - len(matches),
         "num_gt": N,
     }
 
@@ -152,55 +152,6 @@ def keypoint_matching_loss(
     )["loss"]
 
 
-def gt_bin_recall(logits, gt_coords, cell_size=8):
-    """
-    logits:    (B, 65, Hc, Wc)
-    gt_coords: list[Tensor(Ni, 3)] — (x, y, conf) CNN pixels
-    returns:   dict with recall, correct, total_gt
-    """
-    B, _, Hc, Wc = logits.shape
-    correct = 0
-    total = 0
-
-    for b in range(B):
-        gt = gt_coords[b]
-        N = gt.shape[0]
-        if N == 0:
-            continue
-
-        gt_px = gt[:, :2]
-        gt_cell_row = (gt_px[:, 1] / cell_size).long().clamp(0, Hc - 1)
-        gt_cell_col = (gt_px[:, 0] / cell_size).long().clamp(0, Wc - 1)
-        gt_bin_row = (gt_px[:, 1] % cell_size).long().clamp(0, 7)
-        gt_bin_col = (gt_px[:, 0] % cell_size).long().clamp(0, 7)
-        gt_bin_idx = gt_bin_row * 8 + gt_bin_col
-
-        for j in range(N):
-            cr, cc = gt_cell_row[j], gt_cell_col[j]
-            pred_bin = logits[b, :64, cr, cc].argmax()
-            if pred_bin == gt_bin_idx[j]:
-                correct += 1
-            total += 1
-
-    return {
-        "recall": correct / (total + 1e-8),
-        "correct": correct,
-        "total_gt": total,
-    }
-
-
-def accumulate_gt_bin_recall(totals, logits_he, logits_ihc, gt_coords, cell_size=8):
-    for logits in (logits_he, logits_ihc):
-        stats = gt_bin_recall(logits, gt_coords, cell_size=cell_size)
-        totals["correct"] += stats["correct"]
-        totals["total_gt"] += stats["total_gt"]
-    return totals
-
-
-def gt_bin_recall_from_totals(totals):
-    return totals["correct"] / (totals["total_gt"] + 1e-8)
-
-
 def compute_keypoint_kpis(logits_he, logits_ihc, gt_coords, cell_size=8, radius=8):
     """
     Repeatability: GT keypoints matched on both HE and IHC / total GT.
@@ -238,81 +189,43 @@ def compute_keypoint_kpis(logits_he, logits_ihc, gt_coords, cell_size=8, radius=
         "fn": fn,
     }
 
-def warp_points(points, homographies):
-    """
-    points:       (N, 2) or (B, N, 2) — (x, y)
-    homographies: (3, 3) or (B, 3, 3)
-    returns:      (N, 2) for a single (3, 3); else (B, N, 2) — (x, y)
-    """
-    single_homography = homographies.dim() == 2
-    H = homographies.unsqueeze(0) if single_homography else homographies
-    B = H.shape[0]
-
-    if points.dim() == 2:
-        pts = points.unsqueeze(0).expand(B, -1, -1)
-    else:
-        pts = points
-
-    ones = torch.ones(*pts.shape[:-1], 1, dtype=pts.dtype, device=pts.device)
-    homogeneous = torch.cat([pts, ones], dim=-1)
-
-    warped = torch.bmm(homogeneous, H.transpose(1, 2))
-    warped = warped[..., :2] / warped[..., 2:3].clamp_min(1e-8)
-
-    if single_homography and points.dim() == 2:
-        return warped.squeeze(0)
-    return warped
-
-
-def descriptor_loss(descriptors, warped_descriptors, homographies, config, valid_mask=None, warp_points=None):
+def descriptor_loss(descriptors, other_descriptors, config, valid_mask=None):
     batch_size, _, Hc, Wc = descriptors.shape
     device = descriptors.device
-    
-    y, x = torch.meshgrid(torch.arange(Hc, device=device), torch.arange(Wc, device=device), indexing='ij')
-    coord_cells = torch.stack([y, x], dim=-1).float()
-    coord_cells = coord_cells * config['grid_size'] + config['grid_size'] // 2
-    
-    coord_cells_flat = coord_cells.reshape(-1, 2)
-    warped_coord_cells = warp_points(coord_cells_flat, homographies)
-    
-    coord_cells_exp = coord_cells.view(1, 1, 1, Hc, Wc, 2)
-    warped_coord_cells_exp = warped_coord_cells.view(batch_size, Hc, Wc, 1, 1, 2)
-    
-    cell_distances = torch.norm(coord_cells_exp - warped_coord_cells_exp, dim=-1)
-    s = (cell_distances <= (config['grid_size'] - 0.5)).float()
-    
     desc = F.normalize(descriptors, p=2, dim=1)
-    warped_desc = F.normalize(warped_descriptors, p=2, dim=1)
-    
+    other_desc = F.normalize(other_descriptors, p=2, dim=1)
     desc_flat = desc.view(batch_size, -1, Hc * Wc)
-    warped_desc_flat = warped_desc.view(batch_size, -1, Hc * Wc)
-    
-    dot_product_desc = torch.bmm(desc_flat.transpose(1, 2), warped_desc_flat)
+    other_desc_flat = other_desc.view(batch_size, -1, Hc * Wc)
+    dot_product_desc = torch.bmm(desc_flat.transpose(1, 2), other_desc_flat)
     dot_product_desc = F.relu(dot_product_desc)
-    
     dot_product_desc = dot_product_desc.view(batch_size, Hc, Wc, Hc * Wc)
     dot_product_desc = F.normalize(dot_product_desc, p=2, dim=3)
-    
     dot_product_desc = dot_product_desc.view(batch_size, Hc * Wc, Hc, Wc)
     dot_product_desc = F.normalize(dot_product_desc, p=2, dim=1)
-    
     dot_product_desc = dot_product_desc.view(batch_size, Hc, Wc, Hc, Wc)
-    
+
+    grid_sigma = config.get('desc_patch_size', 1.0)
+    centricity = config.get('desc_centricity', 1.0)
+    gy, gx = torch.meshgrid(torch.arange(Hc, device=device, dtype=torch.float32),
+                            torch.arange(Wc, device=device, dtype=torch.float32),
+                            indexing='ij')
+    dy = gy.unsqueeze(2).unsqueeze(3) - gy.unsqueeze(0).unsqueeze(1)
+    dx = gx.unsqueeze(2).unsqueeze(3) - gx.unsqueeze(0).unsqueeze(1)
+    dist_sq = dx**2 + dy**2
+    s = torch.exp(-centricity * dist_sq / (2 * grid_sigma**2))
+    s = s * (dist_sq <= 2).float()
+
     positive_dist = torch.clamp(config['positive_margin'] - dot_product_desc, min=0.0)
     negative_dist = torch.clamp(dot_product_desc - config['negative_margin'], min=0.0)
     loss = config['lambda_d'] * s * positive_dist + (1 - s) * negative_dist
-    
     if valid_mask is None:
         mask_h, mask_w = Hc * config['grid_size'], Wc * config['grid_size']
         valid_mask = torch.ones((batch_size, 1, mask_h, mask_w), dtype=torch.float32, device=device)
     elif valid_mask.dim() == 3:
         valid_mask = valid_mask.unsqueeze(1).float()
-        
     valid_mask = F.pixel_unshuffle(valid_mask, config['grid_size'])
     valid_mask = torch.prod(valid_mask, dim=1, keepdim=True)
     valid_mask = valid_mask.view(batch_size, 1, 1, Hc, Wc)
-    
     normalization = torch.sum(valid_mask) * (Hc * Wc)
     loss = torch.sum(valid_mask * loss) / (normalization + 1e-8)
-    
     return loss

@@ -33,17 +33,17 @@ def checkpoint_timestamp(when=None) -> str:
 class TrainingConfig:
     name: str
     learning_rate: float = default_config["learning_rate"]
-    batch_size: int = 4
-    num_epochs: int = 1
+    batch_size: int = 8
+    num_epochs: int = 5
     save_every_epochs: int = 1
     w_kp: float = 1.0
     w_loc: float = 1.0
     w_fn: float = 1.0
-    w_fp: float = 0.5
+    w_fp: float = 5.0
     kp_radius: int = 8
+    desc_patch_size: float = 3.0
+    desc_centricity: float = 1.0
     num_workers: int = 0
-    max_batches_per_epoch: Optional[int] = None
-    kpi_every_instances: int = 720
     weights_init: Path = DEFAULT_WEIGHTS
     run_dir: Path = DEFAULT_RUN_DIR
 
@@ -60,27 +60,7 @@ class EpochLog:
     repeatability: float
     precision: float
     recall: float
-    gt_bin_recall: float
-
-
-@dataclass
-class CheckpointLog:
-    epoch: int
-    sample_idx: int
-    timestamp: str
-    pth_path: str
-    repeatability: float
-    precision: float
-    recall: float
-    gt_bin_recall: float
-    tp: int
-    fp: int
-    fn: int
-    total_gt: int
-    repeatable: int
-    loss_total: float
-    loss_keypoint: float
-    loss_descriptor: float
+    duration_seconds: float = 0.0
 
 
 @dataclass
@@ -89,9 +69,7 @@ class ModelInstance:
     config: TrainingConfig
     parent: Optional[str] = None
     epoch_logs: list[EpochLog] = field(default_factory=list)
-    checkpoint_logs: list[CheckpointLog] = field(default_factory=list)
     resume_epoch: int = 1
-    resume_sample_idx: int = 0
     last_pth_path: Optional[Path] = None
 
     @property
@@ -116,9 +94,7 @@ class ModelInstance:
             "config": _config_to_dict(self.config),
             "pth_path": conf.to_relative(self.pth_path),
             "resume_epoch": self.resume_epoch,
-            "resume_sample_idx": self.resume_sample_idx,
             "epoch_logs": [asdict(entry) for entry in self.epoch_logs],
-            "checkpoint_logs": [asdict(entry) for entry in self.checkpoint_logs],
         }
         with open(self.log_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -138,33 +114,26 @@ class ModelInstance:
             w_kp=config_dict.get("w_kp", 1.0),
             w_loc=config_dict.get("w_loc", 1.0),
             w_fn=config_dict.get("w_fn", 1.0),
-            w_fp=config_dict.get("w_fp", 0.5),
+            w_fp=config_dict.get("w_fp", 5.0),
             kp_radius=config_dict.get("kp_radius", 8),
+            desc_patch_size=config_dict.get("desc_patch_size", 3.0),
+            desc_centricity=config_dict.get("desc_centricity", 1.0),
             num_workers=config_dict.get("num_workers", 0),
-            max_batches_per_epoch=config_dict.get("max_batches_per_epoch"),
-            kpi_every_instances=config_dict.get("kpi_every_instances", 720),
             weights_init=conf.resolve(config_dict.get("weights_init", conf.to_relative(DEFAULT_WEIGHTS))),
             run_dir=conf.resolve(config_dict.get("run_dir", conf.to_relative(DEFAULT_RUN_DIR))),
         )
         epoch_logs = []
         for entry in payload.get("epoch_logs", []):
             entry = dict(entry)
-            entry.setdefault("gt_bin_recall", 0.0)
+            entry.pop("gt_bin_recall", None)
+            entry.setdefault("duration_seconds", 0.0)
             epoch_logs.append(EpochLog(**entry))
-        checkpoint_logs = []
-        for entry in payload.get("checkpoint_logs", []):
-            entry = dict(entry)
-            entry.setdefault("timestamp", "")
-            entry.setdefault("pth_path", "")
-            checkpoint_logs.append(CheckpointLog(**entry))
         resume_epoch = payload.get("resume_epoch")
-        resume_sample_idx = payload.get("resume_sample_idx")
         if resume_epoch is None:
             if len(epoch_logs) >= config.num_epochs:
                 resume_epoch = config.num_epochs + 1
             else:
                 resume_epoch = len(epoch_logs) + 1 if epoch_logs else 1
-            resume_sample_idx = 0
         last_pth_path = None
         if payload.get("pth_path"):
             last_pth_path = conf.resolve(payload["pth_path"])
@@ -174,9 +143,7 @@ class ModelInstance:
             config=config,
             parent=payload.get("parent"),
             epoch_logs=epoch_logs,
-            checkpoint_logs=checkpoint_logs,
             resume_epoch=resume_epoch,
-            resume_sample_idx=resume_sample_idx or 0,
             last_pth_path=last_pth_path,
         )
 
@@ -185,27 +152,20 @@ class ModelInstance:
             return False
         saved = self.load_log(self.log_path)
         self.epoch_logs = saved.epoch_logs
-        self.checkpoint_logs = saved.checkpoint_logs
         self.resume_epoch = saved.resume_epoch
-        self.resume_sample_idx = saved.resume_sample_idx
         self.last_pth_path = saved.last_pth_path
         if saved.parent is not None:
             self.parent = saved.parent
         return True
 
     def training_complete(self) -> bool:
-        return (
-            self.resume_sample_idx == 0
-            and len(self.epoch_logs) >= self.config.num_epochs
-        )
+        return len(self.epoch_logs) >= self.config.num_epochs
 
 
 def should_resume_training(instance: ModelInstance) -> bool:
     if not instance.log_path.exists():
         return False
     saved = ModelInstance.load_log(instance.log_path)
-    if saved.resume_sample_idx > 0:
-        return True
     if len(saved.epoch_logs) >= instance.config.num_epochs:
         return False
     return saved.resume_epoch <= instance.config.num_epochs

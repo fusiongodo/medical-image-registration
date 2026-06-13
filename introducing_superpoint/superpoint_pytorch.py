@@ -14,7 +14,6 @@ default_config = {
     'lambda_d': 250,
     'positive_margin': 1,
     'negative_margin': 0.2,
-    'lambda_loss': 0.0001,
     'descriptor_size': 256,
     'grid_size': 8,
 }

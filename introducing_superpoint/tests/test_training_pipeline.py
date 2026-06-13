@@ -70,31 +70,6 @@ def test_training_flag_does_not_alter_inference(model):
     assert torch.equal(baseline["keypoints"][0], again["keypoints"][0])
 
 
-def test_warp_points_identity():
-    pts = torch.tensor([[10.0, 5.0], [0.0, 0.0], [3.5, 7.25]])
-    identity = torch.eye(3)
-    warped = utils.warp_points(pts, identity)
-    assert torch.allclose(warped, pts, atol=1e-6)
-
-
-def test_warp_points_translation():
-    pts = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
-    H = torch.tensor([[1.0, 0.0, 5.0], [0.0, 1.0, -2.0], [0.0, 0.0, 1.0]])
-    warped = utils.warp_points(pts, H)
-    expected = pts + torch.tensor([5.0, -2.0])
-    assert torch.allclose(warped, expected, atol=1e-6)
-
-
-def test_warp_points_batched():
-    pts = torch.tensor([[1.0, 1.0]])
-    H = torch.stack([torch.eye(3), torch.eye(3) * 2.0])
-    H[1, 2, 2] = 1.0
-    warped = utils.warp_points(pts, H)
-    assert tuple(warped.shape) == (2, 1, 2)
-    assert torch.allclose(warped[0, 0], torch.tensor([1.0, 1.0]), atol=1e-6)
-    assert torch.allclose(warped[1, 0], torch.tensor([2.0, 2.0]), atol=1e-6)
-
-
 def _logits_peaked_at(coords, value=12.0):
     logits = torch.zeros(1, 65, HC, WC)
     logits[:, 64] = value
@@ -196,7 +171,6 @@ def test_model_instance_log_roundtrip(project_tmp):
                 repeatability=0.5,
                 precision=0.6,
                 recall=0.7,
-                gt_bin_recall=0.8,
             )
         ],
     )
@@ -205,7 +179,6 @@ def test_model_instance_log_roundtrip(project_tmp):
     assert restored.name == "unit"
     assert restored.parent == "parent_run"
     assert restored.resume_epoch == 1
-    assert restored.resume_sample_idx == 0
     assert len(restored.epoch_logs) == 1
     assert restored.epoch_logs[0].recall == pytest.approx(0.7)
 
@@ -218,8 +191,7 @@ def test_train_model_writes_checkpoint_and_log(project_tmp):
         run_dir=project_tmp,
         num_epochs=1,
         batch_size=2,
-        save_every_epochs=1,
-        max_batches_per_epoch=1,
+        save_every_epochs=1
     )
     instance = ModelInstance(
         name=config.name,
@@ -239,40 +211,6 @@ def test_train_model_writes_checkpoint_and_log(project_tmp):
     assert 0.0 <= last.recall <= 1.0
 
 
-def test_resume_sample_idx_skips_processed_batches(project_tmp):
-    from model_instance import ModelInstance, TrainingConfig
-
-    class TinyDataset:
-        def __len__(self):
-            return 6
-
-        def __getitem__(self, idx):
-            image = torch.zeros(1, conf.CNN_INPUT_HEIGHT, conf.CNN_INPUT_WIDTH)
-            return {
-                "image_he": image,
-                "image_ihc": image,
-                "gt_keypoints": torch.tensor([[10.0, 10.0, 1.0]]),
-                "meta": {"idx": idx},
-            }
-
-    config = TrainingConfig(
-        name="resume",
-        run_dir=project_tmp,
-        num_epochs=1,
-        batch_size=2,
-        max_batches_per_epoch=3,
-    )
-    instance = ModelInstance(name=config.name, config=config, resume_sample_idx=2, resume_epoch=1)
-    model = training.build_model()
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
-    loader = training._make_train_loader(config, epoch=1, dataset=TinyDataset())
-
-    training.train_epoch(model, loader, optimizer, "cpu", config, instance, epoch=1)
-
-    assert instance.resume_epoch == 2
-    assert instance.resume_sample_idx == 0
-
-
 def test_merge_saved_state_restores_position(project_tmp):
     from model_instance import ModelInstance, TrainingConfig, should_resume_training
 
@@ -281,14 +219,12 @@ def test_merge_saved_state_restores_position(project_tmp):
         name=config.name,
         config=config,
         resume_epoch=2,
-        resume_sample_idx=17,
     )
     instance.save_log()
 
     fresh = ModelInstance(name=config.name, config=config)
     assert fresh.merge_saved_state()
     assert fresh.resume_epoch == 2
-    assert fresh.resume_sample_idx == 17
     assert should_resume_training(fresh)
 
 
@@ -312,7 +248,6 @@ def test_should_resume_false_when_training_complete(project_tmp):
                 repeatability=0.5,
                 precision=0.6,
                 recall=0.7,
-                gt_bin_recall=0.8,
             )
         ],
     )
@@ -330,8 +265,7 @@ def test_train_model_saves_on_keyboard_interrupt(project_tmp, monkeypatch):
         run_dir=project_tmp,
         num_epochs=3,
         batch_size=2,
-        save_every_epochs=5,
-        max_batches_per_epoch=1,
+        save_every_epochs=5
     )
     instance = ModelInstance(name=config.name, config=config)
 
@@ -353,129 +287,6 @@ def test_checkpoint_timestamp_format():
 
     ts = checkpoint_timestamp(datetime(2026, 6, 12, 14, 35))
     assert ts == "12-06_14-35"
-
-
-def test_checkpoint_log_roundtrip_includes_timestamp(project_tmp):
-    from model_instance import CheckpointLog, ModelInstance, TrainingConfig
-
-    config = TrainingConfig(name="ts", run_dir=project_tmp)
-    run_dir = project_tmp / "ts"
-    run_dir.mkdir(parents=True)
-    pth = run_dir / "ts_12-06_14-35.pth"
-    pth.touch()
-    instance = ModelInstance(
-        name="ts",
-        config=config,
-        last_pth_path=pth,
-        checkpoint_logs=[
-            CheckpointLog(
-                epoch=1,
-                sample_idx=720,
-                timestamp="12-06_14-35",
-                pth_path=conf.to_relative(pth),
-                repeatability=0.1,
-                precision=0.2,
-                recall=0.3,
-                gt_bin_recall=0.4,
-                tp=1,
-                fp=2,
-                fn=3,
-                total_gt=4,
-                repeatable=0,
-                loss_total=1.0,
-                loss_keypoint=0.8,
-                loss_descriptor=0.2,
-            )
-        ],
-    )
-    instance.save_log()
-    restored = ModelInstance.load_log(instance.log_path)
-    assert restored.checkpoint_logs[0].timestamp == "12-06_14-35"
-    assert restored.checkpoint_logs[0].pth_path.endswith("ts_12-06_14-35.pth")
-    assert restored.last_pth_path.resolve() == pth.resolve()
-
-
-def test_gt_bin_recall_perfect_match():
-    coords = [(40, 32), (80, 80)]
-    gt = [torch.tensor([[x, y, 1.0] for x, y in coords], dtype=torch.float32)]
-    logits = _logits_peaked_at(coords)
-    stats = utils.gt_bin_recall(logits, gt)
-    assert stats["recall"] == pytest.approx(1.0, abs=1e-4)
-    assert stats["correct"] == 2
-    assert stats["total_gt"] == 2
-
-
-def test_checkpoint_window_triggers_every_n_instances(project_tmp):
-    from model_instance import ModelInstance, TrainingConfig
-
-    totals = training._fresh_kpi_totals()
-    totals.update({"repeatable": 1, "total_gt": 2, "tp": 3, "fp": 1, "fn": 1})
-    gt_bin_totals = {"correct": 4, "total_gt": 10}
-    window_running = {"total": 2.0, "keypoint": 1.5, "descriptor": 0.5}
-
-    config = TrainingConfig(name="kpi", run_dir=project_tmp, kpi_every_instances=720)
-    instance = ModelInstance(name="kpi", config=config)
-    model = training.build_model()
-
-    last_at, new_totals, new_gt_bin, new_running, new_batches = training._maybe_checkpoint_window(
-        model, instance, 1, 720, 0, totals, gt_bin_totals, window_running, 2, config,
-    )
-
-    assert last_at == 720
-    assert new_totals == training._fresh_kpi_totals()
-    assert new_gt_bin == training._fresh_gt_bin_totals()
-    assert new_running == {}
-    assert new_batches == 0
-    assert len(instance.checkpoint_logs) == 1
-    assert instance.checkpoint_logs[0].sample_idx == 720
-    assert instance.checkpoint_logs[0].timestamp
-    assert instance.checkpoint_logs[0].pth_path
-    assert instance.pth_path.exists()
-    assert instance.pth_path.name.startswith("kpi_")
-    assert instance.log_path.exists()
-
-    last_at, _, _, _, _ = training._maybe_checkpoint_window(
-        model, instance, 1, 500, 0, totals, gt_bin_totals, window_running, 2, config,
-    )
-    assert last_at == 0
-
-
-def test_train_epoch_saves_checkpoint_every_n_instances(project_tmp):
-    from model_instance import ModelInstance, TrainingConfig
-
-    class TinyDataset:
-        def __len__(self):
-            return 8
-
-        def __getitem__(self, idx):
-            image = torch.zeros(1, conf.CNN_INPUT_HEIGHT, conf.CNN_INPUT_WIDTH)
-            return {
-                "image_he": image,
-                "image_ihc": image,
-                "gt_keypoints": torch.tensor([[10.0, 10.0, 1.0]]),
-                "meta": {"idx": idx},
-            }
-
-    config = TrainingConfig(
-        name="ckpt_window",
-        run_dir=project_tmp,
-        num_epochs=1,
-        batch_size=2,
-        max_batches_per_epoch=2,
-        kpi_every_instances=4,
-    )
-    instance = ModelInstance(name=config.name, config=config)
-    model = training.build_model()
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
-    loader = training._make_train_loader(config, epoch=1, dataset=TinyDataset())
-
-    training.train_epoch(model, loader, optimizer, "cpu", config, instance, epoch=1)
-
-    assert len(instance.checkpoint_logs) == 1
-    assert instance.checkpoint_logs[0].sample_idx == 4
-    assert instance.checkpoint_logs[0].timestamp
-    assert conf.resolve(instance.checkpoint_logs[0].pth_path).exists()
-    assert instance.pth_path.exists()
 
 
 def test_explore_dataset_render_and_save(project_tmp):

@@ -3,6 +3,7 @@ SuperPoint stain-invariant training: model load, loss assembly, epoch loop,
 checkpointing, and KPI logging via ModelInstance.
 """
 import sys
+import time
 import importlib
 from pathlib import Path
 
@@ -15,7 +16,6 @@ importlib.reload(conf)
 
 from superpoint_pytorch import SuperPoint, default_config
 from model_instance import (
-    CheckpointLog,
     EpochLog,
     ModelInstance,
     TrainingConfig,
@@ -36,20 +36,19 @@ def build_model(weights_path=DEFAULT_WEIGHTS, device="cpu"):
     return model.to(device)
 
 
-def _kp_kwargs(config):
-    return {
-        "cell_size": default_config["grid_size"],
-        "radius": config.kp_radius,
-        "w_loc": config.w_loc,
-        "w_fn": config.w_fn,
-        "w_fp": config.w_fp,
-    }
-
 
 def _match_kwargs(config):
     return {
         "cell_size": default_config["grid_size"],
         "radius": config.kp_radius,
+    }
+
+
+def _desc_config(superpoint_config, training_config):
+    return {
+        **superpoint_config,
+        "desc_patch_size": training_config.desc_patch_size,
+        "desc_centricity": training_config.desc_centricity,
     }
 
 
@@ -61,10 +60,6 @@ def _fresh_kpi_totals():
         "fp": 0,
         "fn": 0,
     }
-
-
-def _fresh_gt_bin_totals():
-    return {"correct": 0, "total_gt": 0}
 
 
 def _accumulate_batch_kpis(totals, logits_he, logits_ihc, gt_list, kp_kwargs):
@@ -98,20 +93,20 @@ def total_loss(out_he, out_ihc, gt_keypoints, config=None, training_config=None,
     """
     config = config or default_config
     training_config = training_config or TrainingConfig(name="default")
-    kp_kwargs = _kp_kwargs(training_config)
+    kp_kwargs = {   "cell_size": default_config["grid_size"],
+                    "radius": training_config.kp_radius,
+                    "w_loc": training_config.w_loc,
+                    "w_fn": training_config.w_fn,
+                    "w_fp": training_config.w_fp    }
+
 
     kp_he = utils.keypoint_matching_loss_detailed(out_he["logits"], gt_keypoints, **kp_kwargs)
     kp_ihc = utils.keypoint_matching_loss_detailed(out_ihc["logits"], gt_keypoints, **kp_kwargs)
 
-    batch_size = out_he["logits"].shape[0]
-    identity = torch.eye(3, device=out_he["logits"].device).unsqueeze(0).expand(batch_size, -1, -1)
-
     desc = utils.descriptor_loss(
         out_he["descriptors_raw"],
         out_ihc["descriptors_raw"],
-        identity,
-        config,
-        warp_points=utils.warp_points,
+        _desc_config(config, training_config),
     )
 
     loss_keypoint = kp_he["loss"] + kp_ihc["loss"]
@@ -146,10 +141,6 @@ def evaluate_kpis(model, loader, device, training_config):
     totals = _fresh_kpi_totals()
 
     for batch_idx, batch in enumerate(loader):
-        if training_config.max_batches_per_epoch is not None:
-            if batch_idx >= training_config.max_batches_per_epoch:
-                break
-
         image_he = batch["image_he"].to(device)
         image_ihc = batch["image_ihc"].to(device)
         gt = [kp.to(device) for kp in batch["gt_keypoints"]]
@@ -160,14 +151,6 @@ def evaluate_kpis(model, loader, device, training_config):
 
     return _kpis_from_totals(totals)
 
-
-def _items_in_epoch(dataset_len, training_config):
-    if training_config.max_batches_per_epoch is not None:
-        return min(
-            dataset_len,
-            training_config.max_batches_per_epoch * training_config.batch_size,
-        )
-    return dataset_len
 
 
 def _make_train_loader(config, epoch, dataset=None):
@@ -188,19 +171,7 @@ def _print_epoch_progress(epoch, items_done, items_total):
     print(f"epoch {epoch}: {items_done}/{items_total} done, {items_left} left", flush=True)
 
 
-def _print_kpi_checkpoint(epoch, items_done, kpis, gt_bin_recall):
-    print(
-        f"epoch {epoch} @{items_done} KPIs : "
-        f"repeatability={kpis['repeatability']:.4f} "
-        f"precision={kpis['precision']:.4f} "
-        f"recall={kpis['recall']:.4f} "
-        f"gt_bin_recall={gt_bin_recall:.4f} "
-        f"tp={kpis['tp']} fp={kpis['fp']} fn={kpis['fn']}",
-        flush=True,
-    )
-
-
-def _print_epoch_summary(epoch, train_means, kpis, gt_bin_recall):
+def _print_epoch_summary(epoch, train_means, kpis, duration_seconds):
     print(
         f"epoch {epoch} losses : "
         f"total={train_means['total']:.4f} "
@@ -208,188 +179,66 @@ def _print_epoch_summary(epoch, train_means, kpis, gt_bin_recall):
         f"kp={train_means['keypoint']:.4f} "
         f"loc={train_means['loc']:.4f} "
         f"fn={train_means['fn']:.4f} "
-        f"fp={train_means['fp']:.4f}",
+        f"fp={train_means['fp']:.4f} "
+        f"duration={duration_seconds:.1f}s",
         flush=True,
     )
     print(
         f"epoch {epoch} KPIs   : "
         f"repeatability={kpis['repeatability']:.4f} "
         f"precision={kpis['precision']:.4f} "
-        f"recall={kpis['recall']:.4f} "
-        f"gt_bin_recall={gt_bin_recall:.4f}",
+        f"recall={kpis['recall']:.4f}",
         flush=True,
     )
 
 
-def _maybe_checkpoint_window(
-    model,
-    instance,
-    epoch,
-    samples_seen,
-    last_checkpoint_at,
-    window_totals,
-    window_gt_bin_totals,
-    window_running,
-    window_batch_count,
-    training_config,
-):
-    if samples_seen - last_checkpoint_at < training_config.kpi_every_instances:
-        return last_checkpoint_at, window_totals, window_gt_bin_totals, window_running, window_batch_count
-
-    kpis = _kpis_from_totals(window_totals)
-    kpis["tp"] = window_totals["tp"]
-    kpis["fp"] = window_totals["fp"]
-    kpis["fn"] = window_totals["fn"]
-    gt_bin_recall = utils.gt_bin_recall_from_totals(window_gt_bin_totals)
-    window_means = _mean_losses(window_running, max(window_batch_count, 1))
-
-    _print_kpi_checkpoint(epoch, samples_seen, kpis, gt_bin_recall)
-
-    path, timestamp = save_checkpoint(model, instance)
-    instance.checkpoint_logs.append(
-        CheckpointLog(
-            epoch=epoch,
-            sample_idx=samples_seen,
-            timestamp=timestamp,
-            pth_path=conf.to_relative(path),
-            repeatability=kpis["repeatability"],
-            precision=kpis["precision"],
-            recall=kpis["recall"],
-            gt_bin_recall=gt_bin_recall,
-            tp=window_totals["tp"],
-            fp=window_totals["fp"],
-            fn=window_totals["fn"],
-            total_gt=window_totals["total_gt"],
-            repeatable=window_totals["repeatable"],
-            loss_total=window_means.get("total", 0.0),
-            loss_keypoint=window_means.get("keypoint", 0.0),
-            loss_descriptor=window_means.get("descriptor", 0.0),
-        )
-    )
-    log_path = instance.save_log()
-    print(
-        f"checkpoint saved @{samples_seen} : {path.name}  log={log_path.name}  ts={timestamp}",
-        flush=True,
-    )
-
-    return samples_seen, _fresh_kpi_totals(), _fresh_gt_bin_totals(), {}, 0
-
-
-def train_epoch(model, loader, optimizer, device, training_config, instance, epoch):
+def train_epoch(model, loader, optimizer, device, training_config, epoch):
     model.train()
     running = {}
     batch_count = 0
-    items_total = _items_in_epoch(len(loader.dataset), training_config)
-    start_idx = instance.resume_sample_idx if epoch == instance.resume_epoch else 0
-    samples_seen = start_idx
-    last_checkpoint_at = start_idx
-    window_totals = _fresh_kpi_totals()
-    window_gt_bin_totals = _fresh_gt_bin_totals()
-    window_running = {}
-    window_batch_count = 0
+    items_total = len(loader.dataset)
+    samples_seen = 0
     epoch_totals = _fresh_kpi_totals()
-    epoch_gt_bin_totals = _fresh_gt_bin_totals()
     kp_kwargs = _match_kwargs(training_config)
 
-    if start_idx >= items_total:
-        instance.resume_sample_idx = 0
-        instance.resume_epoch = epoch + 1
-        return None
+    for batch in loader:
+        batch_size = batch["image_he"].shape[0]
 
-    try:
-        for batch_idx, batch in enumerate(loader):
-            if training_config.max_batches_per_epoch is not None:
-                if batch_idx >= training_config.max_batches_per_epoch:
-                    break
+        optimizer.zero_grad(set_to_none=True)
 
-            batch_size = batch["image_he"].shape[0]
-            if samples_seen + batch_size <= start_idx:
-                samples_seen += batch_size
-                continue
+        image_he = batch["image_he"].to(device)
+        image_ihc = batch["image_ihc"].to(device)
+        gt = [kp.to(device) for kp in batch["gt_keypoints"]]
 
-            optimizer.zero_grad(set_to_none=True)
+        out_he = model({"image": image_he}, training=True)
+        out_ihc = model({"image": image_ihc}, training=True)
 
-            image_he = batch["image_he"].to(device)
-            image_ihc = batch["image_ihc"].to(device)
-            gt = [kp.to(device) for kp in batch["gt_keypoints"]]
+        loss, components = total_loss(
+            out_he,
+            out_ihc,
+            gt,
+            training_config=training_config,
+            w_kp=training_config.w_kp,
+        )
+        loss.backward()
+        optimizer.step()
 
-            out_he = model({"image": image_he}, training=True)
-            out_ihc = model({"image": image_ihc}, training=True)
-
-            loss, components = total_loss(
-                out_he,
-                out_ihc,
-                gt,
-                training_config=training_config,
-                w_kp=training_config.w_kp,
+        with torch.no_grad():
+            _accumulate_batch_kpis(
+                epoch_totals, out_he["logits"], out_ihc["logits"], gt, kp_kwargs
             )
-            loss.backward()
-            optimizer.step()
 
-            with torch.no_grad():
-                _accumulate_batch_kpis(
-                    window_totals, out_he["logits"], out_ihc["logits"], gt, kp_kwargs
-                )
-                _accumulate_batch_kpis(
-                    epoch_totals, out_he["logits"], out_ihc["logits"], gt, kp_kwargs
-                )
-                utils.accumulate_gt_bin_recall(
-                    window_gt_bin_totals,
-                    out_he["logits"],
-                    out_ihc["logits"],
-                    gt,
-                    cell_size=default_config["grid_size"],
-                )
-                utils.accumulate_gt_bin_recall(
-                    epoch_gt_bin_totals,
-                    out_he["logits"],
-                    out_ihc["logits"],
-                    gt,
-                    cell_size=default_config["grid_size"],
-                )
+        _accumulate_losses(running, components)
+        batch_count += 1
+        samples_seen += batch_size
 
-            _accumulate_losses(running, components)
-            _accumulate_losses(window_running, components)
-            batch_count += 1
-            window_batch_count += 1
-            samples_seen += batch_size
-
-            instance.resume_epoch = epoch
-            instance.resume_sample_idx = samples_seen
-
-            items_done = min(samples_seen, items_total)
-            if batch_count % PROGRESS_EVERY_BATCHES == 0 or items_done >= items_total:
-                _print_epoch_progress(epoch, items_done, items_total)
-
-            (
-                last_checkpoint_at,
-                window_totals,
-                window_gt_bin_totals,
-                window_running,
-                window_batch_count,
-            ) = _maybe_checkpoint_window(
-                model,
-                instance,
-                epoch,
-                samples_seen,
-                last_checkpoint_at,
-                window_totals,
-                window_gt_bin_totals,
-                window_running,
-                window_batch_count,
-                training_config,
-            )
-    except KeyboardInterrupt:
-        raise
+        if batch_count % PROGRESS_EVERY_BATCHES == 0 or samples_seen >= items_total:
+            _print_epoch_progress(epoch, samples_seen, items_total)
 
     if batch_count == 0:
         raise RuntimeError("train_epoch saw zero batches")
 
-    instance.resume_sample_idx = 0
-    instance.resume_epoch = epoch + 1
-    epoch_kpis = _kpis_from_totals(epoch_totals)
-    epoch_kpis["gt_bin_recall"] = utils.gt_bin_recall_from_totals(epoch_gt_bin_totals)
-    return _mean_losses(running, batch_count), epoch_kpis
+    return _mean_losses(running, batch_count), _kpis_from_totals(epoch_totals)
 
 
 def save_checkpoint(model, instance, timestamp=None):
@@ -415,9 +264,7 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None, res
         instance.merge_saved_state()
     else:
         instance.resume_epoch = 1
-        instance.resume_sample_idx = 0
         instance.epoch_logs = []
-        instance.checkpoint_logs = []
 
     if instance.last_pth_path is not None and instance.last_pth_path.exists():
         weights_path = instance.last_pth_path
@@ -438,17 +285,14 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None, res
         for epoch in range(start_epoch, config.num_epochs + 1):
             train_loader = _make_train_loader(config, epoch, dataset=train_dataset)
             try:
-                result = train_epoch(
-                    model, train_loader, optimizer, device, config, instance, epoch
+                epoch_start = time.perf_counter()
+                train_means, kpis = train_epoch(
+                    model, train_loader, optimizer, device, config, epoch
                 )
+                duration_seconds = time.perf_counter() - epoch_start
             except KeyboardInterrupt:
                 interrupted = True
                 break
-
-            if result is None:
-                continue
-
-            train_means, kpis = result
 
             log_entry = EpochLog(
                 epoch=epoch,
@@ -461,10 +305,11 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None, res
                 repeatability=kpis["repeatability"],
                 precision=kpis["precision"],
                 recall=kpis["recall"],
-                gt_bin_recall=kpis["gt_bin_recall"],
+                duration_seconds=duration_seconds,
             )
             instance.epoch_logs.append(log_entry)
-            _print_epoch_summary(epoch, train_means, kpis, kpis["gt_bin_recall"])
+            instance.resume_epoch = epoch + 1
+            _print_epoch_summary(epoch, train_means, kpis, duration_seconds)
 
             if epoch % config.save_every_epochs == 0 or epoch == config.num_epochs:
                 path, timestamp = save_checkpoint(model, instance)
@@ -477,8 +322,7 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None, res
             path, timestamp = save_checkpoint(model, instance)
             instance.save_log()
             print(
-                f"\ninterrupted at epoch {instance.resume_epoch}, "
-                f"sample {instance.resume_sample_idx}; "
+                f"\ninterrupted at epoch {instance.resume_epoch}; "
                 f"checkpoint saved {path.name} ts={timestamp}",
                 flush=True,
             )
@@ -492,11 +336,9 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None, res
 if __name__ == "__main__":
     smoke_config = TrainingConfig(
         name="smoke",
-        num_epochs=1,
+        num_epochs=3,
         batch_size=2,
         save_every_epochs=1,
-        max_batches_per_epoch=None,
-        kpi_every_instances=720,
     )
     instance = ModelInstance(
         name=smoke_config.name,
