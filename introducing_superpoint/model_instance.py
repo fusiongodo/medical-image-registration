@@ -1,8 +1,8 @@
 """
 Training run metadata: config, per-epoch logs, checkpoint path, lineage.
 
-Each ModelInstance owns one weights file at run_dir/name.pth, overwritten on
-every save. training_log.json in run_dir holds the serialised epoch history.
+Each save writes a timestamped weights file under run_dir/name/. training_log.json
+holds the serialised epoch history; re-runs append more epochs and load the latest .pth.
 """
 import json
 import importlib
@@ -34,7 +34,7 @@ class TrainingConfig:
     name: str
     learning_rate: float = default_config["learning_rate"]
     batch_size: int = 8
-    num_epochs: int = 5
+    num_epochs: int = 10
     save_every_epochs: int = 1
     w_kp: float = 1.0
     w_loc: float = 1.0
@@ -69,7 +69,6 @@ class ModelInstance:
     config: TrainingConfig
     parent: Optional[str] = None
     epoch_logs: list[EpochLog] = field(default_factory=list)
-    resume_epoch: int = 1
     last_pth_path: Optional[Path] = None
 
     @property
@@ -80,6 +79,9 @@ class ModelInstance:
     def pth_path(self) -> Path:
         if self.last_pth_path is not None:
             return self.last_pth_path
+        latest = latest_checkpoint_path(self.run_dir, self.name)
+        if latest is not None:
+            return latest
         return self.run_dir / f"{self.name}.pth"
 
     @property
@@ -93,7 +95,6 @@ class ModelInstance:
             "parent": self.parent,
             "config": _config_to_dict(self.config),
             "pth_path": conf.to_relative(self.pth_path),
-            "resume_epoch": self.resume_epoch,
             "epoch_logs": [asdict(entry) for entry in self.epoch_logs],
         }
         with open(self.log_path, "w", encoding="utf-8") as f:
@@ -128,12 +129,6 @@ class ModelInstance:
             entry.pop("gt_bin_recall", None)
             entry.setdefault("duration_seconds", 0.0)
             epoch_logs.append(EpochLog(**entry))
-        resume_epoch = payload.get("resume_epoch")
-        if resume_epoch is None:
-            if len(epoch_logs) >= config.num_epochs:
-                resume_epoch = config.num_epochs + 1
-            else:
-                resume_epoch = len(epoch_logs) + 1 if epoch_logs else 1
         last_pth_path = None
         if payload.get("pth_path"):
             last_pth_path = conf.resolve(payload["pth_path"])
@@ -143,32 +138,38 @@ class ModelInstance:
             config=config,
             parent=payload.get("parent"),
             epoch_logs=epoch_logs,
-            resume_epoch=resume_epoch,
             last_pth_path=last_pth_path,
         )
 
-    def merge_saved_state(self) -> bool:
-        if not self.log_path.exists():
-            return False
-        saved = self.load_log(self.log_path)
-        self.epoch_logs = saved.epoch_logs
-        self.resume_epoch = saved.resume_epoch
-        self.last_pth_path = saved.last_pth_path
+
+def latest_checkpoint_path(run_dir: Path, name: str) -> Optional[Path]:
+    if not run_dir.is_dir():
+        return None
+    candidates = list(run_dir.glob(f"{name}_*.pth"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def next_epoch_number(instance: ModelInstance) -> int:
+    if not instance.epoch_logs:
+        return 1
+    return max(entry.epoch for entry in instance.epoch_logs) + 1
+
+
+def load_existing_run(instance: ModelInstance) -> bool:
+    loaded = False
+    if instance.log_path.exists():
+        saved = ModelInstance.load_log(instance.log_path)
+        instance.epoch_logs = saved.epoch_logs
         if saved.parent is not None:
-            self.parent = saved.parent
-        return True
-
-    def training_complete(self) -> bool:
-        return len(self.epoch_logs) >= self.config.num_epochs
-
-
-def should_resume_training(instance: ModelInstance) -> bool:
-    if not instance.log_path.exists():
-        return False
-    saved = ModelInstance.load_log(instance.log_path)
-    if len(saved.epoch_logs) >= instance.config.num_epochs:
-        return False
-    return saved.resume_epoch <= instance.config.num_epochs
+            instance.parent = saved.parent
+        loaded = True
+    latest = latest_checkpoint_path(instance.run_dir, instance.name)
+    if latest is not None:
+        instance.last_pth_path = latest
+        loaded = True
+    return loaded
 
 
 def _config_to_dict(config: TrainingConfig) -> dict:

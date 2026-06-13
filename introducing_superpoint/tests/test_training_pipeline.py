@@ -178,7 +178,6 @@ def test_model_instance_log_roundtrip(project_tmp):
     restored = ModelInstance.load_log(log_path)
     assert restored.name == "unit"
     assert restored.parent == "parent_run"
-    assert restored.resume_epoch == 1
     assert len(restored.epoch_logs) == 1
     assert restored.epoch_logs[0].recall == pytest.approx(0.7)
 
@@ -211,34 +210,16 @@ def test_train_model_writes_checkpoint_and_log(project_tmp):
     assert 0.0 <= last.recall <= 1.0
 
 
-def test_merge_saved_state_restores_position(project_tmp):
-    from model_instance import ModelInstance, TrainingConfig, should_resume_training
+def test_load_existing_run_restores_logs(project_tmp):
+    from model_instance import EpochLog, ModelInstance, TrainingConfig, load_existing_run
 
     config = TrainingConfig(name="resume_log", run_dir=project_tmp, num_epochs=5)
     instance = ModelInstance(
         name=config.name,
         config=config,
-        resume_epoch=2,
-    )
-    instance.save_log()
-
-    fresh = ModelInstance(name=config.name, config=config)
-    assert fresh.merge_saved_state()
-    assert fresh.resume_epoch == 2
-    assert should_resume_training(fresh)
-
-
-def test_should_resume_false_when_training_complete(project_tmp):
-    from model_instance import EpochLog, ModelInstance, TrainingConfig, should_resume_training
-
-    config = TrainingConfig(name="done", run_dir=project_tmp, num_epochs=1)
-    instance = ModelInstance(
-        name=config.name,
-        config=config,
-        resume_epoch=2,
         epoch_logs=[
             EpochLog(
-                epoch=1,
+                epoch=100,
                 loss_total=1.0,
                 loss_descriptor=0.1,
                 loss_keypoint=0.8,
@@ -254,7 +235,88 @@ def test_should_resume_false_when_training_complete(project_tmp):
     instance.save_log()
 
     fresh = ModelInstance(name=config.name, config=config)
-    assert not should_resume_training(fresh)
+    assert load_existing_run(fresh)
+    assert len(fresh.epoch_logs) == 1
+    assert fresh.epoch_logs[0].epoch == 100
+
+
+def test_latest_checkpoint_path_picks_newest(project_tmp):
+    import os
+    from model_instance import latest_checkpoint_path
+
+    run_dir = project_tmp / "ckpt"
+    run_dir.mkdir(parents=True)
+    older = run_dir / "ckpt_01-06_10-00.pth"
+    newer = run_dir / "ckpt_02-06_10-00.pth"
+    older.touch()
+    newer.touch()
+    os.utime(older, (1_000_000, 1_000_000))
+    os.utime(newer, (2_000_000, 2_000_000))
+
+    assert latest_checkpoint_path(run_dir, "ckpt").resolve() == newer.resolve()
+
+
+def test_next_epoch_number(project_tmp):
+    from model_instance import EpochLog, ModelInstance, TrainingConfig, next_epoch_number
+
+    config = TrainingConfig(name="n", run_dir=project_tmp)
+    empty = ModelInstance(name="n", config=config)
+    assert next_epoch_number(empty) == 1
+
+    logged = ModelInstance(
+        name="n",
+        config=config,
+        epoch_logs=[EpochLog(epoch=100, loss_total=0, loss_descriptor=0, loss_keypoint=0,
+                             loss_loc=0, loss_fn=0, loss_fp=0, repeatability=0, precision=0, recall=0)],
+    )
+    assert next_epoch_number(logged) == 101
+
+
+def test_train_model_appends_epochs(project_tmp, model, monkeypatch):
+    from model_instance import EpochLog, ModelInstance, TrainingConfig, next_epoch_number
+
+    config = TrainingConfig(name="append", run_dir=project_tmp, num_epochs=2, batch_size=2)
+    run_dir = project_tmp / "append"
+    run_dir.mkdir(parents=True)
+
+    existing = ModelInstance(
+        name=config.name,
+        config=config,
+        epoch_logs=[
+            EpochLog(
+                epoch=100,
+                loss_total=1.0,
+                loss_descriptor=0.1,
+                loss_keypoint=0.8,
+                loss_loc=0.2,
+                loss_fn=0.3,
+                loss_fp=0.1,
+                repeatability=0.5,
+                precision=0.6,
+                recall=0.7,
+            )
+        ],
+    )
+    existing.save_log()
+
+    seen_epochs = []
+
+    def fake_train_epoch(model, loader, optimizer, device, training_config, epoch):
+        seen_epochs.append(epoch)
+        return {"total": 1.0, "descriptor": 0.1, "keypoint": 0.8, "loc": 0.2, "fn": 0.3, "fp": 0.1}, {
+            "repeatability": 0.5, "precision": 0.6, "recall": 0.7,
+        }
+
+    monkeypatch.setattr(training, "train_epoch", fake_train_epoch)
+    monkeypatch.setattr(training, "build_model", lambda *args, **kwargs: model())
+
+    instance = ModelInstance(name=config.name, config=config)
+    training.train_model(instance)
+
+    assert seen_epochs == [101, 102]
+    assert len(instance.epoch_logs) == 3
+    assert instance.epoch_logs[-1].epoch == 102
+    assert next_epoch_number(instance) == 103
 
 
 def test_train_model_saves_on_keyboard_interrupt(project_tmp, monkeypatch):
@@ -275,7 +337,7 @@ def test_train_model_saves_on_keyboard_interrupt(project_tmp, monkeypatch):
     monkeypatch.setattr(training, "train_epoch", raise_interrupt)
 
     with pytest.raises(KeyboardInterrupt):
-        training.train_model(instance, resume=False)
+        training.train_model(instance)
     assert instance.pth_path.exists()
     assert instance.log_path.exists()
     assert len(instance.epoch_logs) == 0

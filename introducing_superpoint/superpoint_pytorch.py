@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 
 default_config = {
-    'learning_rate': 0.001,      # Adam
+    'learning_rate': 0.003,      # Adam
     'lambda_d': 250,
     'positive_margin': 1,
     'negative_margin': 0.2,

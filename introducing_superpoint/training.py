@@ -20,7 +20,9 @@ from model_instance import (
     ModelInstance,
     TrainingConfig,
     checkpoint_timestamp,
-    should_resume_training,
+    load_existing_run,
+    latest_checkpoint_path,
+    next_epoch_number,
 )
 from dataset import StainPairKeypointDataset, make_loader
 import utils
@@ -253,36 +255,33 @@ def save_checkpoint(model, instance, timestamp=None):
     return path, timestamp
 
 
-def train_model(instance, device=None, train_dataset=None, eval_loader=None, resume=None):
+def train_model(instance, device=None, train_dataset=None, eval_loader=None):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     config = instance.config
 
-    if resume is None:
-        resume = should_resume_training(instance)
+    instance.run_dir.mkdir(parents=True, exist_ok=True)
+    load_existing_run(instance)
 
-    if resume:
-        instance.merge_saved_state()
-    else:
-        instance.resume_epoch = 1
-        instance.epoch_logs = []
-
-    if instance.last_pth_path is not None and instance.last_pth_path.exists():
-        weights_path = instance.last_pth_path
-    elif instance.pth_path.exists():
-        weights_path = instance.pth_path
+    latest = latest_checkpoint_path(instance.run_dir, instance.name)
+    if latest is not None:
+        weights_path = latest
+        instance.last_pth_path = latest
     else:
         weights_path = config.weights_init
+
     model = build_model(weights_path=weights_path, device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
     train_dataset = train_dataset or StainPairKeypointDataset()
 
-    instance.run_dir.mkdir(parents=True, exist_ok=True)
-    start_epoch = instance.resume_epoch
+    start_epoch = next_epoch_number(instance)
+    end_epoch = start_epoch + config.num_epochs - 1
 
     interrupted = False
+    current_epoch = None
     try:
-        for epoch in range(start_epoch, config.num_epochs + 1):
+        for epoch in range(start_epoch, end_epoch + 1):
+            current_epoch = epoch
             train_loader = _make_train_loader(config, epoch, dataset=train_dataset)
             try:
                 epoch_start = time.perf_counter()
@@ -308,10 +307,9 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None, res
                 duration_seconds=duration_seconds,
             )
             instance.epoch_logs.append(log_entry)
-            instance.resume_epoch = epoch + 1
             _print_epoch_summary(epoch, train_means, kpis, duration_seconds)
 
-            if epoch % config.save_every_epochs == 0 or epoch == config.num_epochs:
+            if epoch % config.save_every_epochs == 0 or epoch == end_epoch:
                 path, timestamp = save_checkpoint(model, instance)
                 instance.save_log()
                 print(f"epoch checkpoint saved : {path.name}  ts={timestamp}", flush=True)
@@ -322,7 +320,7 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None, res
             path, timestamp = save_checkpoint(model, instance)
             instance.save_log()
             print(
-                f"\ninterrupted at epoch {instance.resume_epoch}; "
+                f"\ninterrupted during epoch {current_epoch}; "
                 f"checkpoint saved {path.name} ts={timestamp}",
                 flush=True,
             )
@@ -336,7 +334,7 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None, res
 if __name__ == "__main__":
     smoke_config = TrainingConfig(
         name="smoke",
-        num_epochs=3,
+        num_epochs=20,
         batch_size=2,
         save_every_epochs=1,
     )

@@ -14,7 +14,7 @@ def _match_keypoints_single(logits_b, gt, cell_size, radius, dustbin_idx=64):
 
     with torch.no_grad():
         scores = prob[:dustbin_idx].max(dim=0).values
-        det_mask = (scores > 0.015)
+        det_mask = (scores > 0.005)
         det_cells = det_mask.nonzero(as_tuple=False)
         det_px = det_cells.float() * cell_size + cell_size / 2
     # N, M = number of keypoints in GT, DET
