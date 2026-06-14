@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 import conf
 importlib.reload(conf)
 
+from core.fig_io import show_or_save_figure
 from core.tile_vis import render_tile_with_keypoints
 from dataset import StainPairKeypointDataset
 
@@ -129,10 +130,8 @@ def render_training_grid(dataset, indices=None, ncols=2, n_samples=8, seed=0):
 
 def save_training_pair(item, path: Path) -> Path:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     fig = render_training_pair(item)
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    show_or_save_figure(fig, path)
     return path
 
 
@@ -182,14 +181,7 @@ def main():
         item = dataset[0]
         fig = render_training_pair(item)
 
-    if args.save is not None:
-        args.save.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(args.save, dpi=150, bbox_inches="tight")
-        print(f"saved {args.save}")
-    else:
-        plt.show()
-
-    plt.close(fig)
+    show_or_save_figure(fig, args.save)
 
 
 if __name__ == "__main__":

@@ -335,7 +335,7 @@ if __name__ == "__main__":
     smoke_config = TrainingConfig(
         name="smoke",
         num_epochs=20,
-        batch_size=2,
+        batch_size=4,
         save_every_epochs=1,
     )
     instance = ModelInstance(
