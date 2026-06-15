@@ -3,6 +3,7 @@ Visualise StainPairKeypointDataset items: HE/IHC tensors + shared GT keypoints.
 
 tensor_to_gray_numpy(image) -> (H, W) float32 [0, 1]
 render_training_pair(item) -> Figure
+render_stain_pair_grid(dataset, indices, points_for_side, ...) -> Figure
 render_training_grid(dataset, indices, ncols, n_samples, seed) -> Figure
 save_training_pair(item, path) -> Path
 """
@@ -73,59 +74,83 @@ def render_training_pair(item, figsize=(10, 4)):
     return fig
 
 
+def render_stain_pair_grid(
+    dataset,
+    indices,
+    points_for_side,
+    ncols=2,
+    kp_color="lime",
+    kp_size=10,
+):
+    """
+    dataset: StainPairKeypointDataset
+    indices: list of dataset indices
+    points_for_side: callable(item, "he"|"ihc") -> (N, 2+) ndarray or None
+    ncols: number of HE/IHC pairs per row (each pair uses two adjacent columns)
+    returns: matplotlib Figure with HE and IHC side-by-side per tile
+    """
+    n = len(indices)
+    if n == 0:
+        raise ValueError("no indices to render")
+
+    pair_cols = ncols * 2
+    total_rows = math.ceil(n / ncols)
+
+    fig, axes = plt.subplots(total_rows, pair_cols, figsize=(pair_cols * 3.5, total_rows * 3))
+    axes = np.array(axes, dtype=object).reshape(total_rows, pair_cols)
+    used = set()
+
+    for i, idx in enumerate(indices):
+        item = dataset[idx]
+        row = i // ncols
+        pair_col = i % ncols
+
+        img_he = tensor_to_gray_numpy(item["image_he"])
+        img_ihc = tensor_to_gray_numpy(item["image_ihc"])
+        meta = item["meta"]
+
+        pts_he = points_for_side(item, "he")
+        pts_ihc = points_for_side(item, "ihc")
+        n_kp_he = 0 if pts_he is None else len(pts_he)
+        n_kp_ihc = 0 if pts_ihc is None else len(pts_ihc)
+
+        he_ax = axes[row, pair_col * 2]
+        ihc_ax = axes[row, pair_col * 2 + 1]
+        render_tile_with_keypoints(
+            he_ax, img_he, pts_he, _meta_title("HE", meta, n_kp_he),
+            kp_color=kp_color, kp_size=kp_size,
+        )
+        render_tile_with_keypoints(
+            ihc_ax, img_ihc, pts_ihc, _meta_title("IHC", meta, n_kp_ihc),
+            kp_color=kp_color, kp_size=kp_size,
+        )
+        used.add((row, pair_col * 2))
+        used.add((row, pair_col * 2 + 1))
+
+    for row in range(total_rows):
+        for col in range(pair_cols):
+            if (row, col) not in used:
+                axes[row, col].axis("off")
+
+    plt.tight_layout()
+    return fig
+
+
 def render_training_grid(dataset, indices=None, ncols=2, n_samples=8, seed=0):
     """
     dataset: StainPairKeypointDataset
     indices: optional list of dataset indices; if None, sample n_samples random indices
-    returns: matplotlib Figure with HE row and IHC row per sample group
+    returns: matplotlib Figure with HE and IHC side-by-side per tile
     """
     if indices is None:
         rng = np.random.default_rng(seed)
         n_samples = min(n_samples, len(dataset))
         indices = sorted(rng.choice(len(dataset), size=n_samples, replace=False).tolist())
 
-    n = len(indices)
-    if n == 0:
-        raise ValueError("no indices to render")
+    def _gt_for_side(item, side):
+        return _gt_to_numpy(item["gt_keypoints"])
 
-    rows_per_group = 2
-    n_groups = math.ceil(n / ncols)
-    total_rows = n_groups * rows_per_group
-
-    fig, axes = plt.subplots(total_rows, ncols, figsize=(ncols * 3.5, total_rows * 3))
-    axes = np.array(axes).reshape(-1)
-    used = set()
-
-    for i, idx in enumerate(indices):
-        item = dataset[idx]
-        group = i // ncols
-        col = i % ncols
-        he_ax_idx = group * rows_per_group * ncols + col
-        ihc_ax_idx = (group * rows_per_group + 1) * ncols + col
-
-        img_he = tensor_to_gray_numpy(item["image_he"])
-        img_ihc = tensor_to_gray_numpy(item["image_ihc"])
-        pts = _gt_to_numpy(item["gt_keypoints"])
-        meta = item["meta"]
-        n_kp = 0 if pts is None else len(pts)
-
-        render_tile_with_keypoints(
-            axes[he_ax_idx], img_he, pts, _meta_title("HE", meta, n_kp),
-            kp_color="lime", kp_size=10,
-        )
-        render_tile_with_keypoints(
-            axes[ihc_ax_idx], img_ihc, pts, _meta_title("IHC", meta, n_kp),
-            kp_color="lime", kp_size=10,
-        )
-        used.add(he_ax_idx)
-        used.add(ihc_ax_idx)
-
-    for ax_idx, ax in enumerate(axes):
-        if ax_idx not in used:
-            ax.axis("off")
-
-    plt.tight_layout()
-    return fig
+    return render_stain_pair_grid(dataset, indices, _gt_for_side, ncols=ncols)
 
 
 def save_training_pair(item, path: Path) -> Path:
