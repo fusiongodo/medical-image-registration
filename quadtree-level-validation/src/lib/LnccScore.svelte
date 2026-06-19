@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { normalizeImageData, computeLNCC } from '$lib/imageUtils';
+	import { normalizeImageData, computeLNCC, shiftGray } from '$lib/imageUtils';
 
 	let {
 		heSrc,
@@ -8,6 +8,9 @@
 		patchSize,
 		squared = false,
 		cachedScore = undefined,
+		displaced = false,
+		displaceX = undefined,
+		displaceY = undefined,
 		onscore
 	}: {
 		heSrc: string;
@@ -15,6 +18,9 @@
 		patchSize: number;
 		squared?: boolean;
 		cachedScore?: number;
+		displaced?: boolean;
+		displaceX?: number;
+		displaceY?: number;
 		onscore?: (score: number) => void;
 	} = $props();
 
@@ -46,9 +52,12 @@
 		});
 	}
 
-	// Lazy-load images — only when no cached score
+	const hasDisplacement = $derived(displaced && displaceX !== undefined && displaceY !== undefined);
+
+	// Lazy-load images — skip displaced column until displacement is available
 	$effect(() => {
 		if (cachedScore !== undefined || !anchor) return;
+		if (displaced && !hasDisplacement) return;
 		let cancelled = false;
 		const observer = new IntersectionObserver(
 			async (entries) => {
@@ -75,12 +84,17 @@
 			return;
 		}
 
+		if (displaced && !hasDisplacement) return;
 		const g1 = gray1, g2 = gray2, w = imgW, h = imgH, ps = patchSize, sq = squared;
+		const ddx = displaceX, ddy = displaceY;
 		if (!g1 || !g2) return;
 
 		score = null;
 		const handle = requestIdleCallback(() => {
-			const s = computeLNCC(g1, g2, w, h, ps, sq);
+			const g2final = (ddx !== undefined && ddy !== undefined)
+				? shiftGray(g2, w, h, ddx, ddy)
+				: g2;
+			const s = computeLNCC(g1, g2final, w, h, ps, sq);
 			score = s;
 			untrack(() => onscore?.(s));
 		});
@@ -103,7 +117,7 @@
 	style:background={score !== null ? scoreColor(score) : '#1a1d27'}
 >
 	{#if score === null}
-		<span class="placeholder">{gray1 === null && cachedScore === undefined ? '…' : '·'}</span>
+		<span class="placeholder">{(gray1 === null && cachedScore === undefined) || (displaced && !hasDisplacement) ? '…' : '·'}</span>
 	{:else}
 		<span class="value">{score.toFixed(3)}</span>
 	{/if}

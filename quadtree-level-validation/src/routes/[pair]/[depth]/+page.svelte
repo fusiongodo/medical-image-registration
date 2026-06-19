@@ -3,8 +3,9 @@
 	import { deriveStatus, nextDepthForPair, MAX_DEPTH, type ValidationStore } from '$lib/types';
 	import type { TileMeta } from '$lib/types';
 	import OverlayCanvas from '$lib/OverlayCanvas.svelte';
-	import NormCanvas from '$lib/NormCanvas.svelte';
 	import LnccScore from '$lib/LnccScore.svelte';
+	import PointCanvas from '$lib/PointCanvas.svelte';
+	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
 
 	let {
 		data
@@ -20,7 +21,9 @@
 	let submitting = $state(false);
 	let patchSize = $state(11);
 	let sortByScore = $state(false);
+	let sortByFactor = $state(false);
 	let scores = $state<Map<string, number>>(new Map());
+	let displScores = $state<Map<string, number>>(new Map());
 	let cachedScores = $state<Record<string, { lncc?: number; sq?: number }>>({});
 	let pendingEntries: Record<string, { lncc?: number; sq?: number }> = {};
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -41,18 +44,22 @@
 	// Seed sort-map from cache — reads only cachedScores, never scores
 	$effect(() => {
 		const cached = cachedScores;
-		const next = new Map<string, number>();
+		const nextSq = new Map<string, number>();
 		for (const [tile, v] of Object.entries(cached)) {
-			if (v.sq !== undefined) next.set(tile, v.sq);
+			if (v.sq !== undefined) nextSq.set(tile, v.sq);
 		}
-		scores = next;
+		scores = nextSq;
 	});
 
 	function recordScore(tile: string, s: number) {
 		scores = new Map(scores.set(tile, s));
 	}
 
-	function queueScore(tile: string, type: 'lncc' | 'sq', value: number) {
+	function recordDisplScore(tile: string, s: number) {
+		displScores = new Map(displScores.set(tile, s));
+	}
+
+	function queueScore(tile: string, type: 'sq', value: number) {
 		pendingEntries[tile] = { ...pendingEntries[tile], [type]: value };
 		if (saveTimer) clearTimeout(saveTimer);
 		saveTimer = setTimeout(flushScores, 2000);
@@ -70,13 +77,82 @@
 	}
 
 	const sortedTiles = $derived.by(() => {
-		if (!sortByScore) return data.tiles;
+		if (sortByFactor) {
+			const factored = data.tiles
+				.filter((t: TileMeta) => {
+					const sq = scores.get(t.tile), dsq = displScores.get(t.tile);
+					return sq !== undefined && dsq !== undefined && sq > 0;
+				})
+				.sort((a: TileMeta, b: TileMeta) => {
+					const fa = (displScores.get(a.tile) ?? 0) / (scores.get(a.tile) ?? 1);
+					const fb = (displScores.get(b.tile) ?? 0) / (scores.get(b.tile) ?? 1);
+					return fb - fa;
+				});
+			const rest = data.tiles.filter((t: TileMeta) => {
+				const sq = scores.get(t.tile), dsq = displScores.get(t.tile);
+				return !(sq !== undefined && dsq !== undefined && sq > 0);
+			});
+			return [...factored, ...rest];
+		}
+		const map = sortByScore ? scores : null;
+		if (!map) return data.tiles;
 		const scored = data.tiles
-			.filter((t: TileMeta) => scores.has(t.tile))
-			.sort((a: TileMeta, b: TileMeta) => (scores.get(b.tile) ?? 0) - (scores.get(a.tile) ?? 0));
-		const unscored = data.tiles.filter((t: TileMeta) => !scores.has(t.tile));
+			.filter((t: TileMeta) => map.has(t.tile))
+			.sort((a: TileMeta, b: TileMeta) => (map.get(b.tile) ?? 0) - (map.get(a.tile) ?? 0));
+		const unscored = data.tiles.filter((t: TileMeta) => !map.has(t.tile));
 		return [...scored, ...unscored];
 	});
+
+	interface Point { x: number; y: number; }
+	interface TileAnnotation { hePoints: Point[]; ihcPoints: Point[]; }
+
+	let activeRow = $state<string | null>(null);
+	let annotations = $state<Record<string, TileAnnotation>>({});
+
+	$effect(() => {
+		const pair = data.pairId, depth = data.depth;
+		let stale = false;
+		fetch(`/api/annotations?pair=${pair}&depth=${depth}`)
+			.then((r) => r.json())
+			.then((fetched: Record<string, TileAnnotation>) => {
+				if (stale) return;
+				annotations = fetched;
+			});
+		return () => { stale = true; annotations = {}; activeRow = null; };
+	});
+
+	function addPoint(tile: string, side: 'he' | 'ihc', x: number, y: number) {
+		const prev = annotations[tile] ?? { hePoints: [], ihcPoints: [] };
+		const sideKey = side === 'he' ? 'hePoints' : 'ihcPoints';
+		const updated: TileAnnotation = {
+			...prev,
+			[sideKey]: prev[sideKey].length < 2 ? [...prev[sideKey], { x, y }] : [{ x, y }]
+		};
+		annotations = { ...annotations, [tile]: updated };
+		fetch('/api/annotations', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				pair_id: data.pairId,
+				depth: data.depth,
+				tile,
+				hePoints: updated.hePoints,
+				ihcPoints: updated.ihcPoints
+			})
+		});
+	}
+
+	function displacement(tile: string): { dx: number; dy: number } | null {
+		const ann = annotations[tile];
+		if (!ann || ann.hePoints.length === 0 || ann.ihcPoints.length === 0) return null;
+		const pairs = Math.min(ann.hePoints.length, ann.ihcPoints.length);
+		let dx = 0, dy = 0;
+		for (let i = 0; i < pairs; i++) {
+			dx += ann.hePoints[i].x - ann.ihcPoints[i].x;
+			dy += ann.hePoints[i].y - ann.ihcPoints[i].y;
+		}
+		return { dx: dx / pairs, dy: dy / pairs };
+	}
 
 	const status = $derived(deriveStatus(data.validation, data.pairId));
 	const alreadyEvaluated = $derived(
@@ -128,8 +204,12 @@
 		</div>
 
 		<label class="sort-control">
-			<input type="checkbox" bind:checked={sortByScore} />
+			<input type="checkbox" bind:checked={sortByScore} onchange={() => { if (sortByScore) sortByFactor = false; }} />
 			<span>Sort by LNCC²</span>
+		</label>
+		<label class="sort-control">
+			<input type="checkbox" bind:checked={sortByFactor} onchange={() => { if (sortByFactor) sortByScore = false; }} />
+			<span>Sort by Factor</span>
 		</label>
 
 		<label class="patch-control">
@@ -165,24 +245,49 @@
 				<span class="col-header sticky-header">HE norm</span>
 				<span class="col-header sticky-header">IHC norm</span>
 				<span class="col-header sticky-header">Overlay</span>
-				<span class="col-header sticky-header">Sobel overlay</span>
-				<span class="col-header sticky-header">LNCC</span>
+				<span class="col-header sticky-header">Displaced</span>
 				<span class="col-header sticky-header">LNCC²</span>
+				<span class="col-header sticky-header">LNCC² realigned</span>
+				<span class="col-header sticky-header">Factor</span>
 
 				{#each sortedTiles as t (`${data.depth}-${t.tile}`)}
 					{@const heSrc = `/api/image?path=${encodeURIComponent(t.he)}`}
 					{@const ihcSrc = `/api/image?path=${encodeURIComponent(t.ihc)}`}
-					<span class="tile-id">{t.tile}</span>
-					<NormCanvas src={heSrc} />
-					<NormCanvas src={ihcSrc} />
+					{@const isActive = activeRow === t.tile}
+					{@const ann = annotations[t.tile] ?? { hePoints: [], ihcPoints: [] }}
+					{@const disp = displacement(t.tile) ?? { dx: 0, dy: 0 }}
+					{@const rawDisp = displacement(t.tile)}
+					<span
+						class="tile-id"
+						class:tile-id-active={isActive}
+						onclick={() => { activeRow = isActive ? null : t.tile; }}
+						role="button"
+						tabindex="0"
+						onkeydown={(e) => e.key === 'Enter' && (activeRow = isActive ? null : t.tile)}
+					>{t.tile}</span>
+					<PointCanvas src={heSrc} active={isActive} points={ann.hePoints}
+						onpoint={(x, y) => addPoint(t.tile, 'he', x, y)} />
+					<PointCanvas src={ihcSrc} active={isActive} points={ann.ihcPoints}
+						onpoint={(x, y) => addPoint(t.tile, 'ihc', x, y)} />
 					<OverlayCanvas {heSrc} {ihcSrc} />
-					<OverlayCanvas {heSrc} {ihcSrc} edges={true} />
-					<LnccScore {heSrc} {ihcSrc} {patchSize}
-						cachedScore={cachedScores[t.tile]?.lncc}
-						onscore={(s) => queueScore(t.tile, 'lncc', s)} />
+					<DisplacedOverlay {heSrc} {ihcSrc} dx={disp.dx} dy={disp.dy} />
 					<LnccScore {heSrc} {ihcSrc} {patchSize} squared={true}
 						cachedScore={cachedScores[t.tile]?.sq}
 						onscore={(s) => { recordScore(t.tile, s); queueScore(t.tile, 'sq', s); }} />
+					<LnccScore {heSrc} {ihcSrc} {patchSize} squared={true}
+						displaced={true}
+						displaceX={rawDisp?.dx}
+						displaceY={rawDisp?.dy}
+						onscore={(s) => recordDisplScore(t.tile, s)} />
+					{@const sq = scores.get(t.tile)}
+					{@const dsq = displScores.get(t.tile)}
+					<div class="factor-cell" class:factor-positive={dsq !== undefined && sq !== undefined && dsq > sq}>
+						{#if dsq !== undefined && sq !== undefined && sq > 0}
+							{(dsq / sq).toFixed(3)}
+						{:else}
+							<span class="factor-placeholder">…</span>
+						{/if}
+					</div>
 				{/each}
 			</div>
 		</div>
@@ -394,7 +499,7 @@
 
 	.tile-grid {
 		display: grid;
-		grid-template-columns: 48px repeat(4, auto) 80px 80px;
+		grid-template-columns: 48px repeat(4, auto) 80px 80px 80px;
 		column-gap: 12px;
 		row-gap: 12px;
 		padding: 0 20px 20px;
@@ -422,6 +527,45 @@
 		font-size: 0.65rem;
 		color: #4b5563;
 		text-align: right;
+		cursor: pointer;
+		user-select: none;
+		padding: 4px 4px 4px 0;
+		border-radius: 3px;
+		transition: color 0.1s;
+	}
+
+	.tile-id:hover {
+		color: #9ca3af;
+	}
+
+	.tile-id-active {
+		color: #a5b4fc;
+		font-weight: 700;
+	}
+
+	.factor-cell {
+		height: 180px;
+		width: 80px;
+		border-radius: 4px;
+		border: 1px solid #2a2d3a;
+		background: #1a1d27;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.78rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		color: #ef4444;
+		transition: background 0.3s, color 0.3s;
+	}
+
+	.factor-cell.factor-positive {
+		color: #22c55e;
+	}
+
+	.factor-placeholder {
+		color: #4b5563;
+		font-weight: 400;
 	}
 
 	footer {

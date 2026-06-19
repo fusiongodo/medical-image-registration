@@ -87,6 +87,20 @@ export function computeLNCC(
 	return count > 0 ? sum / count : 0;
 }
 
+export function shiftGray(gray: Float32Array, w: number, h: number, dx: number, dy: number): Float32Array {
+	const out = new Float32Array(w * h);
+	const rdx = Math.round(dx), rdy = Math.round(dy);
+	for (let y = 0; y < h; y++) {
+		for (let x = 0; x < w; x++) {
+			const srcX = x - rdx, srcY = y - rdy;
+			if (srcX >= 0 && srcX < w && srcY >= 0 && srcY < h) {
+				out[y * w + x] = gray[srcY * w + srcX];
+			}
+		}
+	}
+	return out;
+}
+
 export const NORM_MEAN = 128;
 export const NORM_STD = 64;
 
