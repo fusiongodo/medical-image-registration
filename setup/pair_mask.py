@@ -13,14 +13,6 @@ LABELME_DIR = MASK_DIR / "labelme"
 
 PRODUCTION_MIN_INSIDE_FRACTION = 0.33
 
-TEST_RUN_AREA_THRESHOLDS = {
-    "cfg_0": 0.40,
-    "cfg_1": 0.35,
-    "cfg_2": 0.33,
-    "cfg_3": 0.28,
-    "cfg_4": 0.20,
-}
-
 
 def mask_json_path(pair_id):
     return MASK_DIR / f"{pair_id}_he.json"
@@ -127,6 +119,45 @@ def tile_inside_fraction(mask, grid, x_idx, y_idx):
     if region.size == 0:
         return 0.0
     return float(region.mean())
+
+
+def tile_inside_fraction_from_polygons(
+    polygons, grid, x_idx, y_idx, page_height, page_width,
+):
+    x0, y0, x1, y1 = tile_bbox(grid, x_idx, y_idx, page_height, page_width)
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    ys, xs = np.mgrid[y0:y1, x0:x1]
+    points = np.column_stack((xs.ravel(), ys.ravel()))
+    inside = np.zeros(len(points), dtype=bool)
+    for polygon in polygons:
+        inside |= MplPath(polygon).contains_points(points)
+    return float(inside.mean())
+
+
+def scaled_polygons_for_page(pair_id, page_width, page_height):
+    meta = load_pair_mask(pair_id)
+    if meta is None:
+        return None
+    return [
+        scaled_polygon(
+            polygon,
+            meta["page_width"],
+            meta["page_height"],
+            page_width,
+            page_height,
+        )
+        for polygon in mask_polygons(meta)
+    ]
+
+
+def is_tile_excluded_by_polygons(
+    polygons, grid, x_idx, y_idx, page_height, page_width, min_inside_fraction,
+):
+    fraction = tile_inside_fraction_from_polygons(
+        polygons, grid, x_idx, y_idx, page_height, page_width,
+    )
+    return fraction < min_inside_fraction
 
 
 def is_tile_excluded_by_mask(mask, grid, x_idx, y_idx, min_inside_fraction):

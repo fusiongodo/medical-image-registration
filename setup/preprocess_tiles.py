@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 import conf
 
+TEST_LAYOUT = False
 EXCLUDE_BACKGROUND = True
 CROPPED_DIR = conf.PROJECT_ROOT / "data" / "cropped"
 ANNOTATION_PATH = conf.ANNOTATION_PATH
@@ -34,9 +35,14 @@ def background_tile_paths(pair_id, crop_depth, x_idx, y_idx):
     return folder / f"{stem}_he.png", folder / f"{stem}_ihc.png"
 
 
-def test_class_tile_paths(test_run_class, pair_id, crop_depth, x_idx, y_idx, is_background):
-    sub = "background" if is_background else "valid"
-    folder = CROPPED_DIR / "test" / test_run_class / sub
+def test_valid_tile_paths(pair_id, crop_depth, x_idx, y_idx):
+    folder = CROPPED_DIR / "test" / f"d{crop_depth}"
+    stem = f"{pair_id}_{x_idx}_{y_idx}"
+    return folder / f"{stem}_he.png", folder / f"{stem}_ihc.png"
+
+
+def test_background_tile_paths(pair_id, crop_depth, x_idx, y_idx):
+    folder = CROPPED_DIR / "test" / "background"
     stem = f"{pair_id}_d{crop_depth}_{x_idx}_{y_idx}"
     return folder / f"{stem}_he.png", folder / f"{stem}_ihc.png"
 
@@ -47,23 +53,33 @@ def output_paths(job):
     x_idx = job["x_idx"]
     y_idx = job["y_idx"]
     is_background = bool(job.get("binary_mask_excluded", False))
-    test_run_class = job.get("test_run_class")
 
-    if test_run_class:
-        return test_class_tile_paths(
-            test_run_class, pair_id, crop_depth, x_idx, y_idx, is_background
-        )
+    if TEST_LAYOUT:
+        if is_background and EXCLUDE_BACKGROUND:
+            return test_background_tile_paths(pair_id, crop_depth, x_idx, y_idx)
+        return test_valid_tile_paths(pair_id, crop_depth, x_idx, y_idx)
     if is_background and EXCLUDE_BACKGROUND:
         return background_tile_paths(pair_id, crop_depth, x_idx, y_idx)
     return paired_tile_paths(pair_id, crop_depth, x_idx, y_idx)
 
 
+_BAD_PAGES = set()
+
+
 def load_page(path, pyramid_page_idx, page_cache):
     path = conf.resolve(path)
     key = (str(path), int(pyramid_page_idx))
+    if key in _BAD_PAGES:
+        raise RuntimeError(f"bad page (cached): {path} page {pyramid_page_idx}")
     if key not in page_cache:
         with tifffile.TiffFile(path) as slide:
-            page_cache[key] = slide.pages[pyramid_page_idx].asarray()
+            try:
+                page_cache[key] = slide.pages[pyramid_page_idx].asarray()
+            except Exception as exc:
+                _BAD_PAGES.add(key)
+                raise RuntimeError(
+                    f"Failed to decode {path} page {pyramid_page_idx}: {exc}"
+                ) from exc
     return page_cache[key]
 
 
@@ -118,6 +134,7 @@ def main():
     print(f"System          : {conf.SYSTEM_PREFIX!r}")
     print(f"Annotation path : {ANNOTATION_PATH}")
     print(f"Output dir      : {CROPPED_DIR}")
+    print(f"Layout          : {'test (flat by depth)' if TEST_LAYOUT else 'production'}")
     print(f"Max crop depth  : {MAX_CROP_DEPTH}")
     print(f"Exclude bg      : {EXCLUDE_BACKGROUND}")
     print(f"Overwrite       : {OVERWRITE}")
@@ -131,23 +148,33 @@ def main():
         jobs = json.load(f)
 
     jobs = filter_jobs(jobs)
-    is_test_json = any(job.get("test_run_class") for job in jobs)
-    print(f"Mode            : {'test (test_run_class)' if is_test_json else 'production'}")
     print(f"Jobs to process : {len(jobs)}")
 
     page_cache = {}
     counts = {"passed": 0, "background": 0, "skipped": 0, "written": 0}
-    class_counts = defaultdict(lambda: {"valid": 0, "background": 0})
+    depth_counts = defaultdict(lambda: {"valid": 0, "background": 0})
+    current_pair_id = None
 
     for idx, job in enumerate(jobs, start=1):
+        if job["pair_id"] != current_pair_id:
+            page_cache.clear()
+            current_pair_id = job["pair_id"]
+
         he_path, ihc_path = output_paths(job)
 
         if should_skip(he_path, ihc_path):
             counts["skipped"] += 1
             continue
 
-        save_side(job, "fixed", he_path, page_cache)
-        save_side(job, "moving", ihc_path, page_cache)
+        try:
+            save_side(job, "fixed", he_path, page_cache)
+            save_side(job, "moving", ihc_path, page_cache)
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "bad page (cached)" not in msg:
+                print(f"\n[WARN] {msg} — all tiles on this page will be skipped")
+            counts["skipped"] += 1
+            continue
         counts["written"] += 1
 
         is_bg = job.get("binary_mask_excluded", False) and EXCLUDE_BACKGROUND
@@ -156,10 +183,9 @@ def main():
         else:
             counts["passed"] += 1
 
-        test_run_class = job.get("test_run_class")
-        if test_run_class:
+        if TEST_LAYOUT:
             bucket = "background" if is_bg else "valid"
-            class_counts[test_run_class][bucket] += 1
+            depth_counts[job["crop_depth"]][bucket] += 1
 
         if idx % LOG_EVERY == 0 or idx == len(jobs):
             print(
@@ -168,12 +194,12 @@ def main():
             )
 
     print()
-    if class_counts:
-        print("Per config:")
-        for class_name in sorted(class_counts):
-            valid = class_counts[class_name]["valid"]
-            background = class_counts[class_name]["background"]
-            print(f"  {class_name}: valid={valid} background={background}")
+    if depth_counts:
+        print("Per depth:")
+        for depth in sorted(depth_counts):
+            valid = depth_counts[depth]["valid"]
+            background = depth_counts[depth]["background"]
+            print(f"  d{depth}: valid={valid} background={background}")
         print()
     print(f"Valid jobs written     : {counts['passed']}")
     print(f"Background jobs written: {counts['background']}")

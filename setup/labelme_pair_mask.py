@@ -14,7 +14,7 @@ from setup.pair_mask import (
 )
 
 MODE = "annotate"
-PAIR_ID = 1
+PAIR_ID = 24
 PYRAMID_PAGE_IDX = 4
 EXPORT_MAX_SIDE = 8192
 LABELME_SHAPE_LABEL = "valid"
@@ -40,7 +40,9 @@ def launch_labelme(image_path):
         str(image_path),
     ]
     print(f"Launching LabelMe: {' '.join(cmd)}")
-    print("Draw polygon(s), label 'valid', close LabelMe when done.")
+    print()
+    print("Use the regular Polygon tool (Ctrl+N) — NOT 'AI Polygon' or 'AI Mask'.")
+    print("Click vertices around tissue, double-click to close, then close LabelMe.")
     print("(autosave writes JSON next to the PNG on each edit)")
     print()
     subprocess.run(cmd, check=True)

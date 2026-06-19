@@ -23,7 +23,7 @@ client = ApiClient(configuration)
 image_registration_api = ImageRegistrationApi(client)
 images_api = ImagesApi(client)
 
-MAX_DATA_BYTES = 50 * 1024 * 1024 * 1024
+MAX_DATA_BYTES = 100 * 1024 * 1024 * 1024
 current_data_bytes = 0
 dataset_labels = []
 
@@ -35,7 +35,7 @@ print(f"Found {len(registrations)} registration pairs. Starting download pipelin
 
 for reg in registrations:
     if current_data_bytes >= MAX_DATA_BYTES:
-        print("\n[!] 50GB Limit reached. Halting downloads.")
+        print("\n[!] 100GB Limit reached. Halting downloads.")
         break
 
     src_id = reg.source_image

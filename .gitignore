@@ -7,7 +7,7 @@ data/exact/
 *.pyc
 
 .idea/
-
+data/cropped/
 introducing_superpoint/runs/
 remote/logs/
 remote/runpodKey
