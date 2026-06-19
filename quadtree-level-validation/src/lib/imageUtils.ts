@@ -88,6 +88,62 @@ export function computeLNCC(
 }
 
 /**
+ * Patch-based SSIM averaged over the tile.
+ * Reuses the same five SATs as computeLNCC (mean, mean², cross-product).
+ * C1, C2 tuned to the normalized intensity range [0, 255] with std ≈ 64:
+ *   C1 = (0.01 * 255)² ≈ 6.5   C2 = (0.03 * 255)² ≈ 58.5
+ * Returns mean SSIM ∈ [-1, 1].
+ */
+export function computeSSIM(
+	gray1: Float32Array,
+	gray2: Float32Array,
+	w: number,
+	h: number,
+	patchSize: number
+): number {
+	const C1 = 6.5025;
+	const C2 = 58.5225;
+	const r = Math.floor(patchSize / 2);
+	const area = patchSize * patchSize;
+
+	const g1sq = new Float32Array(w * h);
+	const g2sq = new Float32Array(w * h);
+	const g12  = new Float32Array(w * h);
+	for (let i = 0; i < w * h; i++) {
+		g1sq[i] = gray1[i] * gray1[i];
+		g2sq[i] = gray2[i] * gray2[i];
+		g12[i]  = gray1[i] * gray2[i];
+	}
+
+	const sat1   = buildSAT(gray1, w, h);
+	const sat2   = buildSAT(gray2, w, h);
+	const sat1sq = buildSAT(g1sq, w, h);
+	const sat2sq = buildSAT(g2sq, w, h);
+	const sat12  = buildSAT(g12, w, h);
+
+	let sum = 0;
+	let count = 0;
+
+	for (let y = r; y < h - r; y++) {
+		for (let x = r; x < w - r; x++) {
+			const x1 = x - r, y1 = y - r, x2 = x + r, y2 = y + r;
+			const mu1  = rectSum(sat1,   w, x1, y1, x2, y2) / area;
+			const mu2  = rectSum(sat2,   w, x1, y1, x2, y2) / area;
+			const sig1 = Math.max(0, rectSum(sat1sq, w, x1, y1, x2, y2) / area - mu1 * mu1);
+			const sig2 = Math.max(0, rectSum(sat2sq, w, x1, y1, x2, y2) / area - mu2 * mu2);
+			const cov  = rectSum(sat12,  w, x1, y1, x2, y2) / area - mu1 * mu2;
+
+			const num = (2 * mu1 * mu2 + C1) * (2 * cov  + C2);
+			const den = (mu1*mu1 + mu2*mu2 + C1) * (sig1 + sig2 + C2);
+			sum += num / den;
+			count++;
+		}
+	}
+
+	return count > 0 ? sum / count : 0;
+}
+
+/**
  * NGF score ∈ [0, 1]: mean over all interior pixels of
  *   sim(p) = (g_a · g_b)² / (|g_a|² · |g_b|² + ε)
  * where g_a, g_b are Sobel gradient vectors of gray1, gray2 at pixel p.

@@ -7,6 +7,7 @@
 	import PointCanvas from '$lib/PointCanvas.svelte';
 	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
 	import NgfScore from '$lib/NgfScore.svelte';
+	import SsimScore from '$lib/SsimScore.svelte';
 
 	let {
 		data
@@ -33,6 +34,8 @@
 	let sortByFactor = $state(false);
 	let scores = $state<Map<string, number>>(new Map());
 	let displScores = $state<Map<string, number>>(new Map());
+	let ssimScores = $state<Map<string, number>>(new Map());
+	let ssimDisplScores = $state<Map<string, number>>(new Map());
 	let cachedScores = $state<Record<string, { lncc?: number; sq?: number }>>({});
 	let pendingEntries: Record<string, { lncc?: number; sq?: number }> = {};
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -66,6 +69,14 @@
 
 	function recordDisplScore(tile: string, s: number) {
 		displScores = new Map(displScores.set(tile, s));
+	}
+
+	function recordSsimScore(tile: string, s: number) {
+		ssimScores = new Map(ssimScores.set(tile, s));
+	}
+
+	function recordSsimDisplScore(tile: string, s: number) {
+		ssimDisplScores = new Map(ssimDisplScores.set(tile, s));
 	}
 
 	function queueScore(tile: string, type: 'sq', value: number) {
@@ -308,6 +319,9 @@
 				<span class="col-header sticky-header">|Δ| px</span>
 				<span class="col-header sticky-header">NGF</span>
 			<span class="col-header sticky-header">NGF realigned</span>
+			<span class="col-header sticky-header">SSIM</span>
+			<span class="col-header sticky-header">SSIM realigned</span>
+			<span class="col-header sticky-header">SSIM Factor</span>
 
 			{#each displayOrder as t (`${data.depth}-${t.tile}`)}	
 					{@const heSrc = `/api/image?path=${encodeURIComponent(t.he)}`}
@@ -357,6 +371,20 @@
 					</div>
 				<NgfScore {heSrc} {ihcSrc} />
 				<NgfScore {heSrc} {ihcSrc} displaced={true} displaceX={rawDisp?.dx} displaceY={rawDisp?.dy} />
+				<SsimScore {heSrc} {ihcSrc} patchSize={effectivePatchSize}
+					onscore={(s) => recordSsimScore(t.tile, s)} />
+				<SsimScore {heSrc} {ihcSrc} patchSize={effectivePatchSize}
+					displaced={true} displaceX={rawDisp?.dx} displaceY={rawDisp?.dy}
+					onscore={(s) => recordSsimDisplScore(t.tile, s)} />
+				{@const ssim = ssimScores.get(t.tile)}
+				{@const dssim = ssimDisplScores.get(t.tile)}
+				<div class="factor-cell" class:factor-positive={dssim !== undefined && ssim !== undefined && dssim > ssim}>
+					{#if dssim !== undefined && ssim !== undefined && ssim !== 0}
+						{(dssim / ssim).toFixed(3)}
+					{:else}
+						<span class="factor-placeholder">…</span>
+					{/if}
+				</div>
 				{/each}
 			</div>
 		</div>
@@ -601,7 +629,7 @@
 
 	.tile-grid {
 		display: grid;
-		grid-template-columns: 48px repeat(4, auto) 80px 80px 80px 80px 80px 80px;
+		grid-template-columns: 48px repeat(4, auto) 80px 80px 80px 80px 80px 80px 80px 80px 80px;
 		column-gap: 12px;
 		row-gap: 12px;
 		padding: 0 20px 20px;
