@@ -87,6 +87,43 @@ export function computeLNCC(
 	return count > 0 ? sum / count : 0;
 }
 
+/**
+ * NGF score ∈ [0, 1]: mean over all interior pixels of
+ *   sim(p) = (g_a · g_b)² / (|g_a|² · |g_b|² + ε)
+ * where g_a, g_b are Sobel gradient vectors of gray1, gray2 at pixel p.
+ */
+export function computeNGF(
+	gray1: Float32Array,
+	gray2: Float32Array,
+	w: number,
+	h: number,
+	eps = 1e-3
+): number {
+	let sum = 0;
+	let count = 0;
+	for (let y = 1; y < h - 1; y++) {
+		for (let x = 1; x < w - 1; x++) {
+			const tl1 = gray1[(y-1)*w+(x-1)], tc1 = gray1[(y-1)*w+x], tr1 = gray1[(y-1)*w+(x+1)];
+			const ml1 = gray1[y*w+(x-1)],                               mr1 = gray1[y*w+(x+1)];
+			const bl1 = gray1[(y+1)*w+(x-1)], bc1 = gray1[(y+1)*w+x], br1 = gray1[(y+1)*w+(x+1)];
+			const ax = -tl1 - 2*ml1 - bl1 + tr1 + 2*mr1 + br1;
+			const ay = -tl1 - 2*tc1 - tr1 + bl1 + 2*bc1 + br1;
+
+			const tl2 = gray2[(y-1)*w+(x-1)], tc2 = gray2[(y-1)*w+x], tr2 = gray2[(y-1)*w+(x+1)];
+			const ml2 = gray2[y*w+(x-1)],                               mr2 = gray2[y*w+(x+1)];
+			const bl2 = gray2[(y+1)*w+(x-1)], bc2 = gray2[(y+1)*w+x], br2 = gray2[(y+1)*w+(x+1)];
+			const bx = -tl2 - 2*ml2 - bl2 + tr2 + 2*mr2 + br2;
+			const by = -tl2 - 2*tc2 - tr2 + bl2 + 2*bc2 + br2;
+
+			const dot = ax * bx + ay * by;
+			const den = (ax*ax + ay*ay) * (bx*bx + by*by) + eps;
+			sum += (dot * dot) / den;
+			count++;
+		}
+	}
+	return count > 0 ? sum / count : 0;
+}
+
 export function shiftGray(gray: Float32Array, w: number, h: number, dx: number, dy: number): Float32Array {
 	const out = new Float32Array(w * h);
 	const rdx = Math.round(dx), rdy = Math.round(dy);

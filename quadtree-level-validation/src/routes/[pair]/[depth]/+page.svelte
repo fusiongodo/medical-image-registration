@@ -6,6 +6,7 @@
 	import LnccScore from '$lib/LnccScore.svelte';
 	import PointCanvas from '$lib/PointCanvas.svelte';
 	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
+	import NgfScore from '$lib/NgfScore.svelte';
 
 	let {
 		data
@@ -20,6 +21,14 @@
 
 	let submitting = $state(false);
 	let patchSize = $state(11);
+	let effectivePatchSize = $state(11);
+	let patchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+	function onPatchInput(e: Event) {
+		patchSize = (e.target as HTMLInputElement).valueAsNumber;
+		if (patchDebounce) clearTimeout(patchDebounce);
+		patchDebounce = setTimeout(() => { effectivePatchSize = patchSize; }, 400);
+	}
 	let sortByScore = $state(false);
 	let sortByFactor = $state(false);
 	let scores = $state<Map<string, number>>(new Map());
@@ -28,9 +37,9 @@
 	let pendingEntries: Record<string, { lncc?: number; sq?: number }> = {};
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-	// Fetch cached scores — reads only pair/depth/patchSize, never scores
+	// Fetch cached scores — reads only pair/depth/effectivePatchSize, never scores
 	$effect(() => {
-		const pair = data.pairId, depth = data.depth, ps = patchSize;
+		const pair = data.pairId, depth = data.depth, ps = effectivePatchSize;
 		let stale = false;
 		fetch(`/api/scores?pair=${pair}&depth=${depth}&patchSize=${ps}`)
 			.then((r) => r.json())
@@ -72,7 +81,7 @@
 		await fetch('/api/scores', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ pair_id: data.pairId, depth: data.depth, patchSize, entries })
+			body: JSON.stringify({ pair_id: data.pairId, depth: data.depth, patchSize: effectivePatchSize, entries })
 		});
 	}
 
@@ -107,6 +116,11 @@
 	interface TileAnnotation { hePoints: Point[]; ihcPoints: Point[]; }
 
 	let activeRow = $state<string | null>(null);
+	let displayOrder = $state<TileMeta[]>([]);
+
+	$effect(() => {
+		if (activeRow === null) displayOrder = sortedTiles;
+	});
 	let annotations = $state<Record<string, TileAnnotation>>({});
 
 	$effect(() => {
@@ -153,6 +167,38 @@
 		}
 		return { dx: dx / pairs, dy: dy / pairs };
 	}
+
+	const levelCorrelation = null as { r: number; n: number } | null; /* disabled
+	$derived.by(() => {
+		const xs: number[] = [];
+		const ys: number[] = [];
+		for (const t of data.tiles) {
+			const sq  = scores.get(t.tile);
+			const dsq = displScores.get(t.tile);
+			const ann = annotations[t.tile];
+			if (sq === undefined || dsq === undefined || sq <= 0 || !ann) continue;
+			const pairs = Math.min(ann.hePoints.length, ann.ihcPoints.length);
+			if (pairs === 0) continue;
+			let dx = 0, dy = 0;
+			for (let i = 0; i < pairs; i++) {
+				dx += ann.hePoints[i].x - ann.ihcPoints[i].x;
+				dy += ann.hePoints[i].y - ann.ihcPoints[i].y;
+			}
+			xs.push(Math.sqrt((dx / pairs) ** 2 + (dy / pairs) ** 2));
+			ys.push(dsq / sq);
+		}
+		const n = xs.length;
+		if (n < 2) return null;
+		const mx = xs.reduce((a, b) => a + b, 0) / n;
+		const my = ys.reduce((a, b) => a + b, 0) / n;
+		let num = 0, dx2 = 0, dy2 = 0;
+		for (let i = 0; i < n; i++) {
+			const ex = xs[i] - mx, ey = ys[i] - my;
+			num += ex * ey; dx2 += ex * ex; dy2 += ey * ey;
+		}
+		const den = Math.sqrt(dx2 * dy2);
+		return den > 0 ? { r: num / den, n } : null;
+	}); */
 
 	const status = $derived(deriveStatus(data.validation, data.pairId));
 	const alreadyEvaluated = $derived(
@@ -214,7 +260,7 @@
 
 		<label class="patch-control">
 			<span class="patch-label">Patch</span>
-			<input type="range" min="3" max="51" step="2" bind:value={patchSize} />
+			<input type="range" min="3" max="51" step="2" value={patchSize} oninput={onPatchInput} />
 			<span class="patch-value">{patchSize}px</span>
 		</label>
 
@@ -236,6 +282,16 @@
 		</div>
 	</header>
 
+	{#if levelCorrelation !== null}
+		<div class="agg-bar">
+			<span class="agg-label">corr(|Δ|, Factor)</span>
+			<span class="agg-value" class:agg-pos={levelCorrelation.r > 0} class:agg-neg={levelCorrelation.r < 0}>
+				{levelCorrelation.r.toFixed(3)}
+			</span>
+			<span class="agg-n">n = {levelCorrelation.n}</span>
+		</div>
+	{/if}
+
 	{#if data.tiles.length === 0}
 		<div class="empty">No tiles found for this pair / depth.</div>
 	{:else}
@@ -249,8 +305,11 @@
 				<span class="col-header sticky-header">LNCC²</span>
 				<span class="col-header sticky-header">LNCC² realigned</span>
 				<span class="col-header sticky-header">Factor</span>
+				<span class="col-header sticky-header">|Δ| px</span>
+				<span class="col-header sticky-header">NGF</span>
+			<span class="col-header sticky-header">NGF realigned</span>
 
-				{#each sortedTiles as t (`${data.depth}-${t.tile}`)}
+			{#each displayOrder as t (`${data.depth}-${t.tile}`)}	
 					{@const heSrc = `/api/image?path=${encodeURIComponent(t.he)}`}
 					{@const ihcSrc = `/api/image?path=${encodeURIComponent(t.ihc)}`}
 					{@const isActive = activeRow === t.tile}
@@ -271,10 +330,10 @@
 						onpoint={(x, y) => addPoint(t.tile, 'ihc', x, y)} />
 					<OverlayCanvas {heSrc} {ihcSrc} />
 					<DisplacedOverlay {heSrc} {ihcSrc} dx={disp.dx} dy={disp.dy} />
-					<LnccScore {heSrc} {ihcSrc} {patchSize} squared={true}
+					<LnccScore {heSrc} {ihcSrc} patchSize={effectivePatchSize} squared={true}
 						cachedScore={cachedScores[t.tile]?.sq}
 						onscore={(s) => { recordScore(t.tile, s); queueScore(t.tile, 'sq', s); }} />
-					<LnccScore {heSrc} {ihcSrc} {patchSize} squared={true}
+					<LnccScore {heSrc} {ihcSrc} patchSize={effectivePatchSize} squared={true}
 						displaced={true}
 						displaceX={rawDisp?.dx}
 						displaceY={rawDisp?.dy}
@@ -288,6 +347,16 @@
 							<span class="factor-placeholder">…</span>
 						{/if}
 					</div>
+					{@const dispLen = rawDisp !== null ? Math.sqrt(rawDisp.dx ** 2 + rawDisp.dy ** 2) : null}
+					<div class="factor-cell">
+						{#if dispLen !== null}
+							{dispLen.toFixed(1)}
+						{:else}
+							<span class="factor-placeholder">…</span>
+						{/if}
+					</div>
+				<NgfScore {heSrc} {ihcSrc} />
+				<NgfScore {heSrc} {ihcSrc} displaced={true} displaceX={rawDisp?.dx} displaceY={rawDisp?.dy} />
 				{/each}
 			</div>
 		</div>
@@ -483,6 +552,39 @@
 		font-size: 0.9rem;
 	}
 
+	.agg-bar {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 6px 20px;
+		border-bottom: 1px solid #2a2d3a;
+		background: #13161f;
+		flex-shrink: 0;
+	}
+
+	.agg-label {
+		font-size: 0.7rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #6b7280;
+	}
+
+	.agg-value {
+		font-size: 0.88rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		color: #9ca3af;
+	}
+
+	.agg-value.agg-pos { color: #22c55e; }
+	.agg-value.agg-neg { color: #ef4444; }
+
+	.agg-n {
+		font-size: 0.7rem;
+		color: #4b5563;
+	}
+
 	.scroll-wrap {
 		flex: 1;
 		overflow: auto;
@@ -499,7 +601,7 @@
 
 	.tile-grid {
 		display: grid;
-		grid-template-columns: 48px repeat(4, auto) 80px 80px 80px;
+		grid-template-columns: 48px repeat(4, auto) 80px 80px 80px 80px 80px 80px;
 		column-gap: 12px;
 		row-gap: 12px;
 		padding: 0 20px 20px;
