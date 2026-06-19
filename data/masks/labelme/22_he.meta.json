@@ -1,0 +1,12 @@
+{
+  "pair_id": 22,
+  "target_image_id": 7791,
+  "pyramid_page_idx": 4,
+  "page_width": 2085,
+  "page_height": 1367,
+  "export_width": 2085,
+  "export_height": 1367,
+  "export_scale": 1.0,
+  "image_path": "22_he.png",
+  "labelme_shape_label": "valid"
+}

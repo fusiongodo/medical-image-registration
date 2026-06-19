@@ -14,7 +14,7 @@ from setup.pair_mask import (
 )
 
 MODE = "annotate"
-PAIR_ID = 24
+PAIR_ID = 22
 PYRAMID_PAGE_IDX = 4
 EXPORT_MAX_SIDE = 8192
 LABELME_SHAPE_LABEL = "valid"
