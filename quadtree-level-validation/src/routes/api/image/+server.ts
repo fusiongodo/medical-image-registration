@@ -3,16 +3,18 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve, normalize } from 'path';
 import type { RequestHandler } from './$types';
 
-const CROPPED_ROOT = resolve('..', 'data', 'cropped');
+const ALLOWED_ROOTS = [
+	normalize(resolve('..', 'data', 'cropped')),
+	normalize(resolve('..', 'data', 'cropped_smooth')),
+];
 
 export const GET: RequestHandler = ({ url }) => {
 	const rawPath = url.searchParams.get('path');
 	if (!rawPath) error(400, 'Missing path');
 
-	const absolute = resolve('..', rawPath);
-	const normalizedRoot = normalize(CROPPED_ROOT);
+	const absolute = normalize(resolve('..', rawPath));
 
-	if (!absolute.startsWith(normalizedRoot)) {
+	if (!ALLOWED_ROOTS.some((root) => absolute.startsWith(root))) {
 		error(403, 'Forbidden');
 	}
 

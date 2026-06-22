@@ -5,16 +5,24 @@ import type { PageServerLoad } from './$types';
 import type { TileMeta } from '$lib/types';
 import { MAX_DEPTH, NUM_PAIRS } from '$lib/types';
 
-const CROPPED_ROOT = resolve('..', 'data', 'cropped');
+const CROPPED_ROOT        = resolve('..', 'data', 'cropped');
+const CROPPED_SMOOTH_ROOT = resolve('..', 'data', 'cropped_smooth');
 
-export const load: PageServerLoad = ({ params }) => {
+export const load: PageServerLoad = ({ params, url }) => {
 	const pairId = parseInt(params.pair, 10);
-	const depth = parseInt(params.depth, 10);
+	const depth  = parseInt(params.depth, 10);
+	const smooth = url.searchParams.get('source') === 'smooth';
 
 	if (isNaN(pairId) || pairId < 0 || pairId >= NUM_PAIRS) error(404, 'Invalid pair');
-	if (isNaN(depth) || depth < 0 || depth > MAX_DEPTH) error(404, 'Invalid depth');
+	if (isNaN(depth)  || depth  < 0 || depth  > MAX_DEPTH)  error(404, 'Invalid depth');
 
-	const depthDir = join(CROPPED_ROOT, String(pairId), `d${depth}`);
+	const root     = smooth ? CROPPED_SMOOTH_ROOT : CROPPED_ROOT;
+	const dirLabel = smooth ? 'cropped_smooth' : 'cropped';
+	const depthDir = join(root, String(pairId), `d${depth}`);
+
+	const smoothDepthDir   = join(CROPPED_SMOOTH_ROOT, String(pairId), `d${depth}`);
+	const smoothAvailable  = existsSync(smoothDepthDir);
+
 	let tiles: TileMeta[] = [];
 
 	if (existsSync(depthDir)) {
@@ -22,8 +30,8 @@ export const load: PageServerLoad = ({ params }) => {
 			.filter((e: Dirent) => e.isDirectory())
 			.map((e: Dirent) => ({
 				tile: e.name,
-				he: `data/cropped/${pairId}/d${depth}/${e.name}/he.png`,
-				ihc: `data/cropped/${pairId}/d${depth}/${e.name}/ihc.png`
+				he:  `data/${dirLabel}/${pairId}/d${depth}/${e.name}/he.png`,
+				ihc: `data/${dirLabel}/${pairId}/d${depth}/${e.name}/ihc.png`,
 			}))
 			.sort((a: TileMeta, b: TileMeta) => {
 				const [ax, ay] = a.tile.split('_').map(Number);
@@ -32,5 +40,5 @@ export const load: PageServerLoad = ({ params }) => {
 			});
 	}
 
-	return { pairId, depth, tiles };
+	return { pairId, depth, tiles, smooth, smoothAvailable };
 };

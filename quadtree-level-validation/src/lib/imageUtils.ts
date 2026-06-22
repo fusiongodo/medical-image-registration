@@ -180,19 +180,46 @@ export function computeNGF(
 	return count > 0 ? sum / count : 0;
 }
 
-export function shiftGray(gray: Float32Array, w: number, h: number, dx: number, dy: number): Float32Array {
+/**
+ * Loads an image URL and returns a z-score-normalised grayscale Float32Array.
+ * Browser-only (uses HTMLImageElement + Canvas).
+ */
+export function loadGray(src: string): Promise<{ gray: Float32Array; w: number; h: number }> {
+	return new Promise((resolve) => {
+		const img = new Image();
+		img.onload = () => {
+			const w = img.naturalWidth, h = img.naturalHeight;
+			const canvas = document.createElement('canvas');
+			canvas.width = w; canvas.height = h;
+			const ctx = canvas.getContext('2d')!;
+			ctx.drawImage(img, 0, 0);
+			const d = ctx.getImageData(0, 0, w, h).data;
+			normalizeImageData(d);
+			const gray = new Float32Array(w * h);
+			for (let i = 0; i < w * h; i++) gray[i] = (d[i*4] + d[i*4+1] + d[i*4+2]) / 3;
+			resolve({ gray, w, h });
+		};
+		img.src = src;
+	});
+}
+
+function shiftGrayInner(gray: Float32Array, w: number, h: number, dx: number, dy: number): Float32Array {
 	const out = new Float32Array(w * h);
 	const rdx = Math.round(dx), rdy = Math.round(dy);
 	for (let y = 0; y < h; y++) {
 		for (let x = 0; x < w; x++) {
 			const srcX = x - rdx, srcY = y - rdy;
-			if (srcX >= 0 && srcX < w && srcY >= 0 && srcY < h) {
+			if (srcX >= 0 && srcX < w && srcY >= 0 && srcY < h)
 				out[y * w + x] = gray[srcY * w + srcX];
-			}
 		}
 	}
 	return out;
 }
+
+export function shiftGray(gray: Float32Array, w: number, h: number, dx: number, dy: number): Float32Array {
+	return shiftGrayInner(gray, w, h, dx, dy);
+}
+
 
 export const NORM_MEAN = 128;
 export const NORM_STD = 64;

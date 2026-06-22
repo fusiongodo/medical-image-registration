@@ -3,8 +3,22 @@
 		heSrc,
 		ihcSrc,
 		dx = 0,
-		dy = 0
-	}: { heSrc: string; ihcSrc: string; dx?: number; dy?: number } = $props();
+		dy = 0,
+		keypoints = []
+	}: { heSrc: string; ihcSrc: string; dx?: number; dy?: number; keypoints?: number[][] } = $props();
+
+	let imgW = $state(0);
+	let imgH = $state(0);
+
+	const validKeypoints = $derived(
+		keypoints.filter(([kx, ky]) => {
+			const ix = kx - dx;
+			const iy = ky - dy;
+			return ix >= 0 && ix < imgW && iy >= 0 && iy < imgH;
+		})
+	);
+
+	const KP_R = $derived(imgW * 0.008);
 
 	let canvas = $state<HTMLCanvasElement | null>(null);
 	let he = $state<HTMLImageElement | null>(null);
@@ -29,6 +43,8 @@
 		if (!canvas || !he || !ihc) return;
 		const w = he.naturalWidth;
 		const h = he.naturalHeight;
+		imgW = w;
+		imgH = h;
 		canvas.width = w;
 		canvas.height = h;
 		const ctx = canvas.getContext('2d')!;
@@ -79,9 +95,25 @@
 	});
 </script>
 
-<canvas bind:this={canvas}></canvas>
+<div class="wrap">
+	<canvas bind:this={canvas}></canvas>
+	{#if validKeypoints.length > 0}
+		<svg class="overlay" viewBox="0 0 {imgW} {imgH}" preserveAspectRatio="none">
+			{#each validKeypoints as kp}
+				<circle cx={kp[0]} cy={kp[1]} r={KP_R} fill="#facc15" fill-opacity="0.7" stroke="none" />
+			{/each}
+		</svg>
+	{/if}
+</div>
 
 <style>
+	.wrap {
+		position: relative;
+		display: block;
+		height: 180px;
+		width: 269px;
+	}
+
 	canvas {
 		display: block;
 		height: 180px;
@@ -89,5 +121,13 @@
 		border-radius: 4px;
 		border: 1px solid #2a2d3a;
 		background: #0f1117;
+	}
+
+	.overlay {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
 	}
 </style>

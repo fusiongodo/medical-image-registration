@@ -6,8 +6,6 @@
 	import LnccScore from '$lib/LnccScore.svelte';
 	import PointCanvas from '$lib/PointCanvas.svelte';
 	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
-	import NgfScore from '$lib/NgfScore.svelte';
-	import SsimScore from '$lib/SsimScore.svelte';
 
 	let {
 		data
@@ -17,6 +15,8 @@
 			depth: number;
 			tiles: TileMeta[];
 			validation: ValidationStore;
+			smooth: boolean;
+			smoothAvailable: boolean;
 		};
 	}>();
 
@@ -33,12 +33,28 @@
 	let sortByScore = $state(false);
 	let sortByFactor = $state(false);
 	let scores = $state<Map<string, number>>(new Map());
-	let displScores = $state<Map<string, number>>(new Map());
-	let ssimScores = $state<Map<string, number>>(new Map());
-	let ssimDisplScores = $state<Map<string, number>>(new Map());
+	let autoLnccScores = $state<Map<string, number>>(new Map());
 	let cachedScores = $state<Record<string, { lncc?: number; sq?: number }>>({});
 	let pendingEntries: Record<string, { lncc?: number; sq?: number }> = {};
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+	interface TileMetrics { lncc2: number; lncc2_auto: number; delta_px: number; factor_auto: number; }
+	let tileMetrics = $state<Map<string, TileMetrics>>(new Map());
+
+	let tileKeypoints = $state<Map<string, number[][]>>(new Map());
+	let showKeypoints = $state(false);
+
+	$effect(() => {
+		const pair = data.pairId, depth = data.depth;
+		let stale = false;
+		fetch(`/api/tile-keypoints?pair=${pair}&depth=${depth}`)
+			.then((r) => r.json())
+			.then((fetched: Record<string, number[][]>) => {
+				if (stale) return;
+				tileKeypoints = new Map(Object.entries(fetched));
+			});
+		return () => { stale = true; tileKeypoints = new Map(); };
+	});
 
 	// Fetch cached scores — reads only pair/depth/effectivePatchSize, never scores
 	$effect(() => {
@@ -67,16 +83,8 @@
 		scores = new Map(scores.set(tile, s));
 	}
 
-	function recordDisplScore(tile: string, s: number) {
-		displScores = new Map(displScores.set(tile, s));
-	}
-
-	function recordSsimScore(tile: string, s: number) {
-		ssimScores = new Map(ssimScores.set(tile, s));
-	}
-
-	function recordSsimDisplScore(tile: string, s: number) {
-		ssimDisplScores = new Map(ssimDisplScores.set(tile, s));
+	function recordAutoLnccScore(tile: string, s: number) {
+		autoLnccScores = new Map(autoLnccScores.set(tile, s));
 	}
 
 	function queueScore(tile: string, type: 'sq', value: number) {
@@ -96,22 +104,34 @@
 		});
 	}
 
+	$effect(() => {
+		const pair = data.pairId, depth = data.depth;
+		let stale = false;
+		fetch(`/api/tile-metrics?pair=${pair}&depth=${depth}`)
+			.then((r) => r.json())
+			.then((fetched: Record<string, TileMetrics>) => {
+				if (stale) return;
+				tileMetrics = new Map(Object.entries(fetched));
+				for (const [tile, m] of tileMetrics) {
+					scores = new Map(scores.set(tile, m.lncc2));
+					autoLnccScores = new Map(autoLnccScores.set(tile, m.lncc2_auto));
+				}
+			});
+		return () => { stale = true; tileMetrics = new Map(); };
+	});
+
 	const sortedTiles = $derived.by(() => {
+		const factorOf = (tile: string): number | undefined => {
+			const m = tileMetrics.get(tile);
+			if (m) return m.factor_auto;
+			const sq = scores.get(tile), asq = autoLnccScores.get(tile);
+			return sq !== undefined && asq !== undefined && sq > 0 ? asq / sq : undefined;
+		};
 		if (sortByFactor) {
 			const factored = data.tiles
-				.filter((t: TileMeta) => {
-					const sq = scores.get(t.tile), dsq = displScores.get(t.tile);
-					return sq !== undefined && dsq !== undefined && sq > 0;
-				})
-				.sort((a: TileMeta, b: TileMeta) => {
-					const fa = (displScores.get(a.tile) ?? 0) / (scores.get(a.tile) ?? 1);
-					const fb = (displScores.get(b.tile) ?? 0) / (scores.get(b.tile) ?? 1);
-					return fb - fa;
-				});
-			const rest = data.tiles.filter((t: TileMeta) => {
-				const sq = scores.get(t.tile), dsq = displScores.get(t.tile);
-				return !(sq !== undefined && dsq !== undefined && sq > 0);
-			});
+				.filter((t: TileMeta) => factorOf(t.tile) !== undefined)
+				.sort((a: TileMeta, b: TileMeta) => (factorOf(b.tile) ?? 0) - (factorOf(a.tile) ?? 0));
+			const rest = data.tiles.filter((t: TileMeta) => factorOf(t.tile) === undefined);
 			return [...factored, ...rest];
 		}
 		const map = sortByScore ? scores : null;
@@ -167,17 +187,46 @@
 		});
 	}
 
-	function displacement(tile: string): { dx: number; dy: number } | null {
-		const ann = annotations[tile];
-		if (!ann || ann.hePoints.length === 0 || ann.ihcPoints.length === 0) return null;
-		const pairs = Math.min(ann.hePoints.length, ann.ihcPoints.length);
-		let dx = 0, dy = 0;
-		for (let i = 0; i < pairs; i++) {
-			dx += ann.hePoints[i].x - ann.ihcPoints[i].x;
-			dy += ann.hePoints[i].y - ann.ihcPoints[i].y;
+	// ── Auto-displacement (per tile, Python-written) ─────────────────────────
+	interface AutoDisp { dx: number; dy: number; }
+	let autoDisps = $state<Map<string, AutoDisp>>(new Map());
+	let autoDispRefreshKey = $state(0);
+
+	$effect(() => {
+		autoDispRefreshKey; // tracked so Refresh button re-runs this effect
+		const pair = data.pairId, depth = data.depth;
+		let stale = false;
+		fetch(`/api/python-displacement?pair=${pair}&depth=${depth}`)
+			.then((r) => r.json())
+			.then((fetched: Record<string, AutoDisp>) => {
+				if (stale) return;
+				autoDisps = new Map(Object.entries(fetched));
+			});
+		return () => { stale = true; autoDisps = new Map(); };
+	});
+
+	const autoTargets = $derived(displayOrder.slice(0, 5));
+
+	const alignCommand = $derived(
+		`python setup/auto-alignment/align.py ${data.pairId} ${data.depth}` +
+		(autoTargets.length > 0 ? ' ' + autoTargets.map((t: TileMeta) => t.tile).join(' ') : '')
+	);
+
+	const alignAllCommand = $derived(
+		`python setup/auto-alignment/align.py ${data.pairId} ${data.depth}`
+	);
+
+	let pollingActive = $state(false);
+	let pollingInterval: ReturnType<typeof setInterval> | null = null;
+
+	$effect(() => {
+		if (!pollingActive) {
+			if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
+			return;
 		}
-		return { dx: dx / pairs, dy: dy / pairs };
-	}
+		pollingInterval = setInterval(() => { autoDispRefreshKey++; }, 2000);
+		return () => { if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; } };
+	});
 
 	const levelCorrelation = null as { r: number; n: number } | null; /* disabled
 	$derived.by(() => {
@@ -245,6 +294,13 @@
 		submitting = false;
 	}
 
+	function lnccColor(s: number): string {
+		const t = Math.max(0, Math.min(1, s));
+		return t < 0.5
+			? `rgb(255,${Math.round(t * 2 * 255)},0)`
+			: `rgb(${Math.round((1 - (t - 0.5) * 2) * 255)},255,0)`;
+	}
+
 	function depthLabel(d: number) {
 		const grid = Math.pow(2, d);
 		return `Level ${d} · ${grid}×${grid} grid`;
@@ -268,12 +324,44 @@
 			<input type="checkbox" bind:checked={sortByFactor} onchange={() => { if (sortByFactor) sortByScore = false; }} />
 			<span>Sort by Factor</span>
 		</label>
+		<label class="sort-control">
+			<input type="checkbox" bind:checked={showKeypoints} />
+			<span>Keypoints</span>
+		</label>
+		{#if data.smooth}
+			<a class="source-badge source-smooth" href="/{data.pairId}/{data.depth}">Standard</a>
+		{:else if data.smoothAvailable}
+			<a class="source-badge source-standard" href="/{data.pairId}/{data.depth}?source=smooth">Smooth IHC</a>
+		{/if}
 
 		<label class="patch-control">
 			<span class="patch-label">Patch</span>
 			<input type="range" min="3" max="51" step="2" value={patchSize} oninput={onPatchInput} />
 			<span class="patch-value">{patchSize}px</span>
 		</label>
+
+		<div class="auto-disp-controls">
+			<div class="auto-disp-control">
+				<code class="align-cmd">{alignCommand}</code>
+				<button class="btn btn-ghost btn-sm" onclick={() => navigator.clipboard.writeText(alignCommand)} title="Copy top-5 command">⎘</button>
+				<button class="btn btn-auto" onclick={() => { autoDispRefreshKey++; }}>↺ Refresh</button>
+			</div>
+			<div class="auto-disp-control">
+				{#if autoDisps.size > 0}
+					<span class="auto-disp-badge" class:done-badge={autoDisps.size === data.tiles.length}>
+						{autoDisps.size} / {data.tiles.length}{autoDisps.size === data.tiles.length ? ' ✓' : ''}
+					</span>
+				{/if}
+				<code class="align-cmd">{alignAllCommand}</code>
+				<button class="btn btn-ghost btn-sm" onclick={() => navigator.clipboard.writeText(alignAllCommand)} title="Copy all-tiles command">⎘</button>
+				<button
+					class="btn btn-auto"
+					class:btn-polling={pollingActive}
+					onclick={() => { pollingActive = !pollingActive; if (pollingActive) autoDispRefreshKey++; }}>
+					{pollingActive ? '⏹ Stop' : '⟳ Watch'}
+				</button>
+			</div>
+		</div>
 
 		<div class="depth-nav">
 			{#each Array.from({ length: MAX_DEPTH + 1 }, (_, i) => i) as d}
@@ -308,84 +396,83 @@
 	{:else}
 		<div class="scroll-wrap">
 			<div class="tile-grid">
-				<span class="col-header sticky-header"></span>
-				<span class="col-header sticky-header">HE norm</span>
-				<span class="col-header sticky-header">IHC norm</span>
-				<span class="col-header sticky-header">Overlay</span>
-				<span class="col-header sticky-header">Displaced</span>
-				<span class="col-header sticky-header">LNCC²</span>
-				<span class="col-header sticky-header">LNCC² realigned</span>
-				<span class="col-header sticky-header">Factor</span>
-				<span class="col-header sticky-header">|Δ| px</span>
-				<span class="col-header sticky-header">NGF</span>
-			<span class="col-header sticky-header">NGF realigned</span>
-			<span class="col-header sticky-header">SSIM</span>
-			<span class="col-header sticky-header">SSIM realigned</span>
-			<span class="col-header sticky-header">SSIM Factor</span>
+			<span class="col-header sticky-header"></span>
+			<span class="col-header sticky-header">HE norm</span>
+			<span class="col-header sticky-header">{data.smooth ? 'IHC smooth' : 'IHC norm'}</span>
+			<span class="col-header sticky-header">Overlay</span>
+			<span class="col-header sticky-header">{data.smooth ? 'Pre-aligned' : 'Auto overlay'}</span>
+			<span class="col-header sticky-header">LNCC²</span>
+			<span class="col-header sticky-header">|Δ| auto</span>
+			<span class="col-header sticky-header">LNCC² auto</span>
+			<span class="col-header sticky-header">Factor auto</span>
 
-			{#each displayOrder as t (`${data.depth}-${t.tile}`)}	
-					{@const heSrc = `/api/image?path=${encodeURIComponent(t.he)}`}
-					{@const ihcSrc = `/api/image?path=${encodeURIComponent(t.ihc)}`}
-					{@const isActive = activeRow === t.tile}
-					{@const ann = annotations[t.tile] ?? { hePoints: [], ihcPoints: [] }}
-					{@const disp = displacement(t.tile) ?? { dx: 0, dy: 0 }}
-					{@const rawDisp = displacement(t.tile)}
-					<span
-						class="tile-id"
-						class:tile-id-active={isActive}
-						onclick={() => { activeRow = isActive ? null : t.tile; }}
-						role="button"
-						tabindex="0"
-						onkeydown={(e) => e.key === 'Enter' && (activeRow = isActive ? null : t.tile)}
-					>{t.tile}</span>
-					<PointCanvas src={heSrc} active={isActive} points={ann.hePoints}
-						onpoint={(x, y) => addPoint(t.tile, 'he', x, y)} />
-					<PointCanvas src={ihcSrc} active={isActive} points={ann.ihcPoints}
-						onpoint={(x, y) => addPoint(t.tile, 'ihc', x, y)} />
-					<OverlayCanvas {heSrc} {ihcSrc} />
-					<DisplacedOverlay {heSrc} {ihcSrc} dx={disp.dx} dy={disp.dy} />
+	{#each displayOrder as t (`${data.depth}-${t.tile}`)}
+			{@const heSrc  = `/api/image?path=${encodeURIComponent(t.he)}`}
+			{@const ihcSrc = `/api/image?path=${encodeURIComponent(t.ihc)}`}
+			{@const isActive = activeRow === t.tile}
+			{@const ann = annotations[t.tile] ?? { hePoints: [], ihcPoints: [] }}
+		{@const tileAutoDisp = autoDisps.get(t.tile)}
+		{@const m = tileMetrics.get(t.tile)}
+		{@const sq = m?.lncc2 ?? scores.get(t.tile)}
+		{@const asq = m?.lncc2_auto ?? autoLnccScores.get(t.tile)}
+		{@const tileKps = showKeypoints ? (tileKeypoints.get(t.tile) ?? []) : []}
+		<span
+			class="tile-id"
+			class:tile-id-active={isActive}
+			onclick={() => { activeRow = isActive ? null : t.tile; }}
+			role="button"
+			tabindex="0"
+			onkeydown={(e) => e.key === 'Enter' && (activeRow = isActive ? null : t.tile)}
+		>{t.tile}</span>
+		<PointCanvas src={heSrc} active={isActive} points={ann.hePoints}
+			keypoints={tileKps}
+			onpoint={(x, y) => addPoint(t.tile, 'he', x, y)} />
+		<PointCanvas src={ihcSrc} active={isActive} points={ann.ihcPoints}
+			onpoint={(x, y) => addPoint(t.tile, 'ihc', x, y)} />
+		<OverlayCanvas {heSrc} {ihcSrc} />
+		{#if data.smooth}
+			<DisplacedOverlay {heSrc} {ihcSrc} dx={0} dy={0} keypoints={tileKps} />
+		{:else if tileAutoDisp !== undefined}
+			<DisplacedOverlay {heSrc} {ihcSrc} dx={tileAutoDisp.dx} dy={tileAutoDisp.dy}
+				keypoints={tileKps} />
+		{:else}
+			<div class="factor-cell"><span class="factor-placeholder">…</span></div>
+		{/if}
+				{#if m}
+					<div class="score-cell-pre" style:background={lnccColor(m.lncc2)}>
+						<span class="value">{m.lncc2.toFixed(3)}</span>
+					</div>
+				{:else}
 					<LnccScore {heSrc} {ihcSrc} patchSize={effectivePatchSize} squared={true}
 						cachedScore={cachedScores[t.tile]?.sq}
 						onscore={(s) => { recordScore(t.tile, s); queueScore(t.tile, 'sq', s); }} />
-					<LnccScore {heSrc} {ihcSrc} patchSize={effectivePatchSize} squared={true}
-						displaced={true}
-						displaceX={rawDisp?.dx}
-						displaceY={rawDisp?.dy}
-						onscore={(s) => recordDisplScore(t.tile, s)} />
-					{@const sq = scores.get(t.tile)}
-					{@const dsq = displScores.get(t.tile)}
-					<div class="factor-cell" class:factor-positive={dsq !== undefined && sq !== undefined && dsq > sq}>
-						{#if dsq !== undefined && sq !== undefined && sq > 0}
-							{(dsq / sq).toFixed(3)}
-						{:else}
-							<span class="factor-placeholder">…</span>
-						{/if}
-					</div>
-					{@const dispLen = rawDisp !== null ? Math.sqrt(rawDisp.dx ** 2 + rawDisp.dy ** 2) : null}
-					<div class="factor-cell">
-						{#if dispLen !== null}
-							{dispLen.toFixed(1)}
-						{:else}
-							<span class="factor-placeholder">…</span>
-						{/if}
-					</div>
-				<NgfScore {heSrc} {ihcSrc} />
-				<NgfScore {heSrc} {ihcSrc} displaced={true} displaceX={rawDisp?.dx} displaceY={rawDisp?.dy} />
-				<SsimScore {heSrc} {ihcSrc} patchSize={effectivePatchSize}
-					onscore={(s) => recordSsimScore(t.tile, s)} />
-				<SsimScore {heSrc} {ihcSrc} patchSize={effectivePatchSize}
-					displaced={true} displaceX={rawDisp?.dx} displaceY={rawDisp?.dy}
-					onscore={(s) => recordSsimDisplScore(t.tile, s)} />
-				{@const ssim = ssimScores.get(t.tile)}
-				{@const dssim = ssimDisplScores.get(t.tile)}
-				<div class="factor-cell" class:factor-positive={dssim !== undefined && ssim !== undefined && dssim > ssim}>
-					{#if dssim !== undefined && ssim !== undefined && ssim !== 0}
-						{(dssim / ssim).toFixed(3)}
+				{/if}
+				<div class="factor-cell">
+					{#if m}
+						{m.delta_px.toFixed(1)}
+					{:else if tileAutoDisp !== undefined}
+						{Math.sqrt(tileAutoDisp.dx ** 2 + tileAutoDisp.dy ** 2).toFixed(1)}
 					{:else}
 						<span class="factor-placeholder">…</span>
 					{/if}
 				</div>
-				{/each}
+				{#if m}
+					<div class="score-cell-pre" style:background={lnccColor(m.lncc2_auto)}>
+						<span class="value">{m.lncc2_auto.toFixed(3)}</span>
+					</div>
+				{:else}
+					<LnccScore {heSrc} {ihcSrc} patchSize={effectivePatchSize} squared={true}
+						displaced={true} displaceX={tileAutoDisp?.dx} displaceY={tileAutoDisp?.dy}
+						onscore={(s) => recordAutoLnccScore(t.tile, s)} />
+				{/if}
+				<div class="factor-cell" class:factor-positive={asq !== undefined && sq !== undefined && asq > sq}>
+					{#if asq !== undefined && sq !== undefined && sq > 0}
+						{(asq / sq).toFixed(3)}
+					{:else}
+						<span class="factor-placeholder">…</span>
+					{/if}
+				</div>
+		{/each}
 			</div>
 		</div>
 	{/if}
@@ -489,6 +576,38 @@
 		width: 14px;
 		height: 14px;
 		cursor: pointer;
+	}
+
+	.source-badge {
+		font-size: 0.75rem;
+		font-weight: 700;
+		border-radius: 6px;
+		padding: 4px 10px;
+		text-decoration: none;
+		flex-shrink: 0;
+		border: 1px solid;
+	}
+
+	.source-standard {
+		color: #6ee7b7;
+		border-color: #065f46;
+		background: #022c22;
+	}
+
+	.source-standard:hover {
+		background: #064e3b;
+		border-color: #10b981;
+	}
+
+	.source-smooth {
+		color: #fcd34d;
+		border-color: #92400e;
+		background: #1c1407;
+	}
+
+	.source-smooth:hover {
+		background: #292007;
+		border-color: #d97706;
 	}
 
 	.patch-control {
@@ -629,7 +748,7 @@
 
 	.tile-grid {
 		display: grid;
-		grid-template-columns: 48px repeat(4, auto) 80px 80px 80px 80px 80px 80px 80px 80px 80px;
+		grid-template-columns: 48px repeat(4, auto) repeat(4, 80px);
 		column-gap: 12px;
 		row-gap: 12px;
 		padding: 0 20px 20px;
@@ -671,6 +790,24 @@
 	.tile-id-active {
 		color: #a5b4fc;
 		font-weight: 700;
+	}
+
+	.score-cell-pre {
+		height: 180px;
+		width: 80px;
+		border-radius: 4px;
+		border: 1px solid #2a2d3a;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.score-cell-pre .value {
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: #000;
+		text-shadow: 0 1px 2px rgba(255,255,255,0.4);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.factor-cell {
@@ -741,6 +878,70 @@
 	.btn-fail {
 		background: #7f1d1d;
 		color: #fecaca;
+	}
+
+	.auto-disp-controls {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		flex-shrink: 0;
+	}
+
+	.auto-disp-control {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.auto-disp-badge {
+		font-size: 0.75rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		color: #a5b4fc;
+		background: #1e2130;
+		border: 1px solid #4338ca;
+		border-radius: 6px;
+		padding: 4px 10px;
+	}
+
+	.done-badge {
+		color: #86efac;
+		background: #0d2218;
+		border-color: #15803d;
+	}
+
+	.btn-polling {
+		border-color: #d97706;
+		color: #fcd34d;
+		background: #1c1407;
+	}
+
+	.align-cmd {
+		font-family: ui-monospace, monospace;
+		font-size: 0.7rem;
+		color: #93c5fd;
+		background: #0d1a2e;
+		border: 1px solid #1d4ed8;
+		border-radius: 5px;
+		padding: 4px 8px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 340px;
+	}
+
+	.btn-sm {
+		padding: 4px 8px;
+		font-size: 0.8rem;
+	}
+
+	.btn-auto {
+		background: #1e3a5f;
+		color: #93c5fd;
+		border: 1px solid #1d4ed8;
+		padding: 6px 14px;
+		font-size: 0.78rem;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.btn-ghost {

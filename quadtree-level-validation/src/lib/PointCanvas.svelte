@@ -7,11 +7,13 @@
 		src,
 		active = false,
 		points = [],
+		keypoints = [],
 		onpoint
 	}: {
 		src: string;
 		active?: boolean;
 		points?: Point[];
+		keypoints?: number[][];
 		onpoint?: (x: number, y: number) => void;
 	} = $props();
 
@@ -56,12 +58,16 @@
 	}
 
 	const COLORS = ['#60a5fa', '#f97316'];
+	const KP_R = $derived(naturalW * 0.008);
 </script>
 
 <div class="wrap" class:active>
 	<canvas bind:this={canvas} onclick={handleClick}></canvas>
-	{#if points.length > 0}
+	{#if keypoints.length > 0 || points.length > 0}
 		<svg class="overlay" viewBox="0 0 {naturalW} {naturalH}" preserveAspectRatio="none">
+			{#each keypoints as kp}
+				<circle cx={kp[0]} cy={kp[1]} r={KP_R} fill="#facc15" fill-opacity="0.7" stroke="none" />
+			{/each}
 			{#each points as pt, i}
 				<circle cx={pt.x} cy={pt.y} r={naturalW * 0.018} fill={COLORS[i % 2]} stroke="#000" stroke-width={naturalW * 0.004} opacity="0.85" />
 				<text x={pt.x} y={pt.y + naturalW * 0.006} text-anchor="middle" dominant-baseline="middle" font-size={naturalW * 0.035} fill="#000" font-weight="bold">{i + 1}</text>
