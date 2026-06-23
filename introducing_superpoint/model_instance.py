@@ -33,7 +33,7 @@ def checkpoint_timestamp(when=None) -> str:
 class TrainingConfig:
     name: str
     learning_rate: float = default_config["learning_rate"]
-    batch_size: int = 8
+    batch_size: int = 4
     num_epochs: int = 10
     save_every_epochs: int = 1
     w_kp: float = 1.0
@@ -46,6 +46,10 @@ class TrainingConfig:
     desc_patch_size: float = 3.0
     desc_centricity: float = 1.0
     num_workers: int = 0
+    eval_every_seconds: int = 3600
+    eval_num_samples: int = 256
+    eval_seed: int = 0
+    eval_batch_size: Optional[int] = None
     weights_init: Path = DEFAULT_WEIGHTS
     run_dir: Path = DEFAULT_RUN_DIR
 
@@ -70,12 +74,35 @@ class EpochLog:
 
 
 @dataclass
+class ResumeState:
+    epoch: int
+    next_batch_idx: int
+
+
+@dataclass
+class EvaluationLog:
+    timestamp: str
+    epoch: int
+    batch_idx: int
+    samples_seen: int
+    duration_seconds: float
+    num_batches: int
+    num_samples: int
+    precision: float
+    recall: float
+    repeatability: float
+    kpis_by_depth: dict[str, Any]
+
+
+@dataclass
 class ModelInstance:
     name: str
     config: TrainingConfig
     parent: Optional[str] = None
     epoch_logs: list[EpochLog] = field(default_factory=list)
+    evaluation_logs: list[EvaluationLog] = field(default_factory=list)
     last_pth_path: Optional[Path] = None
+    resume_state: Optional[ResumeState] = None
 
     @property
     def run_dir(self) -> Path:
@@ -102,6 +129,8 @@ class ModelInstance:
             "config": _config_to_dict(self.config),
             "pth_path": conf.to_relative(self.pth_path),
             "epoch_logs": [asdict(entry) for entry in self.epoch_logs],
+            "evaluation_logs": [asdict(entry) for entry in self.evaluation_logs],
+            "resume_state": asdict(self.resume_state) if self.resume_state else None,
         }
         with open(self.log_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -128,6 +157,10 @@ class ModelInstance:
             desc_patch_size=config_dict.get("desc_patch_size", 3.0),
             desc_centricity=config_dict.get("desc_centricity", 1.0),
             num_workers=config_dict.get("num_workers", 0),
+            eval_every_seconds=config_dict.get("eval_every_seconds", 3600),
+            eval_num_samples=config_dict.get("eval_num_samples", 256),
+            eval_seed=config_dict.get("eval_seed", 0),
+            eval_batch_size=config_dict.get("eval_batch_size", None),
             weights_init=conf.resolve(config_dict.get("weights_init", conf.to_relative(DEFAULT_WEIGHTS))),
             run_dir=conf.resolve(config_dict.get("run_dir", conf.to_relative(DEFAULT_RUN_DIR))),
         )
@@ -141,16 +174,24 @@ class ModelInstance:
             entry.setdefault("val_repeatability", None)
             entry.setdefault("val_kpis_by_depth", None)
             epoch_logs.append(EpochLog(**entry))
+        evaluation_logs = []
+        for entry in payload.get("evaluation_logs", []):
+            evaluation_logs.append(EvaluationLog(**entry))
         last_pth_path = None
         if payload.get("pth_path"):
             last_pth_path = conf.resolve(payload["pth_path"])
+        resume_state = None
+        if payload.get("resume_state"):
+            resume_state = ResumeState(**payload["resume_state"])
 
         return cls(
             name=payload["name"],
             config=config,
             parent=payload.get("parent"),
             epoch_logs=epoch_logs,
+            evaluation_logs=evaluation_logs,
             last_pth_path=last_pth_path,
+            resume_state=resume_state,
         )
 
 
@@ -174,6 +215,8 @@ def load_existing_run(instance: ModelInstance) -> bool:
     if instance.log_path.exists():
         saved = ModelInstance.load_log(instance.log_path)
         instance.epoch_logs = saved.epoch_logs
+        instance.evaluation_logs = saved.evaluation_logs
+        instance.resume_state = saved.resume_state
         if saved.parent is not None:
             instance.parent = saved.parent
         loaded = True

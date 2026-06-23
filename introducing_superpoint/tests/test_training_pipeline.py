@@ -117,6 +117,15 @@ def test_dataset_item_shapes():
     assert item["gt_keypoints"].dim() == 2 and item["gt_keypoints"].shape[1] == 3
 
 
+def test_make_eval_loader_uses_fixed_subset():
+    from model_instance import TrainingConfig
+
+    config = TrainingConfig(name="eval_subset", eval_num_samples=17, eval_seed=3)
+    dataset = StainPairKeypointDataset(split="val")
+    loader = training._make_eval_loader(config, dataset)
+    assert len(loader.dataset) == min(17, len(dataset))
+
+
 def test_pipeline_smoke_backward(model):
     model.train()
     loader = make_loader(batch_size=2, shuffle=False)
@@ -147,13 +156,17 @@ def test_compute_keypoint_kpis_perfect_match():
 
 
 def test_model_instance_log_roundtrip(project_tmp):
-    from model_instance import EpochLog, ModelInstance, TrainingConfig
+    from model_instance import EpochLog, EvaluationLog, ModelInstance, ResumeState, TrainingConfig
 
     config = TrainingConfig(
         name="unit",
         run_dir=project_tmp,
         num_epochs=1,
         save_every_epochs=1,
+        eval_every_seconds=1800,
+        eval_num_samples=128,
+        eval_seed=4,
+        eval_batch_size=8,
     )
     instance = ModelInstance(
         name="unit",
@@ -173,13 +186,38 @@ def test_model_instance_log_roundtrip(project_tmp):
                 recall=0.7,
             )
         ],
+        evaluation_logs=[
+            EvaluationLog(
+                timestamp="2026-06-23T19:12:04",
+                epoch=1,
+                batch_idx=12,
+                samples_seen=48,
+                duration_seconds=7.5,
+                num_batches=4,
+                num_samples=16,
+                precision=0.6,
+                recall=0.7,
+                repeatability=0.5,
+                kpis_by_depth={"d5": {"precision": 0.6, "recall": 0.7, "repeatability": 0.5}},
+            )
+        ],
+        resume_state=ResumeState(epoch=2, next_batch_idx=7),
     )
     log_path = instance.save_log()
     restored = ModelInstance.load_log(log_path)
     assert restored.name == "unit"
     assert restored.parent == "parent_run"
+    assert restored.config.eval_every_seconds == 1800
+    assert restored.config.eval_num_samples == 128
+    assert restored.config.eval_seed == 4
+    assert restored.config.eval_batch_size == 8
     assert len(restored.epoch_logs) == 1
+    assert len(restored.evaluation_logs) == 1
     assert restored.epoch_logs[0].recall == pytest.approx(0.7)
+    assert restored.evaluation_logs[0].timestamp == "2026-06-23T19:12:04"
+    assert restored.evaluation_logs[0].duration_seconds == pytest.approx(7.5)
+    assert restored.resume_state.epoch == 2
+    assert restored.resume_state.next_batch_idx == 7
 
 
 def test_train_model_writes_checkpoint_and_log(project_tmp):
@@ -211,7 +249,7 @@ def test_train_model_writes_checkpoint_and_log(project_tmp):
 
 
 def test_load_existing_run_restores_logs(project_tmp):
-    from model_instance import EpochLog, ModelInstance, TrainingConfig, load_existing_run
+    from model_instance import EpochLog, ModelInstance, ResumeState, TrainingConfig, load_existing_run
 
     config = TrainingConfig(name="resume_log", run_dir=project_tmp, num_epochs=5)
     instance = ModelInstance(
@@ -231,6 +269,7 @@ def test_load_existing_run_restores_logs(project_tmp):
                 recall=0.7,
             )
         ],
+        resume_state=ResumeState(epoch=101, next_batch_idx=3),
     )
     instance.save_log()
 
@@ -238,6 +277,8 @@ def test_load_existing_run_restores_logs(project_tmp):
     assert load_existing_run(fresh)
     assert len(fresh.epoch_logs) == 1
     assert fresh.epoch_logs[0].epoch == 100
+    assert fresh.resume_state.epoch == 101
+    assert fresh.resume_state.next_batch_idx == 3
 
 
 def test_latest_checkpoint_path_picks_newest(project_tmp):
@@ -301,7 +342,10 @@ def test_train_model_appends_epochs(project_tmp, model, monkeypatch):
 
     seen_epochs = []
 
-    def fake_train_epoch(model, loader, optimizer, device, training_config, epoch):
+    def fake_train_epoch(
+        model, loader, optimizer, device, training_config, epoch, start_batch_idx=0,
+        items_total=None, instance=None, eval_loader=None,
+    ):
         seen_epochs.append(epoch)
         return {"total": 1.0, "descriptor": 0.1, "keypoint": 0.8, "loc": 0.2, "fn": 0.3, "fp": 0.1}, {
             "repeatability": 0.5, "precision": 0.6, "recall": 0.7,
@@ -319,6 +363,64 @@ def test_train_model_appends_epochs(project_tmp, model, monkeypatch):
     assert next_epoch_number(instance) == 103
 
 
+def test_train_model_resumes_mid_epoch_and_clears_state(project_tmp, model, monkeypatch):
+    from model_instance import EpochLog, ModelInstance, ResumeState, TrainingConfig
+
+    config = TrainingConfig(name="mid_epoch", run_dir=project_tmp, num_epochs=1, batch_size=2)
+    existing = ModelInstance(
+        name=config.name,
+        config=config,
+        epoch_logs=[
+            EpochLog(
+                epoch=100,
+                loss_total=1.0,
+                loss_descriptor=0.1,
+                loss_keypoint=0.8,
+                loss_loc=0.2,
+                loss_fn=0.3,
+                loss_fp=0.1,
+                repeatability=0.5,
+                precision=0.6,
+                recall=0.7,
+            )
+        ],
+        resume_state=ResumeState(epoch=101, next_batch_idx=4),
+    )
+    existing.save_log()
+
+    calls = []
+
+    def fake_train_epoch(
+        model, loader, optimizer, device, training_config, epoch, start_batch_idx=0,
+        items_total=None, instance=None, eval_loader=None,
+    ):
+        calls.append((epoch, start_batch_idx, items_total, len(loader.dataset)))
+        return {"total": 1.0, "descriptor": 0.1, "keypoint": 0.8, "loc": 0.2, "fn": 0.3, "fp": 0.1}, {
+            "repeatability": 0.5, "precision": 0.6, "recall": 0.7,
+        }
+
+    monkeypatch.setattr(training, "train_epoch", fake_train_epoch)
+    monkeypatch.setattr(training, "build_model", lambda *args, **kwargs: model())
+    monkeypatch.setattr(
+        training,
+        "evaluate_kpis",
+        lambda *args, **kwargs: {
+            "overall": {"precision": 0.6, "recall": 0.7, "repeatability": 0.5},
+            "by_depth": {},
+        },
+    )
+
+    instance = ModelInstance(name=config.name, config=config)
+    training.train_model(instance)
+
+    train_len = len(StainPairKeypointDataset(split="train"))
+    assert calls == [(101, 4, train_len, train_len - 8)]
+    assert instance.resume_state is None
+    restored = ModelInstance.load_log(instance.log_path)
+    assert restored.resume_state is None
+    assert restored.epoch_logs[-1].epoch == 101
+
+
 def test_train_model_saves_on_keyboard_interrupt(project_tmp, monkeypatch):
     from model_instance import ModelInstance, TrainingConfig
 
@@ -332,7 +434,7 @@ def test_train_model_saves_on_keyboard_interrupt(project_tmp, monkeypatch):
     instance = ModelInstance(name=config.name, config=config)
 
     def raise_interrupt(*args, **kwargs):
-        raise KeyboardInterrupt()
+        raise training.MidEpochInterrupt(epoch=1, next_batch_idx=3)
 
     monkeypatch.setattr(training, "train_epoch", raise_interrupt)
 
@@ -341,6 +443,8 @@ def test_train_model_saves_on_keyboard_interrupt(project_tmp, monkeypatch):
     assert instance.pth_path.exists()
     assert instance.log_path.exists()
     assert len(instance.epoch_logs) == 0
+    assert instance.resume_state.epoch == 1
+    assert instance.resume_state.next_batch_idx == 3
 
 
 def test_checkpoint_timestamp_format():

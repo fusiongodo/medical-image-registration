@@ -5,6 +5,7 @@ checkpointing, and KPI logging via ModelInstance.
 import sys
 import time
 import importlib
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -17,19 +18,32 @@ importlib.reload(conf)
 from superpoint_pytorch import SuperPoint, default_config
 from model_instance import (
     EpochLog,
+    EvaluationLog,
     ModelInstance,
+    ResumeState,
     TrainingConfig,
     checkpoint_timestamp,
     load_existing_run,
     latest_checkpoint_path,
     next_epoch_number,
 )
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from dataset import StainPairKeypointDataset, collate_pairs, make_loader
 import utils
 
 DEFAULT_WEIGHTS = conf.resolve("introducing_superpoint/superpoint_v6_from_tf.pth")
 PROGRESS_EVERY_BATCHES = 10
+
+
+class MidEpochInterrupt(Exception):
+    def __init__(self, epoch: int, next_batch_idx: int):
+        super().__init__(f"interrupted during epoch {epoch} at batch {next_batch_idx}")
+        self.epoch = epoch
+        self.next_batch_idx = next_batch_idx
+
+
+def _log(message: str) -> None:
+    print(f"[{datetime.now():%H:%M:%S}] {message}", flush=True)
 
 
 def build_model(weights_path=DEFAULT_WEIGHTS, device="cpu"):
@@ -158,16 +172,22 @@ def evaluate_kpis(model, loader, device, training_config):
     Returns {"overall": {precision, recall, repeatability},
              "by_depth": {depth_str: {precision, recall, repeatability}, ...}}
     """
+    was_training = model.training
+    start = time.perf_counter()
     model.eval()
     kp_kwargs = _match_kwargs(training_config)
     overall = _fresh_kpi_totals()
     by_depth: dict = {}
+    num_batches = 0
+    num_samples = 0
 
     for batch in loader:
         image_he  = batch["image_he"].to(device)
         image_ihc = batch["image_ihc"].to(device)
         gt        = [kp.to(device) for kp in batch["gt_keypoints"]]
         metas     = batch["meta"]
+        num_batches += 1
+        num_samples += image_he.shape[0]
 
         out_he  = model({"image": image_he},  training=True)
         out_ihc = model({"image": image_ihc}, training=True)
@@ -186,19 +206,33 @@ def evaluate_kpis(model, loader, device, training_config):
             d["fp"] += match_he["fp"] + match_ihc["fp"]
             d["fn"] += match_he["fn"] + match_ihc["fn"]
 
-    return {
+    result = {
         "overall":  _kpis_from_totals(overall),
         "by_depth": {k: _kpis_from_totals(v) for k, v in sorted(by_depth.items())},
+        "duration_seconds": time.perf_counter() - start,
+        "num_batches": num_batches,
+        "num_samples": num_samples,
     }
+    if was_training:
+        model.train()
+    return result
 
 
 
-def _make_train_loader(config, epoch, dataset=None):
+def _make_train_loader(config, epoch, dataset=None, start_batch_idx=0):
+    dataset = dataset or StainPairKeypointDataset(split="train")
     generator = torch.Generator()
     generator.manual_seed(epoch)
+    shuffle = True
+    if start_batch_idx > 0:
+        indices = torch.randperm(len(dataset), generator=generator).tolist()
+        start_sample_idx = min(start_batch_idx * config.batch_size, len(indices))
+        dataset = Subset(dataset, indices[start_sample_idx:])
+        shuffle = False
+        generator = None
     return make_loader(
         batch_size=config.batch_size,
-        shuffle=True,
+        shuffle=shuffle,
         num_workers=config.num_workers,
         pin_memory=torch.cuda.is_available(),
         generator=generator,
@@ -206,13 +240,33 @@ def _make_train_loader(config, epoch, dataset=None):
     )
 
 
-def _print_epoch_progress(epoch, items_done, items_total):
+def _make_eval_loader(config, dataset=None):
+    dataset = dataset or StainPairKeypointDataset(split="val")
+    generator = torch.Generator()
+    generator.manual_seed(config.eval_seed)
+    indices = torch.randperm(len(dataset), generator=generator).tolist()
+    indices = indices[:min(config.eval_num_samples, len(indices))]
+    dataset = Subset(dataset, indices)
+    return DataLoader(
+        dataset,
+        batch_size=config.eval_batch_size or config.batch_size,
+        shuffle=False,
+        num_workers=config.num_workers,
+        pin_memory=torch.cuda.is_available(),
+        collate_fn=collate_pairs,
+    )
+
+
+def _print_epoch_progress(epoch, items_done, items_total, elapsed_seconds=None, window_items=None):
     items_left = max(items_total - items_done, 0)
-    print(f"epoch {epoch}: {items_done}/{items_total} done, {items_left} left", flush=True)
+    extra = ""
+    if elapsed_seconds is not None and window_items is not None:
+        extra = f", last_{window_items}={elapsed_seconds:.1f}s"
+    _log(f"epoch {epoch}: {items_done}/{items_total} done, {items_left} left{extra}")
 
 
 def _print_epoch_summary(epoch, train_means, train_kpis, duration_seconds, val_result=None):
-    print(
+    _log(
         f"epoch {epoch} losses : "
         f"total={train_means['total']:.4f} "
         f"desc={train_means['descriptor']:.4f} "
@@ -220,75 +274,132 @@ def _print_epoch_summary(epoch, train_means, train_kpis, duration_seconds, val_r
         f"loc={train_means['loc']:.4f} "
         f"fn={train_means['fn']:.4f} "
         f"fp={train_means['fp']:.4f} "
-        f"duration={duration_seconds:.1f}s",
-        flush=True,
+        f"duration={duration_seconds:.1f}s"
     )
-    print(
+    _log(
         f"epoch {epoch} train  : "
         f"repeatability={train_kpis['repeatability']:.4f} "
         f"precision={train_kpis['precision']:.4f} "
-        f"recall={train_kpis['recall']:.4f}",
-        flush=True,
+        f"recall={train_kpis['recall']:.4f}"
     )
     if val_result is not None:
         ov = val_result["overall"]
-        print(
+        _log(
             f"epoch {epoch} val    : "
             f"repeatability={ov['repeatability']:.4f} "
             f"precision={ov['precision']:.4f} "
-            f"recall={ov['recall']:.4f}",
-            flush=True,
+            f"recall={ov['recall']:.4f}"
         )
         depth_parts = "  ".join(
             f"d{k}=[p={v['precision']:.3f} r={v['recall']:.3f}]"
             for k, v in val_result["by_depth"].items()
         )
         if depth_parts:
-            print(f"epoch {epoch} val/d  : {depth_parts}", flush=True)
+            _log(f"epoch {epoch} val/d  : {depth_parts}")
 
 
-def train_epoch(model, loader, optimizer, device, training_config, epoch):
+def train_epoch(
+    model,
+    loader,
+    optimizer,
+    device,
+    training_config,
+    epoch,
+    start_batch_idx=0,
+    items_total=None,
+    instance=None,
+    eval_loader=None,
+):
     model.train()
     running = {}
     batch_count = 0
-    items_total = len(loader.dataset)
-    samples_seen = 0
+    items_total = items_total or len(loader.dataset)
+    samples_seen = min(start_batch_idx * training_config.batch_size, items_total)
     epoch_totals = _fresh_kpi_totals()
     kp_kwargs = _match_kwargs(training_config)
+    next_batch_idx = start_batch_idx
+    next_eval_at = time.monotonic() + training_config.eval_every_seconds
+    last_progress_at = time.monotonic()
+    last_progress_samples = samples_seen
 
-    for batch in loader:
-        batch_size = batch["image_he"].shape[0]
+    try:
+        for batch_idx, batch in enumerate(loader):
+            batch_size = batch["image_he"].shape[0]
+            original_batch_idx = start_batch_idx + batch_idx
 
-        optimizer.zero_grad(set_to_none=True)
+            optimizer.zero_grad(set_to_none=True)
 
-        image_he = batch["image_he"].to(device)
-        image_ihc = batch["image_ihc"].to(device)
-        gt = [kp.to(device) for kp in batch["gt_keypoints"]]
+            image_he = batch["image_he"].to(device)
+            image_ihc = batch["image_ihc"].to(device)
+            gt = [kp.to(device) for kp in batch["gt_keypoints"]]
 
-        out_he = model({"image": image_he}, training=True)
-        out_ihc = model({"image": image_ihc}, training=True)
+            out_he = model({"image": image_he}, training=True)
+            out_ihc = model({"image": image_ihc}, training=True)
 
-        loss, components = total_loss(
-            out_he,
-            out_ihc,
-            gt,
-            training_config=training_config,
-            w_kp=training_config.w_kp,
-        )
-        loss.backward()
-        optimizer.step()
-
-        with torch.no_grad():
-            _accumulate_batch_kpis(
-                epoch_totals, out_he["logits"], out_ihc["logits"], gt, kp_kwargs
+            loss, components = total_loss(
+                out_he,
+                out_ihc,
+                gt,
+                training_config=training_config,
+                w_kp=training_config.w_kp,
             )
+            loss.backward()
+            optimizer.step()
+            next_batch_idx = original_batch_idx + 1
 
-        _accumulate_losses(running, components)
-        batch_count += 1
-        samples_seen += batch_size
+            with torch.no_grad():
+                _accumulate_batch_kpis(
+                    epoch_totals, out_he["logits"], out_ihc["logits"], gt, kp_kwargs
+                )
 
-        if batch_count % PROGRESS_EVERY_BATCHES == 0 or samples_seen >= items_total:
-            _print_epoch_progress(epoch, samples_seen, items_total)
+            _accumulate_losses(running, components)
+            batch_count += 1
+            samples_seen += batch_size
+
+            if batch_count % PROGRESS_EVERY_BATCHES == 0 or samples_seen >= items_total:
+                now = time.monotonic()
+                window_items = samples_seen - last_progress_samples
+                _print_epoch_progress(
+                    epoch, samples_seen, items_total, now - last_progress_at, window_items
+                )
+                last_progress_at = now
+                last_progress_samples = samples_seen
+
+            if (
+                instance is not None
+                and eval_loader is not None
+                and training_config.eval_every_seconds > 0
+                and time.monotonic() >= next_eval_at
+            ):
+                eval_result = evaluate_kpis(model, eval_loader, device, training_config)
+                overall = eval_result["overall"]
+                evaluation_log = EvaluationLog(
+                    timestamp=datetime.now().isoformat(timespec="seconds"),
+                    epoch=epoch,
+                    batch_idx=next_batch_idx,
+                    samples_seen=samples_seen,
+                    duration_seconds=eval_result["duration_seconds"],
+                    num_batches=eval_result["num_batches"],
+                    num_samples=eval_result["num_samples"],
+                    precision=overall["precision"],
+                    recall=overall["recall"],
+                    repeatability=overall["repeatability"],
+                    kpis_by_depth=eval_result["by_depth"],
+                )
+                instance.evaluation_logs.append(evaluation_log)
+                instance.save_log()
+                _log(
+                    f"eval epoch={epoch} batch={next_batch_idx} "
+                    f"train_samples={samples_seen} eval_samples={evaluation_log.num_samples} "
+                    f"duration={evaluation_log.duration_seconds:.1f}s "
+                    f"precision={evaluation_log.precision:.4f} "
+                    f"recall={evaluation_log.recall:.4f} "
+                    f"repeatability={evaluation_log.repeatability:.4f}"
+                )
+                next_eval_at = time.monotonic() + training_config.eval_every_seconds
+                model.train()
+    except KeyboardInterrupt as exc:
+        raise MidEpochInterrupt(epoch, next_batch_idx) from exc
 
     if batch_count == 0:
         raise RuntimeError("train_epoch saw zero batches")
@@ -306,18 +417,6 @@ def save_checkpoint(model, instance, timestamp=None):
     torch.save(model.state_dict(), path)
     instance.last_pth_path = path
     return path, timestamp
-
-
-def _make_val_loader(config, dataset=None):
-    dataset = dataset or StainPairKeypointDataset(split="val")
-    return DataLoader(
-        dataset,
-        batch_size=config.batch_size,
-        shuffle=False,
-        num_workers=config.num_workers,
-        pin_memory=torch.cuda.is_available(),
-        collate_fn=collate_pairs,
-    )
 
 
 def train_model(instance, device=None, train_dataset=None, val_dataset=None):
@@ -338,9 +437,10 @@ def train_model(instance, device=None, train_dataset=None, val_dataset=None):
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
     train_dataset = train_dataset or StainPairKeypointDataset(split="train")
-    val_loader    = _make_val_loader(config, val_dataset)
+    eval_loader = _make_eval_loader(config, val_dataset)
 
-    start_epoch = next_epoch_number(instance)
+    resume_state = instance.resume_state
+    start_epoch = resume_state.epoch if resume_state else next_epoch_number(instance)
     end_epoch = start_epoch + config.num_epochs - 1
 
     interrupted = False
@@ -348,19 +448,39 @@ def train_model(instance, device=None, train_dataset=None, val_dataset=None):
     try:
         for epoch in range(start_epoch, end_epoch + 1):
             current_epoch = epoch
-            train_loader = _make_train_loader(config, epoch, dataset=train_dataset)
             try:
                 epoch_start = time.perf_counter()
+                start_batch_idx = (
+                    resume_state.next_batch_idx
+                    if resume_state is not None and epoch == resume_state.epoch
+                    else 0
+                )
+                train_loader = _make_train_loader(
+                    config, epoch, dataset=train_dataset, start_batch_idx=start_batch_idx
+                )
                 train_means, train_kpis = train_epoch(
-                    model, train_loader, optimizer, device, config, epoch
+                    model,
+                    train_loader,
+                    optimizer,
+                    device,
+                    config,
+                    epoch,
+                    start_batch_idx,
+                    len(train_dataset),
+                    instance,
+                    eval_loader,
                 )
                 duration_seconds = time.perf_counter() - epoch_start
+            except MidEpochInterrupt as exc:
+                interrupted = True
+                instance.resume_state = ResumeState(
+                    epoch=exc.epoch,
+                    next_batch_idx=exc.next_batch_idx,
+                )
+                break
             except KeyboardInterrupt:
                 interrupted = True
                 break
-
-            val_result = evaluate_kpis(model, val_loader, device, config)
-            val_ov = val_result["overall"]
 
             log_entry = EpochLog(
                 epoch=epoch,
@@ -374,28 +494,25 @@ def train_model(instance, device=None, train_dataset=None, val_dataset=None):
                 precision=train_kpis["precision"],
                 recall=train_kpis["recall"],
                 duration_seconds=duration_seconds,
-                val_precision=val_ov["precision"],
-                val_recall=val_ov["recall"],
-                val_repeatability=val_ov["repeatability"],
-                val_kpis_by_depth=val_result["by_depth"],
             )
             instance.epoch_logs.append(log_entry)
-            _print_epoch_summary(epoch, train_means, train_kpis, duration_seconds, val_result)
+            instance.resume_state = None
+            resume_state = None
+            _print_epoch_summary(epoch, train_means, train_kpis, duration_seconds)
 
             if epoch % config.save_every_epochs == 0 or epoch == end_epoch:
                 path, timestamp = save_checkpoint(model, instance)
                 instance.save_log()
-                print(f"epoch checkpoint saved : {path.name}  ts={timestamp}", flush=True)
+                _log(f"epoch checkpoint saved : {path.name}  ts={timestamp}")
     except KeyboardInterrupt:
         interrupted = True
     finally:
         if interrupted:
             path, timestamp = save_checkpoint(model, instance)
             instance.save_log()
-            print(
-                f"\ninterrupted during epoch {current_epoch}; "
-                f"checkpoint saved {path.name} ts={timestamp}",
-                flush=True,
+            _log(
+                f"interrupted during epoch {current_epoch}; "
+                f"checkpoint saved {path.name} ts={timestamp}"
             )
 
     if interrupted:
@@ -405,16 +522,16 @@ def train_model(instance, device=None, train_dataset=None, val_dataset=None):
 
 
 if __name__ == "__main__":
-    smoke_config = TrainingConfig(
-        name="smoke",
+    oyster_config = TrainingConfig(
+        name="oyster",
         num_epochs=20,
-        batch_size=32,
-        num_workers=4,
+        batch_size=4,
+        num_workers=2,
         save_every_epochs=1,
     )
     instance = ModelInstance(
-        name=smoke_config.name,
-        config=smoke_config,
+        name=oyster_config.name,
+        config=oyster_config,
         parent="superpoint_v6_from_tf",
     )
 
@@ -423,5 +540,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         raise SystemExit(130)
 
-    print(f"checkpoint : {instance.pth_path}")
-    print(f"log        : {instance.log_path}")
+    _log(f"checkpoint : {instance.pth_path}")
+    _log(f"log        : {instance.log_path}")
