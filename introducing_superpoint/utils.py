@@ -1,11 +1,15 @@
 import torch
 import torch.nn.functional as F
 
-#greedily assign nearest neighbour within radius
-def _match_keypoints_single(logits_b, gt, cell_size, radius, dustbin_idx=64):
+def _match_keypoints_single(
+    logits_b, gt, cell_size, radius, dustbin_idx=64,
+    match_mode="conf_distance", epsilon=1.0,
+):
     """
-    logits_b: (65, Hc, Wc)
-    gt:       (N, 3) — (x, y, conf)
+    logits_b:   (65, Hc, Wc)
+    gt:         (N, 3) — (x, y, conf)
+    match_mode: "conf_distance" sorts by conf/(dist+epsilon) desc;
+                "distance" sorts by dist asc (original behaviour).
     returns dict with matches [(det_i, gt_j)], det_cells (M,2), gt_px (N,2),
     tp/fp/fn counts, and index sets for repeatability.
     """
@@ -17,7 +21,6 @@ def _match_keypoints_single(logits_b, gt, cell_size, radius, dustbin_idx=64):
         det_mask = (scores > 0.005)
         det_cells = det_mask.nonzero(as_tuple=False)
         det_px = det_cells.float() * cell_size + cell_size / 2
-    # N, M = number of keypoints in GT, DET
     N = gt.shape[0]
     M = det_cells.shape[0]
     gt_px = gt[:, :2]
@@ -33,18 +36,31 @@ def _match_keypoints_single(logits_b, gt, cell_size, radius, dustbin_idx=64):
             det_xy = det_px[:, [1, 0]]
             dist = torch.cdist(det_xy.float(), gt_px.float())
             matched_det = torch.zeros(M, dtype=torch.bool)
-            matched_gt = torch.zeros(N, dtype=torch.bool)
-            flat_order = dist.flatten().argsort()
+            matched_gt  = torch.zeros(N, dtype=torch.bool)
+
+            if match_mode == "conf_distance":
+                conf_gt    = gt[:, 2]                                    # (N,)
+                score_mat  = conf_gt.unsqueeze(0) / (dist + epsilon)     # (M, N)
+                flat_order = score_mat.flatten().argsort(descending=True)
+                def _accept(det_i, gt_j):
+                    return dist[det_i, gt_j] <= radius
+            else:
+                flat_order = dist.flatten().argsort()
+                def _accept(det_i, gt_j):
+                    return dist[det_i, gt_j] <= radius
+
             for idx in flat_order:
                 det_i = int(idx // N)
-                gt_j = int(idx % N)
-                if dist[det_i, gt_j] > radius:
-                    break
+                gt_j  = int(idx % N)
+                if not _accept(det_i, gt_j):
+                    if match_mode != "conf_distance":
+                        break
+                    continue
                 if matched_det[det_i] or matched_gt[gt_j]:
                     continue
                 matches.append((det_i, gt_j))
                 matched_det[det_i] = True
-                matched_gt[gt_j] = True
+                matched_gt[gt_j]   = True
 
     matched_det_ids = {det_i for det_i, _ in matches}
     matched_gt_ids = {gt_j for _, gt_j in matches}
@@ -69,15 +85,18 @@ def keypoint_matching_loss_detailed(
     logits,
     gt_coords,
     cell_size=8,
-    radius=8,
+    radius=12,
     w_loc=1.0,
     w_fn=1.0,
     w_fp=0.5,
+    match_mode="conf_distance",
+    match_epsilon=1.0,
 ):
     """
     logits:    (B, 65, Hc, Wc)
     gt_coords: list[Tensor(Ni, 3)] — (x, y, conf) CNN pixels
     returns dict with scalar loss tensors and detached count aggregates.
+    fn and loc terms are weighted by the GT keypoint confidence.
     """
     B, _, Hc, Wc = logits.shape
     dustbin_idx = 64
@@ -90,7 +109,10 @@ def keypoint_matching_loss_detailed(
     ], dim=1).float()
 
     for b in range(B):
-        match = _match_keypoints_single(logits[b], gt_coords[b], cell_size, radius, dustbin_idx)
+        match = _match_keypoints_single(
+            logits[b], gt_coords[b], cell_size, radius, dustbin_idx,
+            match_mode=match_mode, epsilon=match_epsilon,
+        )
         tp_total += match["tp"]
         fp_total += match["fp"]
         fn_total += match["fn"]
@@ -102,15 +124,19 @@ def keypoint_matching_loss_detailed(
             pred_offset = (weights.unsqueeze(1) * bin_yx).sum(0)
             pred_y = cr.float() * cell_size + pred_offset[0]
             pred_x = cc.float() * cell_size + pred_offset[1]
-            loc_terms.append((pred_x - match["gt_px"][gt_j, 0]) ** 2
-                           + (pred_y - match["gt_px"][gt_j, 1]) ** 2)
+            conf_j = gt_coords[b][gt_j, 2]
+            loc_terms.append(conf_j * (
+                (pred_x - match["gt_px"][gt_j, 0]) ** 2
+                + (pred_y - match["gt_px"][gt_j, 1]) ** 2
+            ))
 
         for gt_j in range(match["num_gt"]):
             if gt_j not in match["matched_gt_ids"]:
                 cr, cc = match["gt_cell_row"][gt_j], match["gt_cell_col"][gt_j]
                 target = match["gt_bin_idx"][gt_j].unsqueeze(0)
                 logit_vec = logits[b, :, cr, cc].unsqueeze(0)
-                fn_terms.append(F.cross_entropy(logit_vec, target))
+                conf_j = gt_coords[b][gt_j, 2]
+                fn_terms.append(conf_j * F.cross_entropy(logit_vec, target))
 
         for det_i in range(match["det_cells"].shape[0]):
             if det_i not in match["matched_det_ids"]:
@@ -142,17 +168,23 @@ def keypoint_matching_loss(
     logits,
     gt_coords,
     cell_size=8,
-    radius=8,
+    radius=12,
     w_loc=1.0,
     w_fn=1.0,
     w_fp=0.5,
+    match_mode="conf_distance",
+    match_epsilon=1.0,
 ):
     return keypoint_matching_loss_detailed(
-        logits, gt_coords, cell_size, radius, w_loc, w_fn, w_fp
+        logits, gt_coords, cell_size, radius, w_loc, w_fn, w_fp,
+        match_mode=match_mode, match_epsilon=match_epsilon,
     )["loss"]
 
 
-def compute_keypoint_kpis(logits_he, logits_ihc, gt_coords, cell_size=8, radius=8):
+def compute_keypoint_kpis(
+    logits_he, logits_ihc, gt_coords, cell_size=8, radius=12,
+    match_mode="conf_distance", match_epsilon=1.0,
+):
     """
     Repeatability: GT keypoints matched on both HE and IHC / total GT.
     Precision:     sum(tp) / sum(tp + fp) across both stains.
@@ -164,8 +196,10 @@ def compute_keypoint_kpis(logits_he, logits_ihc, gt_coords, cell_size=8, radius=
     total_gt = 0
 
     for b in range(B):
-        match_he = _match_keypoints_single(logits_he[b], gt_coords[b], cell_size, radius)
-        match_ihc = _match_keypoints_single(logits_ihc[b], gt_coords[b], cell_size, radius)
+        match_he  = _match_keypoints_single(logits_he[b],  gt_coords[b], cell_size, radius,
+                                            match_mode=match_mode, epsilon=match_epsilon)
+        match_ihc = _match_keypoints_single(logits_ihc[b], gt_coords[b], cell_size, radius,
+                                            match_mode=match_mode, epsilon=match_epsilon)
 
         tp += match_he["tp"] + match_ihc["tp"]
         fp += match_he["fp"] + match_ihc["fp"]

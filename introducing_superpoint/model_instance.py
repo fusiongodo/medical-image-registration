@@ -9,7 +9,7 @@ import importlib
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import sys
 
@@ -40,7 +40,9 @@ class TrainingConfig:
     w_loc: float = 1.0
     w_fn: float = 1.0
     w_fp: float = 5.0
-    kp_radius: int = 8
+    kp_radius: int = 12
+    match_mode: str = "conf_distance"
+    match_epsilon: float = 1.0
     desc_patch_size: float = 3.0
     desc_centricity: float = 1.0
     num_workers: int = 0
@@ -61,6 +63,10 @@ class EpochLog:
     precision: float
     recall: float
     duration_seconds: float = 0.0
+    val_precision: Optional[float] = None
+    val_recall: Optional[float] = None
+    val_repeatability: Optional[float] = None
+    val_kpis_by_depth: Optional[dict[str, Any]] = None
 
 
 @dataclass
@@ -116,7 +122,9 @@ class ModelInstance:
             w_loc=config_dict.get("w_loc", 1.0),
             w_fn=config_dict.get("w_fn", 1.0),
             w_fp=config_dict.get("w_fp", 5.0),
-            kp_radius=config_dict.get("kp_radius", 8),
+            kp_radius=config_dict.get("kp_radius", 12),
+            match_mode=config_dict.get("match_mode", "conf_distance"),
+            match_epsilon=config_dict.get("match_epsilon", 1.0),
             desc_patch_size=config_dict.get("desc_patch_size", 3.0),
             desc_centricity=config_dict.get("desc_centricity", 1.0),
             num_workers=config_dict.get("num_workers", 0),
@@ -128,6 +136,10 @@ class ModelInstance:
             entry = dict(entry)
             entry.pop("gt_bin_recall", None)
             entry.setdefault("duration_seconds", 0.0)
+            entry.setdefault("val_precision", None)
+            entry.setdefault("val_recall", None)
+            entry.setdefault("val_repeatability", None)
+            entry.setdefault("val_kpis_by_depth", None)
             epoch_logs.append(EpochLog(**entry))
         last_pth_path = None
         if payload.get("pth_path"):

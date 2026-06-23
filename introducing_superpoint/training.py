@@ -24,7 +24,8 @@ from model_instance import (
     latest_checkpoint_path,
     next_epoch_number,
 )
-from dataset import StainPairKeypointDataset, make_loader
+from torch.utils.data import DataLoader
+from dataset import StainPairKeypointDataset, collate_pairs, make_loader
 import utils
 
 DEFAULT_WEIGHTS = conf.resolve("introducing_superpoint/superpoint_v6_from_tf.pth")
@@ -42,7 +43,9 @@ def build_model(weights_path=DEFAULT_WEIGHTS, device="cpu"):
 def _match_kwargs(config):
     return {
         "cell_size": default_config["grid_size"],
-        "radius": config.kp_radius,
+        "radius":    config.kp_radius,
+        "match_mode": config.match_mode,
+        "epsilon":   config.match_epsilon,
     }
 
 
@@ -62,6 +65,15 @@ def _fresh_kpi_totals():
         "fp": 0,
         "fn": 0,
     }
+
+
+def _fresh_depth_totals():
+    return {}
+
+
+def _ensure_depth(totals_by_depth, depth_key):
+    if depth_key not in totals_by_depth:
+        totals_by_depth[depth_key] = _fresh_kpi_totals()
 
 
 def _accumulate_batch_kpis(totals, logits_he, logits_ihc, gt_list, kp_kwargs):
@@ -95,11 +107,15 @@ def total_loss(out_he, out_ihc, gt_keypoints, config=None, training_config=None,
     """
     config = config or default_config
     training_config = training_config or TrainingConfig(name="default")
-    kp_kwargs = {   "cell_size": default_config["grid_size"],
-                    "radius": training_config.kp_radius,
-                    "w_loc": training_config.w_loc,
-                    "w_fn": training_config.w_fn,
-                    "w_fp": training_config.w_fp    }
+    kp_kwargs = {
+        "cell_size":     default_config["grid_size"],
+        "radius":        training_config.kp_radius,
+        "w_loc":         training_config.w_loc,
+        "w_fn":          training_config.w_fn,
+        "w_fp":          training_config.w_fp,
+        "match_mode":    training_config.match_mode,
+        "match_epsilon": training_config.match_epsilon,
+    }
 
 
     kp_he = utils.keypoint_matching_loss_detailed(out_he["logits"], gt_keypoints, **kp_kwargs)
@@ -138,20 +154,42 @@ def _mean_losses(running, count):
 
 @torch.no_grad()
 def evaluate_kpis(model, loader, device, training_config):
+    """
+    Returns {"overall": {precision, recall, repeatability},
+             "by_depth": {depth_str: {precision, recall, repeatability}, ...}}
+    """
     model.eval()
     kp_kwargs = _match_kwargs(training_config)
-    totals = _fresh_kpi_totals()
+    overall = _fresh_kpi_totals()
+    by_depth: dict = {}
 
-    for batch_idx, batch in enumerate(loader):
-        image_he = batch["image_he"].to(device)
+    for batch in loader:
+        image_he  = batch["image_he"].to(device)
         image_ihc = batch["image_ihc"].to(device)
-        gt = [kp.to(device) for kp in batch["gt_keypoints"]]
+        gt        = [kp.to(device) for kp in batch["gt_keypoints"]]
+        metas     = batch["meta"]
 
-        out_he = model({"image": image_he}, training=True)
+        out_he  = model({"image": image_he},  training=True)
         out_ihc = model({"image": image_ihc}, training=True)
-        _accumulate_batch_kpis(totals, out_he["logits"], out_ihc["logits"], gt, kp_kwargs)
 
-    return _kpis_from_totals(totals)
+        _accumulate_batch_kpis(overall, out_he["logits"], out_ihc["logits"], gt, kp_kwargs)
+
+        for b in range(image_he.shape[0]):
+            depth_key = metas[b]["depth"]
+            _ensure_depth(by_depth, depth_key)
+            match_he  = utils._match_keypoints_single(out_he["logits"][b],  gt[b], **kp_kwargs)
+            match_ihc = utils._match_keypoints_single(out_ihc["logits"][b], gt[b], **kp_kwargs)
+            d = by_depth[depth_key]
+            d["repeatable"] += len(match_he["matched_gt_ids"] & match_ihc["matched_gt_ids"])
+            d["total_gt"]   += match_he["num_gt"]
+            d["tp"] += match_he["tp"] + match_ihc["tp"]
+            d["fp"] += match_he["fp"] + match_ihc["fp"]
+            d["fn"] += match_he["fn"] + match_ihc["fn"]
+
+    return {
+        "overall":  _kpis_from_totals(overall),
+        "by_depth": {k: _kpis_from_totals(v) for k, v in sorted(by_depth.items())},
+    }
 
 
 
@@ -173,7 +211,7 @@ def _print_epoch_progress(epoch, items_done, items_total):
     print(f"epoch {epoch}: {items_done}/{items_total} done, {items_left} left", flush=True)
 
 
-def _print_epoch_summary(epoch, train_means, kpis, duration_seconds):
+def _print_epoch_summary(epoch, train_means, train_kpis, duration_seconds, val_result=None):
     print(
         f"epoch {epoch} losses : "
         f"total={train_means['total']:.4f} "
@@ -186,12 +224,27 @@ def _print_epoch_summary(epoch, train_means, kpis, duration_seconds):
         flush=True,
     )
     print(
-        f"epoch {epoch} KPIs   : "
-        f"repeatability={kpis['repeatability']:.4f} "
-        f"precision={kpis['precision']:.4f} "
-        f"recall={kpis['recall']:.4f}",
+        f"epoch {epoch} train  : "
+        f"repeatability={train_kpis['repeatability']:.4f} "
+        f"precision={train_kpis['precision']:.4f} "
+        f"recall={train_kpis['recall']:.4f}",
         flush=True,
     )
+    if val_result is not None:
+        ov = val_result["overall"]
+        print(
+            f"epoch {epoch} val    : "
+            f"repeatability={ov['repeatability']:.4f} "
+            f"precision={ov['precision']:.4f} "
+            f"recall={ov['recall']:.4f}",
+            flush=True,
+        )
+        depth_parts = "  ".join(
+            f"d{k}=[p={v['precision']:.3f} r={v['recall']:.3f}]"
+            for k, v in val_result["by_depth"].items()
+        )
+        if depth_parts:
+            print(f"epoch {epoch} val/d  : {depth_parts}", flush=True)
 
 
 def train_epoch(model, loader, optimizer, device, training_config, epoch):
@@ -255,7 +308,19 @@ def save_checkpoint(model, instance, timestamp=None):
     return path, timestamp
 
 
-def train_model(instance, device=None, train_dataset=None, eval_loader=None):
+def _make_val_loader(config, dataset=None):
+    dataset = dataset or StainPairKeypointDataset(split="val")
+    return DataLoader(
+        dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=config.num_workers,
+        pin_memory=torch.cuda.is_available(),
+        collate_fn=collate_pairs,
+    )
+
+
+def train_model(instance, device=None, train_dataset=None, val_dataset=None):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     config = instance.config
 
@@ -272,7 +337,8 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None):
     model = build_model(weights_path=weights_path, device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
-    train_dataset = train_dataset or StainPairKeypointDataset()
+    train_dataset = train_dataset or StainPairKeypointDataset(split="train")
+    val_loader    = _make_val_loader(config, val_dataset)
 
     start_epoch = next_epoch_number(instance)
     end_epoch = start_epoch + config.num_epochs - 1
@@ -285,13 +351,16 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None):
             train_loader = _make_train_loader(config, epoch, dataset=train_dataset)
             try:
                 epoch_start = time.perf_counter()
-                train_means, kpis = train_epoch(
+                train_means, train_kpis = train_epoch(
                     model, train_loader, optimizer, device, config, epoch
                 )
                 duration_seconds = time.perf_counter() - epoch_start
             except KeyboardInterrupt:
                 interrupted = True
                 break
+
+            val_result = evaluate_kpis(model, val_loader, device, config)
+            val_ov = val_result["overall"]
 
             log_entry = EpochLog(
                 epoch=epoch,
@@ -301,13 +370,17 @@ def train_model(instance, device=None, train_dataset=None, eval_loader=None):
                 loss_loc=train_means["loc"],
                 loss_fn=train_means["fn"],
                 loss_fp=train_means["fp"],
-                repeatability=kpis["repeatability"],
-                precision=kpis["precision"],
-                recall=kpis["recall"],
+                repeatability=train_kpis["repeatability"],
+                precision=train_kpis["precision"],
+                recall=train_kpis["recall"],
                 duration_seconds=duration_seconds,
+                val_precision=val_ov["precision"],
+                val_recall=val_ov["recall"],
+                val_repeatability=val_ov["repeatability"],
+                val_kpis_by_depth=val_result["by_depth"],
             )
             instance.epoch_logs.append(log_entry)
-            _print_epoch_summary(epoch, train_means, kpis, duration_seconds)
+            _print_epoch_summary(epoch, train_means, train_kpis, duration_seconds, val_result)
 
             if epoch % config.save_every_epochs == 0 or epoch == end_epoch:
                 path, timestamp = save_checkpoint(model, instance)
@@ -335,7 +408,8 @@ if __name__ == "__main__":
     smoke_config = TrainingConfig(
         name="smoke",
         num_epochs=20,
-        batch_size=4,
+        batch_size=32,
+        num_workers=4,
         save_every_epochs=1,
     )
     instance = ModelInstance(

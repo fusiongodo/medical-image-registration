@@ -35,7 +35,7 @@ import cv2
 import numpy as np
 import torch
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "explore" / "pretraining_compare_detectors"))
 sys.path.insert(0, str(ROOT / "external"))
 
@@ -159,12 +159,23 @@ def process_pairs(n: int, frontend: SuperPointFrontend,
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
+    global DATA_ROOT
+
     argv  = sys.argv[1:]
     force = "--force" in argv or "-f" in argv
     argv  = [a for a in argv if a not in ("--force", "-f")]
 
     conf_thresh = DEFAULT_CONF_THRESH
     nms_dist    = DEFAULT_NMS_DIST
+
+    if "--data-root" in argv:
+        idx       = argv.index("--data-root")
+        if idx + 1 >= len(argv):
+            sys.exit("--data-root requires a path argument")
+        DATA_ROOT = Path(argv[idx + 1])
+        if not DATA_ROOT.is_absolute():
+            DATA_ROOT = Path.cwd() / DATA_ROOT
+        argv = argv[:idx] + argv[idx + 2:]
 
     for flag, attr in (("--conf-thresh", "conf_thresh"), ("--nms-dist", "nms_dist")):
         if flag in argv:
@@ -194,8 +205,8 @@ def main() -> None:
     if len(argv) < 2:
         sys.exit(
             "Usage:\n"
-            "  python keypoints.py <pair_id> <depth> [--conf-thresh F] [--nms-dist N] [--force]\n"
-            "  python keypoints.py --pairs N  [--conf-thresh F] [--nms-dist N] [--force]"
+            "  python keypoints.py <pair_id> <depth> [--data-root DIR] [--conf-thresh F] [--nms-dist N] [--force]\n"
+            "  python keypoints.py --pairs N  [--data-root DIR] [--conf-thresh F] [--nms-dist N] [--force]"
         )
     process(int(argv[0]), int(argv[1]), frontend, conf_thresh, nms_dist, force=force)
 

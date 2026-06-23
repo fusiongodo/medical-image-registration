@@ -9,6 +9,7 @@ data/exact/
 .idea/
 data/cropped/
 data/cropped_smooth/
+data/
 introducing_superpoint/runs/
 remote/logs/
 remote/runpodKey
