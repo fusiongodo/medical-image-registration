@@ -1,0 +1,361 @@
+{
+  "name": "oyster",
+  "parent": "superpoint_v6_from_tf",
+  "config": {
+    "name": "oyster",
+    "learning_rate": 0.003,
+    "batch_size": 4,
+    "num_epochs": 20,
+    "save_every_epochs": 1,
+    "w_kp": 1.0,
+    "w_loc": 1.0,
+    "w_fn": 1.0,
+    "w_fp": 5.0,
+    "kp_radius": 12,
+    "match_mode": "conf_distance",
+    "match_epsilon": 1.0,
+    "desc_patch_size": 3.0,
+    "desc_centricity": 1.0,
+    "num_workers": 2,
+    "eval_every_seconds": 3600,
+    "eval_num_samples": 256,
+    "eval_seed": 0,
+    "eval_batch_size": null,
+    "weights_init": "introducing_superpoint/superpoint_v6_from_tf.pth",
+    "run_dir": "introducing_superpoint/runs"
+  },
+  "pth_path": "introducing_superpoint/runs/oyster/oyster_24-06_09-37.pth",
+  "epoch_logs": [
+    {
+      "epoch": 1,
+      "loss_total": 13.751307097274008,
+      "loss_descriptor": 0.7121348669106059,
+      "loss_keypoint": 13.039172225460193,
+      "loss_loc": 9.628173212283757,
+      "loss_fn": 2.974530928443412,
+      "loss_fp": 0.08729362118057109,
+      "repeatability": 0.018348068456332273,
+      "precision": 0.21956856899597257,
+      "recall": 0.0356085214649594,
+      "duration_seconds": 11456.427555081988,
+      "val_precision": null,
+      "val_recall": null,
+      "val_repeatability": null,
+      "val_kpis_by_depth": null
+    }
+  ],
+  "evaluation_logs": [
+    {
+      "timestamp": "2026-06-23T23:57:03",
+      "epoch": 1,
+      "batch_idx": 3148,
+      "samples_seen": 12592,
+      "duration_seconds": 1732.2543795230013,
+      "num_batches": 64,
+      "num_samples": 256,
+      "precision": 0.20142995973896968,
+      "recall": 0.1130794650372453,
+      "repeatability": 0.050456713533053206,
+      "kpis_by_depth": {
+        "d0": {
+          "repeatability": 0.02782462057312121,
+          "precision": 0.19359756097265857,
+          "recall": 0.053541315345474114
+        },
+        "d1": {
+          "repeatability": 0.06516290726653727,
+          "precision": 0.2345679012249149,
+          "recall": 0.07142857142767634
+        },
+        "d2": {
+          "repeatability": 0.02203182374514037,
+          "precision": 0.23747680890097445,
+          "recall": 0.07833537331653406
+        },
+        "d3": {
+          "repeatability": 0.02320490367765672,
+          "precision": 0.12212183036979854,
+          "recall": 0.09172504378263634
+        },
+        "d4": {
+          "repeatability": 0.049697831496587484,
+          "precision": 0.22617354196285477,
+          "recall": 0.11304656949871558
+        },
+        "d5": {
+          "repeatability": 0.05303614298613461,
+          "precision": 0.19958192877719827,
+          "recall": 0.1167103495363614
+        }
+      }
+    },
+    {
+      "timestamp": "2026-06-24T00:57:46",
+      "epoch": 1,
+      "batch_idx": 3601,
+      "samples_seen": 14404,
+      "duration_seconds": 42.8046790970111,
+      "num_batches": 64,
+      "num_samples": 256,
+      "precision": 0.6100217864890523,
+      "recall": 0.008728995853726289,
+      "repeatability": 6.234997038375436e-05,
+      "kpis_by_depth": {
+        "d0": {
+          "repeatability": 0.0,
+          "precision": 0.5217391302079395,
+          "recall": 0.005059021922407003
+        },
+        "d1": {
+          "repeatability": 0.0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "d2": {
+          "repeatability": 0.0,
+          "precision": 0.6249999992187499,
+          "recall": 0.003059975520177112
+        },
+        "d3": {
+          "repeatability": 0.0,
+          "precision": 0.6716417909445311,
+          "recall": 0.009851138353743759
+        },
+        "d4": {
+          "repeatability": 0.0,
+          "precision": 0.6545961002603177,
+          "recall": 0.0083540703874837
+        },
+        "d5": {
+          "repeatability": 8.80999052925824e-05,
+          "precision": 0.5968092820841421,
+          "recall": 0.009063277756975413
+        }
+      }
+    },
+    {
+      "timestamp": "2026-06-24T02:45:30",
+      "epoch": 2,
+      "batch_idx": 556,
+      "samples_seen": 2224,
+      "duration_seconds": 451.15980961199966,
+      "num_batches": 64,
+      "num_samples": 256,
+      "precision": 0.24403679537905443,
+      "recall": 0.035562864357636656,
+      "repeatability": 0.027340462013276282,
+      "kpis_by_depth": {
+        "d0": {
+          "repeatability": 0.034569983136302114,
+          "precision": 0.18376068375675725,
+          "recall": 0.03625632377725019
+        },
+        "d1": {
+          "repeatability": 0.03759398496146381,
+          "precision": 0.2427745664599552,
+          "recall": 0.052631578946708876
+        },
+        "d2": {
+          "repeatability": 0.0318237454096472,
+          "precision": 0.28017241378102703,
+          "recall": 0.039779681762302455
+        },
+        "d3": {
+          "repeatability": 0.032837127845740645,
+          "precision": 0.19292604501400937,
+          "recall": 0.039404553414975035
+        },
+        "d4": {
+          "repeatability": 0.03185211517950099,
+          "precision": 0.2869680851056198,
+          "recall": 0.03835762531104218
+        },
+        "d5": {
+          "repeatability": 0.0253066977952943,
+          "precision": 0.23690222357581714,
+          "recall": 0.03425985067065676
+        }
+      }
+    },
+    {
+      "timestamp": "2026-06-24T03:45:38",
+      "epoch": 2,
+      "batch_idx": 974,
+      "samples_seen": 3896,
+      "duration_seconds": 5.7574579599895515,
+      "num_batches": 64,
+      "num_samples": 256,
+      "precision": 0.33333333328703707,
+      "recall": 0.00018704991115127764,
+      "repeatability": 0.0,
+      "kpis_by_depth": {
+        "d0": {
+          "repeatability": 0.0,
+          "precision": 0.6666666644444444,
+          "recall": 0.0008431703204011672
+        },
+        "d1": {
+          "repeatability": 0.0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "d2": {
+          "repeatability": 0.0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "d3": {
+          "repeatability": 0.0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "d4": {
+          "repeatability": 0.0,
+          "precision": 0.20512820507560814,
+          "recall": 0.00028439388553135996
+        },
+        "d5": {
+          "repeatability": 0.0,
+          "precision": 0.4666666665111111,
+          "recall": 0.0001541748342620362
+        }
+      }
+    },
+    {
+      "timestamp": "2026-06-24T04:57:38",
+      "epoch": 2,
+      "batch_idx": 1371,
+      "samples_seen": 5484,
+      "duration_seconds": 716.7921551889885,
+      "num_batches": 64,
+      "num_samples": 256,
+      "precision": 0.2175973360655041,
+      "recall": 0.05296629984100345,
+      "repeatability": 0.05296629984099932,
+      "kpis_by_depth": {
+        "d0": {
+          "repeatability": 0.0337268128159045,
+          "precision": 0.16393442622614887,
+          "recall": 0.03372681281604668
+        },
+        "d1": {
+          "repeatability": 0.0401002506255614,
+          "precision": 0.13114754097823164,
+          "recall": 0.040100250626063906
+        },
+        "d2": {
+          "repeatability": 0.0477356181144708,
+          "precision": 0.21311475409253786,
+          "recall": 0.04773561811476294
+        },
+        "d3": {
+          "repeatability": 0.044658493870207275,
+          "precision": 0.16721311475272777,
+          "recall": 0.04465849387030504
+        },
+        "d4": {
+          "repeatability": 0.051546391752540666,
+          "precision": 0.21609538002948422,
+          "recall": 0.05154639175255899
+        },
+        "d5": {
+          "repeatability": 0.05453384137610851,
+          "precision": 0.22302287876048324,
+          "recall": 0.054533841376114514
+        }
+      }
+    },
+    {
+      "timestamp": "2026-06-24T06:06:30",
+      "epoch": 2,
+      "batch_idx": 1719,
+      "samples_seen": 6876,
+      "duration_seconds": 530.6072094620031,
+      "num_batches": 64,
+      "num_samples": 256,
+      "precision": 0.24288476237568324,
+      "recall": 0.04210181750163341,
+      "repeatability": 0.033918383888762366,
+      "kpis_by_depth": {
+        "d0": {
+          "repeatability": 0.03541315345669972,
+          "precision": 0.18574514038475712,
+          "recall": 0.03625632377725019
+        },
+        "d1": {
+          "repeatability": 0.05764411027424451,
+          "precision": 0.24137931033293697,
+          "recall": 0.06140350877116035
+        },
+        "d2": {
+          "repeatability": 0.042839657282217385,
+          "precision": 0.2636986301279555,
+          "recall": 0.04712362301072752
+        },
+        "d3": {
+          "repeatability": 0.04203152364254802,
+          "precision": 0.2041984732804943,
+          "recall": 0.04684763572669254
+        },
+        "d4": {
+          "repeatability": 0.036900106647680835,
+          "precision": 0.27400263042465145,
+          "recall": 0.04443654461427499
+        },
+        "d5": {
+          "repeatability": 0.032178490408115726,
+          "precision": 0.23773368212834955,
+          "recall": 0.041032530890024774
+        }
+      }
+    },
+    {
+      "timestamp": "2026-06-24T07:08:33",
+      "epoch": 2,
+      "batch_idx": 2193,
+      "samples_seen": 8772,
+      "duration_seconds": 122.99835048000386,
+      "num_batches": 64,
+      "num_samples": 256,
+      "precision": 0.43975535168128477,
+      "recall": 0.022414814352961436,
+      "repeatability": 0.0010287745113319467,
+      "kpis_by_depth": {
+        "d0": {
+          "repeatability": 0.001686340640795225,
+          "precision": 0.8999999991,
+          "recall": 0.003794266441805252
+        },
+        "d1": {
+          "repeatability": 0.0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "d2": {
+          "repeatability": 0.0,
+          "precision": 0.6666666655555555,
+          "recall": 0.0024479804161416895
+        },
+        "d3": {
+          "repeatability": 0.0004378283712765419,
+          "precision": 0.5362318839802563,
+          "recall": 0.008099824868633757
+        },
+        "d4": {
+          "repeatability": 0.001493067899039109,
+          "precision": 0.4409756097517954,
+          "recall": 0.01606825453252184
+        },
+        "d5": {
+          "repeatability": 0.0009250490055721153,
+          "precision": 0.4372007366474453,
+          "recall": 0.02614364689557671
+        }
+      }
+    }
+  ],
+  "resume_state": {
+    "epoch": 2,
+    "next_batch_idx": 2291
+  }
+}
