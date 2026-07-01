@@ -34,6 +34,7 @@ import utils
 
 DEFAULT_WEIGHTS = conf.resolve("introducing_superpoint/superpoint_v6_from_tf.pth")
 PROGRESS_EVERY_BATCHES = 10
+_monitor_path: Path | None = None
 
 
 class MidEpochInterrupt(Exception):
@@ -45,6 +46,24 @@ class MidEpochInterrupt(Exception):
 
 def _log(message: str) -> None:
     print(f"[{datetime.now():%H:%M:%S}] {message}", flush=True)
+
+
+def init_monitor_log(path: Path) -> None:
+    global _monitor_path
+    _monitor_path = path.resolve()
+    _monitor_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(_monitor_path, "a", encoding="utf-8") as f:
+        f.write(f"[{datetime.now():%H:%M:%S}] monitor started → {_monitor_path}\n")
+        f.flush()
+
+
+def _monitor(message: str) -> None:
+    line = f"[{datetime.now():%H:%M:%S}] {message}"
+    print(line, flush=True)
+    if _monitor_path is not None:
+        with open(_monitor_path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+            f.flush()
 
 
 def build_model(weights_path=DEFAULT_WEIGHTS, device="cpu"):
@@ -346,6 +365,15 @@ def train_epoch(
     last_eval_wall = time.monotonic()
     last_progress_at = time.monotonic()
     last_progress_samples = samples_seen
+    monitor_window_start_t = time.monotonic()
+    monitor_window_start_s = samples_seen
+    batch_start_t = time.monotonic()
+
+    _monitor(
+        f"epoch={epoch} starting batches={len(loader)} "
+        f"samples_total={items_total} start_batch={start_batch_idx} "
+        f"bs={training_config.batch_size} workers={training_config.num_workers}"
+    )
 
     try:
         for batch_idx, batch in enumerate(loader):
@@ -380,6 +408,17 @@ def train_epoch(
             _accumulate_losses(running, components)
             batch_count += 1
             samples_seen += batch_size
+
+            batch_s = time.monotonic() - batch_start_t
+            window_s = samples_seen - monitor_window_start_s
+            window_t = time.monotonic() - monitor_window_start_t
+            sps = window_s / window_t if window_t > 0 else 0.0
+            _monitor(
+                f"epoch={epoch} batch={next_batch_idx} samples={samples_seen} "
+                f"loss={loss.detach().item():.4f} batch_s={batch_s:.3f} sps={sps:.1f} "
+                f"bs={training_config.batch_size} workers={training_config.num_workers}"
+            )
+            batch_start_t = time.monotonic()
 
             if batch_count % PROGRESS_EVERY_BATCHES == 0 or samples_seen >= items_total:
                 now = time.monotonic()
@@ -455,6 +494,7 @@ def train_model(instance, device=None, train_dataset=None, val_dataset=None):
 
     instance.run_dir.mkdir(parents=True, exist_ok=True)
     load_existing_run(instance)
+    _monitor(f"run={instance.name} run_dir={instance.run_dir}")
 
     latest = latest_checkpoint_path(instance.run_dir, instance.name)
     if latest is not None:
@@ -462,16 +502,25 @@ def train_model(instance, device=None, train_dataset=None, val_dataset=None):
         instance.last_pth_path = latest
     else:
         weights_path = config.weights_init
+    _monitor(f"weights={weights_path}")
 
+    _monitor(f"loading model on {device} …")
     model = build_model(weights_path=weights_path, device=device)
+    if device == "cuda" and torch.cuda.is_available():
+        _monitor(f"gpu={torch.cuda.get_device_name(0)}")
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
     train_dataset = train_dataset or StainPairKeypointDataset(split="train")
+    _monitor(f"train tiles={len(train_dataset)}")
     eval_loader = _make_eval_loader(config, val_dataset)
+    _monitor(f"eval loader ready batches={len(eval_loader)}")
 
     resume_state = instance.resume_state
     start_epoch = resume_state.epoch if resume_state else next_epoch_number(instance)
     end_epoch = start_epoch + config.num_epochs - 1
+    if resume_state:
+        _monitor(f"resume epoch={resume_state.epoch} batch={resume_state.next_batch_idx}")
+    _monitor(f"epochs {start_epoch}..{end_epoch}")
 
     interrupted = False
     current_epoch = None
@@ -577,6 +626,8 @@ if __name__ == "__main__":
                    help="override data_dir from config (path to cropped_smooth_training)")
     p.add_argument("--run-dir",  default=None,
                    help="override run_dir (where checkpoints are saved)")
+    p.add_argument("--monitor-log", default=None,
+                   help="high-frequency monitor log path (default: PROJECT_ROOT/monitor_training.log)")
     args = p.parse_args()
 
     _configs_dir = Path(__file__).parent / "training_configs"
@@ -603,7 +654,11 @@ if __name__ == "__main__":
     if args.run_dir:
         training_config.run_dir = conf.resolve(args.run_dir)
 
+    monitor_path = conf.resolve(args.monitor_log) if args.monitor_log else conf.PROJECT_ROOT / "monitor_training.log"
+    init_monitor_log(monitor_path)
+
     _log(f"config     : {config_path}")
+    _monitor(f"config={config_path} monitor={monitor_path}")
     if training_config.notes:
         _log(f"notes      : {training_config.notes}")
 
@@ -615,6 +670,10 @@ if __name__ == "__main__":
 
     train_dataset = StainPairKeypointDataset(cropped_dir=data_dir, split="train") if data_dir else None
     val_dataset   = StainPairKeypointDataset(cropped_dir=data_dir, split="val")   if data_dir else None
+    if train_dataset is not None:
+        _monitor(f"train_dataset tiles={len(train_dataset)} data_dir={data_dir}")
+    if val_dataset is not None:
+        _monitor(f"val_dataset tiles={len(val_dataset)}")
 
     try:
         instance, model = train_model(instance, train_dataset=train_dataset, val_dataset=val_dataset)
