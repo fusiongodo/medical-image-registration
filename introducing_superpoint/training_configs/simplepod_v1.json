@@ -4,7 +4,7 @@
   "parent": "superpoint_v6_from_tf",
   "data_dir": "data/cropped_smooth_training",
   "num_epochs": 5,
-  "batch_size": 8,
+  "batch_size": 32,
   "learning_rate": 0.003,
   "num_workers": 4,
   "save_every_epochs": 1,
