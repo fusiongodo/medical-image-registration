@@ -37,30 +37,32 @@ def _match_keypoints_single(
             dist = torch.cdist(det_xy.float(), gt_px.float())
             matched_det = torch.zeros(M, dtype=torch.bool)
             matched_gt  = torch.zeros(N, dtype=torch.bool)
+            valid = dist <= radius
+            if not valid.any():
+                valid_pairs = dist.new_zeros((0, 2), dtype=torch.long)
+            else:
+                valid_pairs = valid.nonzero(as_tuple=False)
 
             if match_mode == "conf_distance":
-                conf_gt    = gt[:, 2]                                    # (N,)
-                score_mat  = conf_gt.unsqueeze(0) / (dist + epsilon)     # (M, N)
-                flat_order = score_mat.flatten().argsort(descending=True)
-                def _accept(det_i, gt_j):
-                    return dist[det_i, gt_j] <= radius
+                conf_gt = gt[:, 2]
+                pair_scores = conf_gt[valid_pairs[:, 1]] / (
+                    dist[valid_pairs[:, 0], valid_pairs[:, 1]] + epsilon
+                )
+                order = pair_scores.argsort(descending=True)
             else:
-                flat_order = dist.flatten().argsort()
-                def _accept(det_i, gt_j):
-                    return dist[det_i, gt_j] <= radius
+                order = dist[valid_pairs[:, 0], valid_pairs[:, 1]].argsort()
 
-            for idx in flat_order:
-                det_i = int(idx // N)
-                gt_j  = int(idx % N)
-                if not _accept(det_i, gt_j):
-                    if match_mode != "conf_distance":
-                        break
-                    continue
+            max_matches = min(M, N)
+            for rank in order:
+                if len(matches) >= max_matches:
+                    break
+                det_i = int(valid_pairs[rank, 0])
+                gt_j = int(valid_pairs[rank, 1])
                 if matched_det[det_i] or matched_gt[gt_j]:
                     continue
                 matches.append((det_i, gt_j))
                 matched_det[det_i] = True
-                matched_gt[gt_j]   = True
+                matched_gt[gt_j] = True
 
     matched_det_ids = {det_i for det_i, _ in matches}
     matched_gt_ids = {gt_j for _, gt_j in matches}

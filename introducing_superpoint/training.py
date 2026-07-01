@@ -379,6 +379,7 @@ def train_epoch(
         for batch_idx, batch in enumerate(loader):
             batch_size = batch["image_he"].shape[0]
             original_batch_idx = start_batch_idx + batch_idx
+            _monitor(f"epoch={epoch} batch={original_batch_idx + 1} loaded bs={batch_size} forward …")
 
             optimizer.zero_grad(set_to_none=True)
 
