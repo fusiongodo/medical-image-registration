@@ -71,15 +71,39 @@ class StainPairKeypointDataset(Dataset):
         if preload:
             self._preload()
 
+    _CACHE_FILE = ".scan_cache.json"
+
     def _scan(self):
-        groups: dict[tuple, list] = defaultdict(list)
+        groups = self._load_cached_groups()
+        if groups is None:
+            groups = self._scan_disk()
+            self._save_cached_groups(groups)
+
+        if self.split == "all":
+            return [Path(t) for group in groups.values() for t in group]
+
+        tiles = []
+        for key_str, paths in groups.items():
+            pair_id, depth_int, _depth_str = key_str.split("\x00")
+            depth_int = int(depth_int)
+            group = [Path(p) for p in paths]
+            n_val = _val_count(depth_int, len(group))
+            if self.split == "val":
+                tiles.extend(group[:n_val])
+            else:
+                tiles.extend(group[n_val:])
+        return tiles
+
+    def _scan_disk(self):
+        print(f"[dataset] scanning {self.cropped_dir} …", flush=True)
+        groups: dict[str, list] = defaultdict(list)
         for pair_dir in sorted(self.cropped_dir.iterdir()):
             if not pair_dir.is_dir():
                 continue
             for depth_dir in sorted(pair_dir.iterdir()):
                 if not depth_dir.is_dir():
                     continue
-                depth_str = depth_dir.name          # e.g. "d5"
+                depth_str = depth_dir.name
                 depth_int = int(depth_str.lstrip("d"))
                 for tile_dir in sorted(depth_dir.iterdir()):
                     if not tile_dir.is_dir():
@@ -89,20 +113,39 @@ class StainPairKeypointDataset(Dataset):
                         and (tile_dir / "ihc.png").exists()
                         and (tile_dir / "keypoints.json").exists()
                     ):
-                        groups[(pair_dir.name, depth_int, depth_str)].append(tile_dir)
+                        key = f"{pair_dir.name}\x00{depth_int}\x00{depth_str}"
+                        groups[key].append(str(tile_dir))
+        print(f"[dataset] scan done: {sum(len(v) for v in groups.values())} tiles", flush=True)
+        return dict(groups)
 
-        if self.split == "all":
-            return [t for group in groups.values() for t in group]
+    def _cache_path(self):
+        return self.cropped_dir / self._CACHE_FILE
 
-        tiles = []
-        for (pair_id, depth_int, _depth_str), group in groups.items():
-            n_val = _val_count(depth_int, len(group))
-            val_set = set(group[:n_val])
-            if self.split == "val":
-                tiles.extend(group[:n_val])
-            else:
-                tiles.extend(t for t in group if t not in val_set)
-        return tiles
+    def _load_cached_groups(self):
+        cache = self._cache_path()
+        if not cache.exists():
+            return None
+        try:
+            with open(cache, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if payload.get("cropped_dir") != str(self.cropped_dir):
+                return None
+            print(f"[dataset] loaded scan cache ({payload.get('n_tiles')} tiles)", flush=True)
+            return payload["groups"]
+        except Exception:
+            return None
+
+    def _save_cached_groups(self, groups):
+        payload = {
+            "cropped_dir": str(self.cropped_dir),
+            "n_tiles": sum(len(v) for v in groups.values()),
+            "groups": groups,
+        }
+        try:
+            with open(self._cache_path(), "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+        except Exception:
+            pass
 
     def _preload(self):
         print(f"preloading {len(self.tile_dirs)} tiles into RAM …", flush=True)
