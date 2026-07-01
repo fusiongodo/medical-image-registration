@@ -44,10 +44,9 @@ def _gt_to_numpy(gt_keypoints: torch.Tensor):
 
 
 def _meta_title(prefix: str, meta: dict, n_kp: int) -> str:
-    return (
-        f"{prefix} pair={meta['pair_id']} depth={meta['crop_depth']} "
-        f"x={meta['x_idx']} y={meta['y_idx']} kp={n_kp}"
-    )
+    depth   = meta.get("depth",    meta.get("crop_depth", "?"))
+    tile_id = meta.get("tile_id",  f"{meta.get('x_idx','?')}_{meta.get('y_idx','?')}")
+    return f"{prefix} pair={meta['pair_id']} depth={depth} tile={tile_id} kp={n_kp}"
 
 
 def render_training_pair(item, figsize=(10, 4)):

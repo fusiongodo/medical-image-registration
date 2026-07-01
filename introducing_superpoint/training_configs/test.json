@@ -1,0 +1,21 @@
+{
+  "name": "test",
+  "notes": "test run",
+  "parent": "superpoint_v6_from_tf",
+  "data_dir": "data/cropped_smooth_training",
+  "num_epochs": 2,
+  "batch_size": 4,
+  "learning_rate": 0.001,
+  "num_workers": 4,
+  "save_every_epochs": 1,
+  "kp_radius": 12,
+  "match_mode": "conf_distance",
+  "match_epsilon": 1.0,
+  "w_kp": 1.0,
+  "w_loc": 1.0,
+  "w_fn": 1.0,
+  "w_fp": 5.0,
+  "eval_every_samples": 100,
+  "eval_num_samples": 12,
+  "eval_snapshot_tiles": 10
+}

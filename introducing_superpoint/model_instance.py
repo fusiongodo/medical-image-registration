@@ -47,11 +47,14 @@ class TrainingConfig:
     desc_centricity: float = 1.0
     num_workers: int = 0
     eval_every_seconds: int = 3600
+    eval_every_samples: int = 2000
     eval_num_samples: int = 256
+    eval_snapshot_tiles: int = 32
     eval_seed: int = 0
     eval_batch_size: Optional[int] = None
     weights_init: Path = DEFAULT_WEIGHTS
     run_dir: Path = DEFAULT_RUN_DIR
+    notes: str = ""
 
 
 @dataclass
@@ -92,6 +95,8 @@ class EvaluationLog:
     recall: float
     repeatability: float
     kpis_by_depth: dict[str, Any]
+    training_duration_seconds: float = 0.0
+    tile_snapshots: list = field(default_factory=list)
 
 
 @dataclass
@@ -158,11 +163,14 @@ class ModelInstance:
             desc_centricity=config_dict.get("desc_centricity", 1.0),
             num_workers=config_dict.get("num_workers", 0),
             eval_every_seconds=config_dict.get("eval_every_seconds", 3600),
+            eval_every_samples=config_dict.get("eval_every_samples", 2000),
             eval_num_samples=config_dict.get("eval_num_samples", 256),
+            eval_snapshot_tiles=config_dict.get("eval_snapshot_tiles", 32),
             eval_seed=config_dict.get("eval_seed", 0),
             eval_batch_size=config_dict.get("eval_batch_size", None),
             weights_init=conf.resolve(config_dict.get("weights_init", conf.to_relative(DEFAULT_WEIGHTS))),
             run_dir=conf.resolve(config_dict.get("run_dir", conf.to_relative(DEFAULT_RUN_DIR))),
+            notes=config_dict.get("notes", ""),
         )
         epoch_logs = []
         for entry in payload.get("epoch_logs", []):
@@ -176,6 +184,9 @@ class ModelInstance:
             epoch_logs.append(EpochLog(**entry))
         evaluation_logs = []
         for entry in payload.get("evaluation_logs", []):
+            entry = dict(entry)
+            entry.setdefault("training_duration_seconds", 0.0)
+            entry.setdefault("tile_snapshots", [])
             evaluation_logs.append(EvaluationLog(**entry))
         last_pth_path = None
         if payload.get("pth_path"):

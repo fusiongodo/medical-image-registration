@@ -3,6 +3,7 @@ SuperPoint stain-invariant training: model load, loss assembly, epoch loop,
 checkpointing, and KPI logging via ModelInstance.
 """
 import sys
+import json
 import time
 import importlib
 from datetime import datetime
@@ -167,10 +168,13 @@ def _mean_losses(running, count):
 
 
 @torch.no_grad()
-def evaluate_kpis(model, loader, device, training_config):
+def evaluate_kpis(model, loader, device, training_config, snapshot_tiles: int = 0):
     """
     Returns {"overall": {precision, recall, repeatability},
-             "by_depth": {depth_str: {precision, recall, repeatability}, ...}}
+             "by_depth": {depth_str: {precision, recall, repeatability}, ...},
+             "tile_snapshots": [{"tile_dir", "he_keypoints", "ihc_keypoints"}, ...]}
+    Keypoint lists contain [x, y, score] triples so NMS can be re-applied post-hoc.
+    snapshot_tiles: collect NMS predictions for this many tiles (first N seen).
     """
     was_training = model.training
     start = time.perf_counter()
@@ -180,6 +184,7 @@ def evaluate_kpis(model, loader, device, training_config):
     by_depth: dict = {}
     num_batches = 0
     num_samples = 0
+    tile_snapshots = []
 
     for batch in loader:
         image_he  = batch["image_he"].to(device)
@@ -206,12 +211,30 @@ def evaluate_kpis(model, loader, device, training_config):
             d["fp"] += match_he["fp"] + match_ihc["fp"]
             d["fn"] += match_he["fn"] + match_ihc["fn"]
 
+            if len(tile_snapshots) < snapshot_tiles:
+                snap_he  = model({"image": image_he[b].unsqueeze(0)},  training=False)
+                snap_ihc = model({"image": image_ihc[b].unsqueeze(0)}, training=False)
+
+                def _kps_with_scores(snap):
+                    kps = snap["keypoints"][0]
+                    scs = snap["keypoint_scores"][0]
+                    if kps.numel() == 0:
+                        return []
+                    return torch.cat([kps, scs.unsqueeze(1)], dim=1).cpu().tolist()
+
+                tile_snapshots.append({
+                    "tile_dir":      metas[b]["tile_dir"],
+                    "he_keypoints":  _kps_with_scores(snap_he),
+                    "ihc_keypoints": _kps_with_scores(snap_ihc),
+                })
+
     result = {
         "overall":  _kpis_from_totals(overall),
         "by_depth": {k: _kpis_from_totals(v) for k, v in sorted(by_depth.items())},
         "duration_seconds": time.perf_counter() - start,
         "num_batches": num_batches,
         "num_samples": num_samples,
+        "tile_snapshots": tile_snapshots,
     }
     if was_training:
         model.train()
@@ -319,6 +342,8 @@ def train_epoch(
     kp_kwargs = _match_kwargs(training_config)
     next_batch_idx = start_batch_idx
     next_eval_at = time.monotonic() + training_config.eval_every_seconds
+    next_eval_at_samples = samples_seen + training_config.eval_every_samples
+    last_eval_wall = time.monotonic()
     last_progress_at = time.monotonic()
     last_progress_samples = samples_seen
 
@@ -365,13 +390,14 @@ def train_epoch(
                 last_progress_at = now
                 last_progress_samples = samples_seen
 
-            if (
-                instance is not None
-                and eval_loader is not None
-                and training_config.eval_every_seconds > 0
-                and time.monotonic() >= next_eval_at
-            ):
-                eval_result = evaluate_kpis(model, eval_loader, device, training_config)
+            time_trigger   = training_config.eval_every_seconds > 0 and time.monotonic() >= next_eval_at
+            sample_trigger = training_config.eval_every_samples > 0 and samples_seen >= next_eval_at_samples
+            if instance is not None and eval_loader is not None and (time_trigger or sample_trigger):
+                training_wall = time.monotonic() - last_eval_wall
+                eval_result = evaluate_kpis(
+                    model, eval_loader, device, training_config,
+                    snapshot_tiles=training_config.eval_snapshot_tiles,
+                )
                 overall = eval_result["overall"]
                 evaluation_log = EvaluationLog(
                     timestamp=datetime.now().isoformat(timespec="seconds"),
@@ -385,18 +411,22 @@ def train_epoch(
                     recall=overall["recall"],
                     repeatability=overall["repeatability"],
                     kpis_by_depth=eval_result["by_depth"],
+                    training_duration_seconds=training_wall,
+                    tile_snapshots=eval_result["tile_snapshots"],
                 )
                 instance.evaluation_logs.append(evaluation_log)
                 instance.save_log()
                 _log(
                     f"eval epoch={epoch} batch={next_batch_idx} "
                     f"train_samples={samples_seen} eval_samples={evaluation_log.num_samples} "
-                    f"duration={evaluation_log.duration_seconds:.1f}s "
+                    f"train_duration={training_wall:.1f}s eval_duration={evaluation_log.duration_seconds:.1f}s "
                     f"precision={evaluation_log.precision:.4f} "
                     f"recall={evaluation_log.recall:.4f} "
                     f"repeatability={evaluation_log.repeatability:.4f}"
                 )
+                last_eval_wall = time.monotonic()
                 next_eval_at = time.monotonic() + training_config.eval_every_seconds
+                next_eval_at_samples = samples_seen + training_config.eval_every_samples
                 model.train()
     except KeyboardInterrupt as exc:
         raise MidEpochInterrupt(epoch, next_batch_idx) from exc
@@ -521,22 +551,73 @@ def train_model(instance, device=None, train_dataset=None, val_dataset=None):
     return instance, model
 
 
+def _load_training_config(config_path: Path) -> tuple:
+    """
+    Load a training config JSON.
+    Returns (TrainingConfig, parent_str, data_dir_str | None).
+    Unknown keys are ignored so configs stay forward-compatible.
+    """
+    with open(config_path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    known = {f.name for f in TrainingConfig.__dataclass_fields__.values()}
+    tc_kwargs = {k: v for k, v in raw.items() if k in known}
+    parent   = raw.get("parent", "superpoint_v6_from_tf")
+    data_dir = raw.get("data_dir")
+    return TrainingConfig(**tc_kwargs), parent, data_dir
+
+
 if __name__ == "__main__":
-    oyster_config = TrainingConfig(
-        name="oyster",
-        num_epochs=20,
-        batch_size=4,
-        num_workers=2,
-        save_every_epochs=1,
-    )
+    import argparse
+
+    p = argparse.ArgumentParser(description="SuperPoint stain-invariant training")
+    p.add_argument("config", nargs="?", default=None,
+                   help="path or name of config JSON under training_configs/")
+    p.add_argument("--data-dir", default=None,
+                   help="override data_dir from config (path to cropped_smooth_training)")
+    p.add_argument("--run-dir",  default=None,
+                   help="override run_dir (where checkpoints are saved)")
+    args = p.parse_args()
+
+    _configs_dir = Path(__file__).parent / "training_configs"
+
+    if args.config is None:
+        candidates = sorted(_configs_dir.glob("*.json"))
+        if not candidates:
+            raise SystemExit("no config specified and no JSONs found in training_configs/")
+        config_path = candidates[0]
+        _log(f"no config specified — using {config_path.name}")
+    else:
+        config_path = Path(args.config)
+        if not config_path.exists():
+            config_path = _configs_dir / args.config
+            if not config_path.suffix:
+                config_path = config_path.with_suffix(".json")
+        if not config_path.exists():
+            raise SystemExit(f"config not found: {args.config}")
+
+    training_config, parent, data_dir = _load_training_config(config_path)
+
+    if args.data_dir:
+        data_dir = args.data_dir
+    if args.run_dir:
+        training_config.run_dir = conf.resolve(args.run_dir)
+
+    _log(f"config     : {config_path}")
+    if training_config.notes:
+        _log(f"notes      : {training_config.notes}")
+
     instance = ModelInstance(
-        name=oyster_config.name,
-        config=oyster_config,
-        parent="superpoint_v6_from_tf",
+        name=training_config.name,
+        config=training_config,
+        parent=parent,
     )
 
+    train_dataset = StainPairKeypointDataset(cropped_dir=data_dir, split="train") if data_dir else None
+    val_dataset   = StainPairKeypointDataset(cropped_dir=data_dir, split="val")   if data_dir else None
+
     try:
-        instance, model = train_model(instance)
+        instance, model = train_model(instance, train_dataset=train_dataset, val_dataset=val_dataset)
     except KeyboardInterrupt:
         raise SystemExit(130)
 
