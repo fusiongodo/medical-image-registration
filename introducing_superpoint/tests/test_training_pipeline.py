@@ -134,11 +134,12 @@ def test_pipeline_smoke_backward(model):
     out_he = model({"image": batch["image_he"]}, training=True)
     out_ihc = model({"image": batch["image_ihc"]}, training=True)
 
-    loss, components = training.total_loss(out_he, out_ihc, batch["gt_keypoints"])
+    loss, components, kpi_matches = training.total_loss(out_he, out_ihc, batch["gt_keypoints"])
 
     assert loss.requires_grad
     assert torch.isfinite(loss)
     assert "loc" in components and "fn" in components and "fp" in components
+    assert len(kpi_matches["he"]) == len(kpi_matches["ihc"]) == batch["image_he"].shape[0]
     loss.backward()
     grads = [p.grad for p in model.parameters() if p.grad is not None]
     assert len(grads) > 0

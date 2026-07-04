@@ -97,18 +97,27 @@ def keypoint_matching_loss_detailed(
     """
     logits:    (B, 65, Hc, Wc)
     gt_coords: list[Tensor(Ni, 3)] — (x, y, conf) CNN pixels
-    returns dict with scalar loss tensors and detached count aggregates.
+    returns dict with scalar loss tensors, detached count aggregates, and
+    per_item — list of per-image {tp, fp, fn, num_gt, matched_gt_ids}, reusable
+    for KPI accumulation without re-running keypoint matching.
     fn and loc terms are weighted by the GT keypoint confidence.
+    Loc/fn/fp terms are gathered across the whole batch and scored with three
+    batched GPU calls instead of one Python-level call per matched cell.
     """
     B, _, Hc, Wc = logits.shape
     dustbin_idx = 64
-    loc_terms, fn_terms, fp_terms = [], [], []
     tp_total = fp_total = fn_total = 0
+    per_item = []
 
     bin_yx = torch.stack([
         torch.arange(64, device=logits.device) // 8,
         torch.arange(64, device=logits.device) % 8,
     ], dim=1).float()
+
+    loc_r, loc_c, loc_gt_xy, loc_conf = [], [], [], []
+    fn_r, fn_c, fn_target, fn_conf = [], [], [], []
+    fp_r, fp_c = [], []
+    loc_batch_idx, fn_batch_idx, fp_batch_idx = [], [], []
 
     for b in range(B):
         match = _match_keypoints_single(
@@ -118,41 +127,73 @@ def keypoint_matching_loss_detailed(
         tp_total += match["tp"]
         fp_total += match["fp"]
         fn_total += match["fn"]
+        per_item.append({
+            "tp": match["tp"],
+            "fp": match["fp"],
+            "fn": match["fn"],
+            "num_gt": match["num_gt"],
+            "matched_gt_ids": match["matched_gt_ids"],
+        })
 
         for det_i, gt_j in match["matches"]:
             cr, cc = match["det_cells"][det_i]
-            bins = logits[b, :dustbin_idx, cr, cc]
-            weights = bins.softmax(dim=0)
-            pred_offset = (weights.unsqueeze(1) * bin_yx).sum(0)
-            pred_y = cr.float() * cell_size + pred_offset[0]
-            pred_x = cc.float() * cell_size + pred_offset[1]
-            conf_j = gt_coords[b][gt_j, 2]
-            loc_terms.append(conf_j * (
-                (pred_x - match["gt_px"][gt_j, 0]) ** 2
-                + (pred_y - match["gt_px"][gt_j, 1]) ** 2
-            ))
+            loc_batch_idx.append(b)
+            loc_r.append(cr)
+            loc_c.append(cc)
+            loc_gt_xy.append(match["gt_px"][gt_j])
+            loc_conf.append(gt_coords[b][gt_j, 2])
 
         for gt_j in range(match["num_gt"]):
             if gt_j not in match["matched_gt_ids"]:
-                cr, cc = match["gt_cell_row"][gt_j], match["gt_cell_col"][gt_j]
-                target = match["gt_bin_idx"][gt_j].unsqueeze(0)
-                logit_vec = logits[b, :, cr, cc].unsqueeze(0)
-                conf_j = gt_coords[b][gt_j, 2]
-                fn_terms.append(conf_j * F.cross_entropy(logit_vec, target))
+                fn_batch_idx.append(b)
+                fn_r.append(match["gt_cell_row"][gt_j])
+                fn_c.append(match["gt_cell_col"][gt_j])
+                fn_target.append(match["gt_bin_idx"][gt_j])
+                fn_conf.append(gt_coords[b][gt_j, 2])
 
         for det_i in range(match["det_cells"].shape[0]):
             if det_i not in match["matched_det_ids"]:
                 cr, cc = match["det_cells"][det_i]
-                target = torch.tensor([dustbin_idx], device=logits.device)
-                logit_vec = logits[b, :, cr, cc].unsqueeze(0)
-                fp_terms.append(F.cross_entropy(logit_vec, target))
+                fp_batch_idx.append(b)
+                fp_r.append(cr)
+                fp_c.append(cc)
 
-    def mean_or_zero(terms):
-        return torch.stack(terms).mean() if terms else logits.sum() * 0.0
+    def _gather_cells(batch_idx, rows, cols):
+        idx_b = torch.as_tensor(batch_idx, device=logits.device, dtype=torch.long)
+        idx_r = torch.stack(rows)
+        idx_c = torch.stack(cols)
+        return logits[idx_b, :, idx_r, idx_c]
 
-    loss_loc = mean_or_zero(loc_terms)
-    loss_fn = mean_or_zero(fn_terms)
-    loss_fp = mean_or_zero(fp_terms)
+    if loc_batch_idx:
+        loc_logits = _gather_cells(loc_batch_idx, loc_r, loc_c)[:, :dustbin_idx]
+        weights = loc_logits.softmax(dim=1)
+        pred_offset = weights @ bin_yx
+        cr_t = torch.stack(loc_r).float()
+        cc_t = torch.stack(loc_c).float()
+        pred_y = cr_t * cell_size + pred_offset[:, 0]
+        pred_x = cc_t * cell_size + pred_offset[:, 1]
+        gt_xy = torch.stack(loc_gt_xy)
+        conf = torch.stack(loc_conf)
+        loss_loc = (conf * ((pred_x - gt_xy[:, 0]) ** 2 + (pred_y - gt_xy[:, 1]) ** 2)).mean()
+    else:
+        loss_loc = logits.sum() * 0.0
+
+    if fn_batch_idx:
+        fn_logits = _gather_cells(fn_batch_idx, fn_r, fn_c)
+        targets = torch.stack(fn_target)
+        conf = torch.stack(fn_conf)
+        per_term = F.cross_entropy(fn_logits, targets, reduction="none")
+        loss_fn = (conf * per_term).mean()
+    else:
+        loss_fn = logits.sum() * 0.0
+
+    if fp_batch_idx:
+        fp_logits = _gather_cells(fp_batch_idx, fp_r, fp_c)
+        targets = torch.full((fp_logits.shape[0],), dustbin_idx, device=logits.device, dtype=torch.long)
+        loss_fp = F.cross_entropy(fp_logits, targets)
+    else:
+        loss_fp = logits.sum() * 0.0
+
     loss_total = w_loc * loss_loc + w_fn * loss_fn + w_fp * loss_fp
 
     return {
@@ -163,6 +204,7 @@ def keypoint_matching_loss_detailed(
         "tp": tp_total,
         "fp": fp_total,
         "fn": fn_total,
+        "per_item": per_item,
     }
 
 

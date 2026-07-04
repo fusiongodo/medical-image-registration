@@ -110,15 +110,17 @@ def _ensure_depth(totals_by_depth, depth_key):
         totals_by_depth[depth_key] = _fresh_kpi_totals()
 
 
-def _accumulate_batch_kpis(totals, logits_he, logits_ihc, gt_list, kp_kwargs):
-    for b in range(logits_he.shape[0]):
-        match_he = utils._match_keypoints_single(logits_he[b], gt_list[b], **kp_kwargs)
-        match_ihc = utils._match_keypoints_single(logits_ihc[b], gt_list[b], **kp_kwargs)
-        totals["repeatable"] += len(match_he["matched_gt_ids"] & match_ihc["matched_gt_ids"])
-        totals["total_gt"] += match_he["num_gt"]
-        totals["tp"] += match_he["tp"] + match_ihc["tp"]
-        totals["fp"] += match_he["fp"] + match_ihc["fp"]
-        totals["fn"] += match_he["fn"] + match_ihc["fn"]
+def _accumulate_kpi_matches(totals, kpi_matches):
+    """
+    kpi_matches: {"he": per_item, "ihc": per_item} as returned by total_loss —
+    reuses matching already done for the loss, avoiding a second matching pass.
+    """
+    for item_he, item_ihc in zip(kpi_matches["he"], kpi_matches["ihc"]):
+        totals["repeatable"] += len(item_he["matched_gt_ids"] & item_ihc["matched_gt_ids"])
+        totals["total_gt"] += item_he["num_gt"]
+        totals["tp"] += item_he["tp"] + item_ihc["tp"]
+        totals["fp"] += item_he["fp"] + item_ihc["fp"]
+        totals["fn"] += item_he["fn"] + item_ihc["fn"]
     return totals
 
 
@@ -137,7 +139,9 @@ def total_loss(out_he, out_ihc, gt_keypoints, config=None, training_config=None,
     """
     out_he / out_ihc: dicts from SuperPoint.forward(..., training=True)
     gt_keypoints:     list[Tensor(Ni, 3)] — (x, y, conf) HE CNN pixels
-    returns:          (scalar loss tensor, dict of detached component tensors)
+    returns:          (scalar loss tensor, dict of detached component tensors,
+                        kpi_matches — {"he": per_item, "ihc": per_item} reusable
+                        for KPI accumulation without re-running keypoint matching)
     """
     config = config or default_config
     training_config = training_config or TrainingConfig(name="default")
@@ -174,7 +178,8 @@ def total_loss(out_he, out_ihc, gt_keypoints, config=None, training_config=None,
         "kp_he": kp_he["loss"].detach(),
         "kp_ihc": kp_ihc["loss"].detach(),
     }
-    return loss, components
+    kpi_matches = {"he": kp_he["per_item"], "ihc": kp_ihc["per_item"]}
+    return loss, components, kpi_matches
 
 
 def _accumulate_losses(running, components):
@@ -216,19 +221,22 @@ def evaluate_kpis(model, loader, device, training_config, snapshot_tiles: int = 
         out_he  = model({"image": image_he},  training=True)
         out_ihc = model({"image": image_ihc}, training=True)
 
-        _accumulate_batch_kpis(overall, out_he["logits"], out_ihc["logits"], gt, kp_kwargs)
-
         for b in range(image_he.shape[0]):
             depth_key = metas[b]["depth"]
             _ensure_depth(by_depth, depth_key)
             match_he  = utils._match_keypoints_single(out_he["logits"][b],  gt[b], **kp_kwargs)
             match_ihc = utils._match_keypoints_single(out_ihc["logits"][b], gt[b], **kp_kwargs)
-            d = by_depth[depth_key]
-            d["repeatable"] += len(match_he["matched_gt_ids"] & match_ihc["matched_gt_ids"])
-            d["total_gt"]   += match_he["num_gt"]
-            d["tp"] += match_he["tp"] + match_ihc["tp"]
-            d["fp"] += match_he["fp"] + match_ihc["fp"]
-            d["fn"] += match_he["fn"] + match_ihc["fn"]
+            repeatable = len(match_he["matched_gt_ids"] & match_ihc["matched_gt_ids"])
+            tp = match_he["tp"] + match_ihc["tp"]
+            fp = match_he["fp"] + match_ihc["fp"]
+            fn = match_he["fn"] + match_ihc["fn"]
+
+            for totals in (overall, by_depth[depth_key]):
+                totals["repeatable"] += repeatable
+                totals["total_gt"]   += match_he["num_gt"]
+                totals["tp"] += tp
+                totals["fp"] += fp
+                totals["fn"] += fn
 
             if len(tile_snapshots) < snapshot_tiles:
                 snap_he  = model({"image": image_he[b].unsqueeze(0)},  training=False)
@@ -358,7 +366,6 @@ def train_epoch(
     items_total = items_total or len(loader.dataset)
     samples_seen = min(start_batch_idx * training_config.batch_size, items_total)
     epoch_totals = _fresh_kpi_totals()
-    kp_kwargs = _match_kwargs(training_config)
     next_batch_idx = start_batch_idx
     next_eval_at = time.monotonic() + training_config.eval_every_seconds
     next_eval_at_samples = samples_seen + training_config.eval_every_samples
@@ -390,7 +397,7 @@ def train_epoch(
             out_he = model({"image": image_he}, training=True)
             out_ihc = model({"image": image_ihc}, training=True)
 
-            loss, components = total_loss(
+            loss, components, kpi_matches = total_loss(
                 out_he,
                 out_ihc,
                 gt,
@@ -401,11 +408,7 @@ def train_epoch(
             optimizer.step()
             next_batch_idx = original_batch_idx + 1
 
-            with torch.no_grad():
-                _accumulate_batch_kpis(
-                    epoch_totals, out_he["logits"], out_ihc["logits"], gt, kp_kwargs
-                )
-
+            _accumulate_kpi_matches(epoch_totals, kpi_matches)
             _accumulate_losses(running, components)
             batch_count += 1
             samples_seen += batch_size
