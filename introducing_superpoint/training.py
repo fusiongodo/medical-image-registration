@@ -88,6 +88,9 @@ def _desc_config(superpoint_config, training_config):
         **superpoint_config,
         "desc_patch_size": training_config.desc_patch_size,
         "desc_centricity": training_config.desc_centricity,
+        "lambda_d": training_config.desc_lambda,
+        "positive_margin": training_config.desc_positive_margin,
+        "negative_margin": training_config.desc_negative_margin,
     }
 
 
@@ -374,7 +377,6 @@ def train_epoch(
     last_progress_samples = samples_seen
     monitor_window_start_t = time.monotonic()
     monitor_window_start_s = samples_seen
-    batch_start_t = time.monotonic()
 
     _monitor(
         f"epoch={epoch} starting batches={len(loader)} "
@@ -386,7 +388,6 @@ def train_epoch(
         for batch_idx, batch in enumerate(loader):
             batch_size = batch["image_he"].shape[0]
             original_batch_idx = start_batch_idx + batch_idx
-            _monitor(f"epoch={epoch} batch={original_batch_idx + 1} loaded bs={batch_size} forward …")
 
             optimizer.zero_grad(set_to_none=True)
 
@@ -413,16 +414,16 @@ def train_epoch(
             batch_count += 1
             samples_seen += batch_size
 
-            batch_s = time.monotonic() - batch_start_t
             window_s = samples_seen - monitor_window_start_s
             window_t = time.monotonic() - monitor_window_start_t
             sps = window_s / window_t if window_t > 0 else 0.0
             _monitor(
                 f"epoch={epoch} batch={next_batch_idx} samples={samples_seen} "
-                f"loss={loss.detach().item():.4f} batch_s={batch_s:.3f} sps={sps:.1f} "
+                f"loss={loss.detach().item():.3g} kp={components['keypoint'].item():.3g} "
+                f"loc={components['loc'].item():.3g} fn={components['fn'].item():.3g} "
+                f"fp={components['fp'].item():.3g} sps={sps:.1f} "
                 f"bs={training_config.batch_size} workers={training_config.num_workers}"
             )
-            batch_start_t = time.monotonic()
 
             if batch_count % PROGRESS_EVERY_BATCHES == 0 or samples_seen >= items_total:
                 now = time.monotonic()

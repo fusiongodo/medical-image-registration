@@ -45,6 +45,9 @@ class TrainingConfig:
     match_epsilon: float = 1.0
     desc_patch_size: float = 3.0
     desc_centricity: float = 1.0
+    desc_lambda: float = default_config["lambda_d"]
+    desc_positive_margin: float = default_config["positive_margin"]
+    desc_negative_margin: float = default_config["negative_margin"]
     num_workers: int = 0
     eval_every_seconds: int = 3600
     eval_every_samples: int = 2000
@@ -161,6 +164,9 @@ class ModelInstance:
             match_epsilon=config_dict.get("match_epsilon", 1.0),
             desc_patch_size=config_dict.get("desc_patch_size", 3.0),
             desc_centricity=config_dict.get("desc_centricity", 1.0),
+            desc_lambda=config_dict.get("desc_lambda", default_config["lambda_d"]),
+            desc_positive_margin=config_dict.get("desc_positive_margin", default_config["positive_margin"]),
+            desc_negative_margin=config_dict.get("desc_negative_margin", default_config["negative_margin"]),
             num_workers=config_dict.get("num_workers", 0),
             eval_every_seconds=config_dict.get("eval_every_seconds", 3600),
             eval_every_samples=config_dict.get("eval_every_samples", 2000),
