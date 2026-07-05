@@ -345,7 +345,7 @@ def test_train_model_appends_epochs(project_tmp, model, monkeypatch):
 
     def fake_train_epoch(
         model, loader, optimizer, device, training_config, epoch, start_batch_idx=0,
-        items_total=None, instance=None, eval_loader=None,
+        items_total=None, instance=None, eval_loader=None, scaler=None,
     ):
         seen_epochs.append(epoch)
         return {"total": 1.0, "descriptor": 0.1, "keypoint": 0.8, "loc": 0.2, "fn": 0.3, "fp": 0.1}, {
@@ -393,7 +393,7 @@ def test_train_model_resumes_mid_epoch_and_clears_state(project_tmp, model, monk
 
     def fake_train_epoch(
         model, loader, optimizer, device, training_config, epoch, start_batch_idx=0,
-        items_total=None, instance=None, eval_loader=None,
+        items_total=None, instance=None, eval_loader=None, scaler=None,
     ):
         calls.append((epoch, start_batch_idx, items_total, len(loader.dataset)))
         return {"total": 1.0, "descriptor": 0.1, "keypoint": 0.8, "loc": 0.2, "fn": 0.3, "fp": 0.1}, {

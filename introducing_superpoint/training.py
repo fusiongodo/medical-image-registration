@@ -185,9 +185,9 @@ def total_loss(out_he, out_ihc, gt_keypoints, config=None, training_config=None,
     return loss, components, kpi_matches
 
 
-def _accumulate_losses(running, components):
-    for key, value in components.items():
-        running[key] = running.get(key, 0.0) + float(value)
+def _accumulate_losses(running, values):
+    for key, value in values.items():
+        running[key] = running.get(key, 0.0) + value
 
 
 def _mean_losses(running, count):
@@ -207,6 +207,7 @@ def evaluate_kpis(model, loader, device, training_config, snapshot_tiles: int = 
     start = time.perf_counter()
     model.eval()
     kp_kwargs = _match_kwargs(training_config)
+    amp_enabled = device == "cuda" and torch.cuda.is_available()
     overall = _fresh_kpi_totals()
     by_depth: dict = {}
     num_batches = 0
@@ -214,15 +215,16 @@ def evaluate_kpis(model, loader, device, training_config, snapshot_tiles: int = 
     tile_snapshots = []
 
     for batch in loader:
-        image_he  = batch["image_he"].to(device)
-        image_ihc = batch["image_ihc"].to(device)
-        gt        = [kp.to(device) for kp in batch["gt_keypoints"]]
+        image_he  = batch["image_he"].to(device, non_blocking=True)
+        image_ihc = batch["image_ihc"].to(device, non_blocking=True)
+        gt        = [kp.to(device, non_blocking=True) for kp in batch["gt_keypoints"]]
         metas     = batch["meta"]
         num_batches += 1
         num_samples += image_he.shape[0]
 
-        out_he  = model({"image": image_he},  training=True)
-        out_ihc = model({"image": image_ihc}, training=True)
+        with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
+            out_he  = model({"image": image_he},  training=True)
+            out_ihc = model({"image": image_ihc}, training=True)
 
         for b in range(image_he.shape[0]):
             depth_key = metas[b]["depth"]
@@ -362,6 +364,7 @@ def train_epoch(
     items_total=None,
     instance=None,
     eval_loader=None,
+    scaler=None,
 ):
     model.train()
     running = {}
@@ -370,6 +373,8 @@ def train_epoch(
     samples_seen = min(start_batch_idx * training_config.batch_size, items_total)
     epoch_totals = _fresh_kpi_totals()
     next_batch_idx = start_batch_idx
+    amp_enabled = device == "cuda" and torch.cuda.is_available()
+    scaler = scaler or torch.amp.GradScaler("cuda", enabled=amp_enabled)
     next_eval_at = time.monotonic() + training_config.eval_every_seconds
     next_eval_at_samples = samples_seen + training_config.eval_every_samples
     last_eval_wall = time.monotonic()
@@ -391,26 +396,34 @@ def train_epoch(
 
             optimizer.zero_grad(set_to_none=True)
 
-            image_he = batch["image_he"].to(device)
-            image_ihc = batch["image_ihc"].to(device)
-            gt = [kp.to(device) for kp in batch["gt_keypoints"]]
+            image_he = batch["image_he"].to(device, non_blocking=True)
+            image_ihc = batch["image_ihc"].to(device, non_blocking=True)
+            gt = [kp.to(device, non_blocking=True) for kp in batch["gt_keypoints"]]
 
-            out_he = model({"image": image_he}, training=True)
-            out_ihc = model({"image": image_ihc}, training=True)
+            with torch.amp.autocast(device_type="cuda", enabled=amp_enabled):
+                out_he = model({"image": image_he}, training=True)
+                out_ihc = model({"image": image_ihc}, training=True)
 
-            loss, components, kpi_matches = total_loss(
-                out_he,
-                out_ihc,
-                gt,
-                training_config=training_config,
-                w_kp=training_config.w_kp,
-            )
-            loss.backward()
-            optimizer.step()
+                loss, components, kpi_matches = total_loss(
+                    out_he,
+                    out_ihc,
+                    gt,
+                    training_config=training_config,
+                    w_kp=training_config.w_kp,
+                )
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             next_batch_idx = original_batch_idx + 1
 
             _accumulate_kpi_matches(epoch_totals, kpi_matches)
-            _accumulate_losses(running, components)
+
+            component_keys = list(components.keys())
+            synced = torch.stack([loss.detach(), *components.values()]).tolist()
+            loss_value, component_values = synced[0], dict(zip(component_keys, synced[1:]))
+
+            _accumulate_losses(running, component_values)
             batch_count += 1
             samples_seen += batch_size
 
@@ -419,9 +432,9 @@ def train_epoch(
             sps = window_s / window_t if window_t > 0 else 0.0
             _monitor(
                 f"epoch={epoch} batch={next_batch_idx} samples={samples_seen} "
-                f"loss={loss.detach().item():.3g} kp={components['keypoint'].item():.3g} "
-                f"loc={components['loc'].item():.3g} fn={components['fn'].item():.3g} "
-                f"fp={components['fp'].item():.3g} sps={sps:.1f} "
+                f"loss={loss_value:.3g} kp={component_values['keypoint']:.3g} "
+                f"loc={component_values['loc']:.3g} fn={component_values['fn']:.3g} "
+                f"fp={component_values['fp']:.3g} sps={sps:.1f} "
                 f"bs={training_config.batch_size} workers={training_config.num_workers}"
             )
 
@@ -514,6 +527,7 @@ def train_model(instance, device=None, train_dataset=None, val_dataset=None):
     if device == "cuda" and torch.cuda.is_available():
         _monitor(f"gpu={torch.cuda.get_device_name(0)}")
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    scaler = torch.amp.GradScaler("cuda", enabled=(device == "cuda" and torch.cuda.is_available()))
 
     train_dataset = train_dataset or StainPairKeypointDataset(split="train")
     _monitor(f"train tiles={len(train_dataset)}")
@@ -553,6 +567,7 @@ def train_model(instance, device=None, train_dataset=None, val_dataset=None):
                     len(train_dataset),
                     instance,
                     eval_loader,
+                    scaler,
                 )
                 duration_seconds = time.perf_counter() - epoch_start
             except MidEpochInterrupt as exc:
