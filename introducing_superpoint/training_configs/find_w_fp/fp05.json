@@ -3,7 +3,7 @@
   "notes": "w_fp sweep batch 'find_w_fp': lr=0.001, w_fp=0.5",
   "parent": "superpoint_v6_from_tf",
   "data_dir": "data/cropped_smooth_training",
-  "num_epochs": 25,
+  "num_epochs": 10,
   "batch_size": 16,
   "learning_rate": 0.001,
   "num_workers": 4,
