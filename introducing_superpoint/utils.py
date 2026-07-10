@@ -35,8 +35,6 @@ def _match_keypoints_single(
         with torch.no_grad():
             det_xy = det_px[:, [1, 0]]
             dist = torch.cdist(det_xy.float(), gt_px.float())
-            matched_det = torch.zeros(M, dtype=torch.bool)
-            matched_gt  = torch.zeros(N, dtype=torch.bool)
             valid = dist <= radius
             if not valid.any():
                 valid_pairs = dist.new_zeros((0, 2), dtype=torch.long)
@@ -52,17 +50,24 @@ def _match_keypoints_single(
             else:
                 order = dist[valid_pairs[:, 0], valid_pairs[:, 1]].argsort()
 
-            max_matches = min(M, N)
-            for rank in order:
-                if len(matches) >= max_matches:
-                    break
-                det_i = int(valid_pairs[rank, 0])
-                gt_j = int(valid_pairs[rank, 1])
-                if matched_det[det_i] or matched_gt[gt_j]:
-                    continue
-                matches.append((det_i, gt_j))
-                matched_det[det_i] = True
-                matched_gt[gt_j] = True
+            # Single bulk device->host transfer, then a plain-Python greedy
+            # loop over CPU arrays. The previous version indexed valid_pairs
+            # per iteration with int(gpu_tensor), which forces a device sync
+            # on every candidate pair — the actual cost when M or N is large.
+            ordered_pairs = valid_pairs[order].cpu().numpy()
+
+        matched_det = bytearray(M)
+        matched_gt  = bytearray(N)
+        max_matches = min(M, N)
+        for det_i, gt_j in ordered_pairs:
+            if len(matches) >= max_matches:
+                break
+            det_i, gt_j = int(det_i), int(gt_j)
+            if matched_det[det_i] or matched_gt[gt_j]:
+                continue
+            matches.append((det_i, gt_j))
+            matched_det[det_i] = 1
+            matched_gt[gt_j] = 1
 
     matched_det_ids = {det_i for det_i, _ in matches}
     matched_gt_ids = {gt_j for _, gt_j in matches}
