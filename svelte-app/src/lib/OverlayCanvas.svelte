@@ -37,7 +37,7 @@
 				const h = he.naturalHeight;
 				canvas!.width = w;
 				canvas!.height = h;
-				const ctx = canvas!.getContext('2d')!;
+				const ctx = canvas!.getContext('2d', { willReadFrequently: true })!;
 				ctx.drawImage(he, 0, 0);
 				ctx.globalAlpha = 0.5;
 				ctx.drawImage(ihc, 0, 0);

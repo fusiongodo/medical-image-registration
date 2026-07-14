@@ -19,7 +19,9 @@ Usage — batch (next N unprocessed pairs, all depths):
 
 Output per tile (idempotent unless --force):
     data/cropped/<pair_id>/d<depth>/<tile_id>/elastix/displacement.json
-    {"dx": <float>, "dy": <float>}
+    {"dx": <float>, "dy": <float>, "psr": <float>}
+
+    psr is the peak-to-sidelobe ratio of the correlation surface (confidence).
 
 Sign convention: positive dx shifts IHC rightward relative to HE.
 """
@@ -49,9 +51,28 @@ def sobel_edge(gray: np.ndarray) -> np.ndarray:
     return mag.astype(np.float32)
 
 
-def phase_correlation(f1: np.ndarray, f2: np.ndarray) -> tuple[float, float]:
+def _peak_to_sidelobe(r: np.ndarray, py: int, px: int, exclude: int = 3) -> float:
     """
-    Returns (dx, dy): translation IHC must be shifted by to align with HE.
+    Peak-to-sidelobe ratio of a correlation surface: (peak - mean_side) / std_side.
+    Sidelobe = all values outside a (2*exclude+1) square centred on the peak.
+    """
+    h, w = r.shape
+    peak = float(r[py, px])
+    mask = np.ones_like(r, dtype=bool)
+    y0, y1 = max(0, py - exclude), min(h, py + exclude + 1)
+    x0, x1 = max(0, px - exclude), min(w, px + exclude + 1)
+    mask[y0:y1, x0:x1] = False
+    side = r[mask]
+    std = float(side.std())
+    if std < 1e-12:
+        return 0.0
+    return (peak - float(side.mean())) / std
+
+
+def phase_correlation(f1: np.ndarray, f2: np.ndarray) -> tuple[float, float, float]:
+    """
+    Returns (dx, dy, psr): translation IHC must be shifted by to align with HE,
+    plus the peak-to-sidelobe ratio of the correlation surface as a confidence.
     Normalised cross-power spectrum in FFT domain; sub-pixel via parabolic fit.
     """
     h, w = f1.shape
@@ -73,16 +94,27 @@ def phase_correlation(f1: np.ndarray, f2: np.ndarray) -> tuple[float, float]:
         offset = (pp1 - pm1) / (2 * denom) if abs(denom) > 1e-10 else 0.0
         return float(p - size // 2 + offset)
 
-    return parabolic(r[py, :], px, w), parabolic(r[:, px], py, h)
+    dx = parabolic(r[py, :], px, w)
+    dy = parabolic(r[:, px], py, h)
+    psr = _peak_to_sidelobe(r, int(py), int(px))
+    return dx, dy, psr
+
+
+def register_arrays(he_gray: np.ndarray, ihc_gray: np.ndarray) -> dict[str, float]:
+    """
+    In-memory registration of two grayscale arrays (HE fixed, IHC moving).
+    Returns {dx, dy, psr}. Used by the coarse-to-fine orchestrator on warped tiles.
+    """
+    fixed  = sobel_edge(he_gray.astype(np.float64))
+    moving = sobel_edge(ihc_gray.astype(np.float64))
+    dx, dy, psr = phase_correlation(fixed, moving)
+    return {"dx": dx, "dy": dy, "psr": psr}
 
 
 def register_tile(tile_dir: Path) -> dict[str, float]:
     he  = cv2.imread(str(tile_dir / "he.png"),  cv2.IMREAD_GRAYSCALE)
     ihc = cv2.imread(str(tile_dir / "ihc.png"), cv2.IMREAD_GRAYSCALE)
-    fixed  = sobel_edge(he.astype(np.float64))
-    moving = sobel_edge(ihc.astype(np.float64))
-    dx, dy = phase_correlation(fixed, moving)
-    return {"dx": dx, "dy": dy}
+    return register_arrays(he, ihc)
 
 
 # ── Processing helpers ───────────────────────────────────────────────────────

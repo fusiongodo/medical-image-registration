@@ -1,11 +1,21 @@
 <script lang="ts">
+	import { normalizeImageData } from '$lib/imageUtils';
+
 	let {
 		heSrc,
 		ihcSrc,
 		dx = 0,
 		dy = 0,
-		keypoints = []
-	}: { heSrc: string; ihcSrc: string; dx?: number; dy?: number; keypoints?: number[][] } = $props();
+		keypoints = [],
+		emphasis = null
+	}: {
+		heSrc: string;
+		ihcSrc: string;
+		dx?: number;
+		dy?: number;
+		keypoints?: number[][];
+		emphasis?: 'he' | 'ihc' | null;
+	} = $props();
 
 	let imgW = $state(0);
 	let imgH = $state(0);
@@ -23,43 +33,44 @@
 	let canvas = $state<HTMLCanvasElement | null>(null);
 	let he = $state<HTMLImageElement | null>(null);
 	let ihc = $state<HTMLImageElement | null>(null);
+	let heNorm = $state<HTMLCanvasElement | null>(null);
+	let ihcNorm = $state<HTMLCanvasElement | null>(null);
 
-	function stretchContrast(d: Uint8ClampedArray) {
-		const n = d.length / 4;
-		const luma = new Float32Array(n);
-		for (let i = 0; i < n; i++) luma[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3;
-		const sorted = Float32Array.from(luma).sort();
-		const lo = sorted[Math.floor(n * 0.02)];
-		const hi = sorted[Math.floor(n * 0.98)];
-		const range = hi - lo || 1;
-		for (let i = 0; i < d.length; i += 4) {
-			for (let c = 0; c < 3; c++) {
-				d[i + c] = Math.min(255, Math.max(0, ((d[i + c] - lo) / range) * 255));
-			}
-		}
+	function createNormalizedCanvas(img: HTMLImageElement): HTMLCanvasElement {
+		const c = document.createElement('canvas');
+		c.width = img.naturalWidth;
+		c.height = img.naturalHeight;
+		const ctx = c.getContext('2d', { willReadFrequently: true })!;
+		ctx.drawImage(img, 0, 0);
+		const imageData = ctx.getImageData(0, 0, c.width, c.height);
+		normalizeImageData(imageData.data);
+		ctx.putImageData(imageData, 0, 0);
+		return c;
 	}
 
 	function draw() {
-		if (!canvas || !he || !ihc) return;
-		const w = he.naturalWidth;
-		const h = he.naturalHeight;
+		if (!canvas || !heNorm || !ihcNorm) return;
+		const w = heNorm.width;
+		const h = heNorm.height;
 		imgW = w;
 		imgH = h;
 		canvas.width = w;
 		canvas.height = h;
-		const ctx = canvas.getContext('2d')!;
-		ctx.drawImage(he, 0, 0);
-		ctx.globalAlpha = 0.5;
-		ctx.drawImage(ihc, dx, dy);
+		const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+		ctx.clearRect(0, 0, w, h);
+		ctx.drawImage(heNorm, 0, 0);
+		ctx.globalAlpha = emphasis === 'ihc' ? 0.85 : emphasis === 'he' ? 0.2 : 0.5;
+		ctx.drawImage(ihcNorm, dx, dy);
 		ctx.globalAlpha = 1;
-		const imageData = ctx.getImageData(0, 0, w, h);
-		stretchContrast(imageData.data);
-		ctx.putImageData(imageData, 0, 0);
 	}
 
-	// Lazy-load images once
+	// Lazy-load images; re-load whenever the source URLs change
 	$effect(() => {
 		if (!canvas) return;
+		const currentHeSrc = heSrc;
+		const currentIhcSrc = ihcSrc;
+		let cancelled = false;
+
 		const observer = new IntersectionObserver(
 			(entries) => {
 				if (!entries[0].isIntersecting) return;
@@ -68,6 +79,7 @@
 				const imgIhc = new Image();
 				let loaded = 0;
 				function onLoad() {
+					if (cancelled) return;
 					loaded++;
 					if (loaded < 2) return;
 					he = imgHe;
@@ -75,23 +87,31 @@
 				}
 				imgHe.onload = onLoad;
 				imgIhc.onload = onLoad;
-				imgHe.src = heSrc;
-				imgIhc.src = ihcSrc;
+				imgHe.src = currentHeSrc;
+				imgIhc.src = currentIhcSrc;
 			},
 			{ rootMargin: '400px' }
 		);
 		observer.observe(canvas);
-		return () => observer.disconnect();
+		return () => { cancelled = true; observer.disconnect(); };
 	});
 
-	// Redraw whenever images or displacement changes
+	// Build brightness-normalized canvases when the source images load
 	$effect(() => {
-		if (he && ihc) draw();
+		if (he && ihc) {
+			heNorm = createNormalizedCanvas(he);
+			ihcNorm = createNormalizedCanvas(ihc);
+		}
+	});
+
+	// Redraw whenever normalized images or displacement/emphasis changes
+	$effect(() => {
+		if (heNorm && ihcNorm) draw();
 	});
 
 	$effect(() => {
-		dx; dy;
-		if (he && ihc) draw();
+		dx; dy; emphasis;
+		if (heNorm && ihcNorm) draw();
 	});
 </script>
 

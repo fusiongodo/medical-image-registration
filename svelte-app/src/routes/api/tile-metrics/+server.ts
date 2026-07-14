@@ -5,11 +5,17 @@ import type { RequestHandler } from './$types';
 
 const CROPPED = resolve('..', 'data', 'cropped');
 
-interface TileMetrics {
+interface PatchEntry {
 	lncc2: number;
 	lncc2_auto: number;
-	delta_px: number;
 	factor_auto: number;
+}
+
+interface TileMetrics {
+	delta_px: number;
+	dx: number;
+	dy: number;
+	by_patch: Record<string, PatchEntry>;
 }
 
 export const GET: RequestHandler = ({ url }) => {
@@ -26,12 +32,12 @@ export const GET: RequestHandler = ({ url }) => {
 		if (!existsSync(file)) continue;
 		try {
 			const m = JSON.parse(readFileSync(file, 'utf-8'));
-			if (typeof m.lncc2 === 'number' && typeof m.lncc2_auto === 'number') {
+			if (typeof m.delta_px === 'number' && m.by_patch && typeof m.by_patch === 'object') {
 				result[tileId] = {
-					lncc2:       m.lncc2,
-					lncc2_auto:  m.lncc2_auto,
-					delta_px:    m.delta_px,
-					factor_auto: m.factor_auto,
+					delta_px: m.delta_px,
+					dx: typeof m.dx === 'number' ? m.dx : 0,
+					dy: typeof m.dy === 'number' ? m.dy : 0,
+					by_patch: m.by_patch,
 				};
 			}
 		} catch {

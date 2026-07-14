@@ -1,21 +1,30 @@
 """
 LNCC² metrics computation for HE/IHC tile pairs.
 
-For each tile that already has an elastix/displacement.json, computes:
-  lncc2       — LNCC² between normalised HE and IHC (no shift)
-  lncc2_auto  — LNCC² after applying the auto displacement
-  delta_px    — Euclidean length of the displacement vector in pixels
-  factor_auto — lncc2_auto / lncc2
+For each tile that already has an elastix/displacement.json, computes LNCC²
+before and after applying the auto displacement at all canonical patch sizes:
+  PATCH_SIZES = [5, 10, 20, 30, 40, 50]
 
-Results are written to data/cropped/<pair>/d<depth>/<tile>/metrics.json.
+Schema written to data/cropped/<pair>/d<depth>/<tile>/metrics.json:
+{
+  "delta_px": <float>,
+  "by_patch": {
+    "5":  {"lncc2": <float>, "lncc2_auto": <float>, "factor_auto": <float>},
+    "10": {...},
+    ...
+    "50": {...}
+  }
+}
+
+A tile is considered up-to-date when its metrics.json contains a "by_patch"
+key with all canonical patch sizes present.  Old flat-schema files (from the
+previous single-patch implementation) are treated as missing and recomputed.
 
 Usage — single depth:
-    python metrics.py <pair_id> <depth> [--patch-size N] [--force]
+    python svelte_metrics.py <pair_id> <depth> [--force]
 
-Usage — batch (next N pairs that have alignments but no metrics):
-    python metrics.py --pairs N [--patch-size N] [--force]
-
-Default patch size: 50 px  (matches the canonical value used in the JS frontend).
+Usage — batch (next N pairs that have alignments but no/incomplete metrics):
+    python svelte_metrics.py --pairs N [--force]
 """
 
 from __future__ import annotations
@@ -29,10 +38,10 @@ import cv2
 import numpy as np
 from scipy.ndimage import shift as ndimage_shift
 
-DATA_ROOT = Path(__file__).resolve().parents[2] / "data" / "cropped"
-DISP_FILE = "elastix/displacement.json"
+DATA_ROOT   = Path(__file__).resolve().parents[2] / "data" / "cropped"
+DISP_FILE   = "elastix/displacement.json"
 METRICS_FILE = "metrics.json"
-DEFAULT_PATCH = 50
+PATCH_SIZES = [5, 10, 20, 30, 40, 50]
 
 
 # ── Image helpers ─────────────────────────────────────────────────────────────
@@ -105,65 +114,84 @@ def compute_lncc2(g1: np.ndarray, g2: np.ndarray, patch_size: int) -> float:
 
 # ── Per-tile computation ──────────────────────────────────────────────────────
 
-def compute_tile(tile_dir: Path, patch_size: int) -> dict[str, float]:
+def _is_complete(metrics_path: Path) -> bool:
+    """Return True iff metrics.json exists and has all PATCH_SIZES in by_patch."""
+    if not metrics_path.exists():
+        return False
+    try:
+        m = json.loads(metrics_path.read_text())
+        by_patch = m.get("by_patch")
+        if not isinstance(by_patch, dict):
+            return False
+        return all(str(ps) in by_patch for ps in PATCH_SIZES)
+    except Exception:
+        return False
+
+
+def compute_tile(tile_dir: Path) -> dict:
     disp = json.loads((tile_dir / DISP_FILE).read_text())
     dx, dy = float(disp["dx"]), float(disp["dy"])
 
     g1 = load_normalized_gray(tile_dir / "he.png")
     g2 = load_normalized_gray(tile_dir / "ihc.png")
-
-    lncc2_base = compute_lncc2(g1, g2, patch_size)
     g2_shifted = shift_gray(g2, dx, dy)
-    lncc2_auto = compute_lncc2(g1, g2_shifted, patch_size)
-    delta_px   = math.sqrt(dx ** 2 + dy ** 2)
-    factor     = lncc2_auto / lncc2_base if lncc2_base > 1e-9 else 0.0
 
-    return {
-        "lncc2": lncc2_base,
-        "lncc2_auto": lncc2_auto,
-        "delta_px": delta_px,
-        "factor_auto": factor,
-        "patch_size": patch_size,
-    }
+    delta_px = math.sqrt(dx ** 2 + dy ** 2)
+    by_patch: dict[str, dict[str, float]] = {}
+
+    for ps in PATCH_SIZES:
+        lncc2_base = compute_lncc2(g1, g2, ps)
+        lncc2_auto = compute_lncc2(g1, g2_shifted, ps)
+        factor = lncc2_auto / lncc2_base if lncc2_base > 1e-9 else 0.0
+        by_patch[str(ps)] = {
+            "lncc2":       lncc2_base,
+            "lncc2_auto":  lncc2_auto,
+            "factor_auto": factor,
+        }
+
+    return {"delta_px": delta_px, "dx": dx, "dy": dy, "by_patch": by_patch}
 
 
 # ── Depth / pair processing ───────────────────────────────────────────────────
 
-def process_depth(depth_dir: Path, patch_size: int, force: bool) -> tuple[int, int]:
+def process_depth(depth_dir: Path, force: bool) -> tuple[int, int]:
     done = skipped = 0
     for tile_dir in sorted(d for d in depth_dir.iterdir() if d.is_dir()):
-        disp_path   = tile_dir / DISP_FILE
-        metric_path = tile_dir / METRICS_FILE
+        disp_path    = tile_dir / DISP_FILE
+        metrics_path = tile_dir / METRICS_FILE
         if not disp_path.exists():
             skipped += 1
             continue
-        if metric_path.exists() and not force:
+        if not force and _is_complete(metrics_path):
             skipped += 1
             continue
         try:
-            result = compute_tile(tile_dir, patch_size)
+            result = compute_tile(tile_dir)
         except Exception as exc:
             print(f"    ERROR {tile_dir.name}: {exc}")
             skipped += 1
             continue
-        metric_path.write_text(json.dumps(result))
+        metrics_path.write_text(json.dumps(result))
         done += 1
     return done, skipped
 
 
-def pair_has_metrics(pair_dir: Path) -> bool:
+def pair_has_complete_metrics(pair_dir: Path) -> bool:
+    for metrics_path in pair_dir.rglob(METRICS_FILE):
+        if not _is_complete(metrics_path):
+            return False
     return any(pair_dir.rglob(METRICS_FILE))
 
 
-def process(pair_id: int, depth: int, patch_size: int, force: bool) -> None:
+def process(pair_id: int, depth: int, force: bool) -> None:
     depth_dir = DATA_ROOT / str(pair_id) / f"d{depth}"
     if not depth_dir.is_dir():
         sys.exit(f"Directory not found: {depth_dir}")
-    done, skip = process_depth(depth_dir, patch_size, force)
+    done, skip = process_depth(depth_dir, force)
     print(f"pair {pair_id}  level {depth}  done={done}  skipped={skip}")
 
 
-def process_pairs(n: int, patch_size: int, force: bool) -> None:
+def process_pairs(n: int, force: bool) -> None:
     if not DATA_ROOT.is_dir():
         sys.exit(f"Data root not found: {DATA_ROOT}")
 
@@ -171,11 +199,11 @@ def process_pairs(n: int, patch_size: int, force: bool) -> None:
         (d for d in DATA_ROOT.iterdir() if d.is_dir() and d.name.isdigit()),
         key=lambda d: int(d.name),
     )
-    queued = [d for d in pair_dirs if force or not pair_has_metrics(d)]
+    queued = [d for d in pair_dirs if force or not pair_has_complete_metrics(d)]
     batch  = queued[:n]
 
     if not batch:
-        print("Nothing to process — all pairs already have metrics (use --force to rerun).")
+        print("Nothing to process — all pairs have complete metrics (use --force to rerun).")
         return
 
     total_done = total_skip = 0
@@ -189,7 +217,7 @@ def process_pairs(n: int, patch_size: int, force: bool) -> None:
             level = int(depth_dir.name[1:])
             tile_count = sum(1 for d in depth_dir.iterdir() if d.is_dir())
             print(f"pair {pair_id}  level {level}  ({tile_count} tiles) ...", end="", flush=True)
-            done, skip = process_depth(depth_dir, patch_size, force)
+            done, skip = process_depth(depth_dir, force)
             print(f"  {done} computed, {skip} skipped")
             total_done += done
             total_skip += skip
@@ -204,29 +232,21 @@ def main() -> None:
     force = "--force" in argv or "-f" in argv
     argv  = [a for a in argv if a not in ("--force", "-f")]
 
-    patch_size = DEFAULT_PATCH
-    if "--patch-size" in argv:
-        idx = argv.index("--patch-size")
-        if idx + 1 >= len(argv):
-            sys.exit("--patch-size requires a number argument")
-        patch_size = int(argv[idx + 1])
-        argv = argv[:idx] + argv[idx + 2:]
-
     if "--pairs" in argv:
         idx = argv.index("--pairs")
         if idx + 1 >= len(argv):
             sys.exit("--pairs requires a number argument")
         n = int(argv[idx + 1])
-        process_pairs(n, patch_size=patch_size, force=force)
+        process_pairs(n, force=force)
         return
 
     if len(argv) < 2:
         sys.exit(
             "Usage:\n"
-            "  python metrics.py <pair_id> <depth> [--patch-size N] [--force]\n"
-            "  python metrics.py --pairs N [--patch-size N] [--force]"
+            "  python svelte_metrics.py <pair_id> <depth> [--force]\n"
+            "  python svelte_metrics.py --pairs N [--force]"
         )
-    process(int(argv[0]), int(argv[1]), patch_size=patch_size, force=force)
+    process(int(argv[0]), int(argv[1]), force=force)
 
 
 if __name__ == "__main__":
