@@ -150,6 +150,7 @@ def refit(pair_id: int, depth: int, tau: float, save: bool) -> dict:
         meta = {
             "levels": levels,
             "tau": tau,
+            "saved_depth": depth,
             "n_kept": n_kept,
             "n_seen": len(tiles),
             "n_human": n_human,

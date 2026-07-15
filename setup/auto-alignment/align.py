@@ -2,26 +2,21 @@
 Phase-correlation translation registration for HE/IHC tile pairs.
 
 Both images are converted to Sobel edge magnitude before registration to
-bridge the cross-modal intensity gap between HE and IHC stains.
-A Hann window is applied before the FFT to suppress spectral leakage at tile
-borders, and sub-pixel accuracy is obtained by fitting a 2-D parabola around
-the correlation peak.
+bridge the cross-modal intensity gap between HE and IHC stains.  A Hann window
+is applied before the FFT to suppress spectral leakage at tile borders, and
+sub-pixel accuracy is obtained by fitting a 2-D parabola around the correlation
+peak.
 
-Usage — single depth:
-    python align.py <pair_id> <depth> [tile_id ...] [--force]
+register_arrays() is the in-memory core reused by the coarse-to-fine
+orchestrator (setup/coarse_to_fine/run.py).
 
-Usage — batch (next N unprocessed pairs, all depths):
-    python align.py --pairs N [--force]
+CLI (level 3, from-scratch): crops tiles live from the raw WSI TIFFs and writes
+the per-level FFT displacement field to
+    data/c2f_cache/<pair>_d<depth>.json
+    {"pair_id", "depth", "levels", "candidates": [
+        {"tile_loc", "u", "v", "psr", "delta_px", "by_patch"} ]}
 
-    A pair is "unprocessed" when it contains no elastix/displacement.json
-    files across any of its depth directories.  Pairs are processed in
-    ascending numeric order.
-
-Output per tile (idempotent unless --force):
-    data/cropped/<pair_id>/d<depth>/<tile_id>/elastix/displacement.json
-    {"dx": <float>, "dy": <float>, "psr": <float>}
-
-    psr is the peak-to-sidelobe ratio of the correlation surface (confidence).
+    python align.py <pair_id> <depth>
 
 Sign convention: positive dx shifts IHC rightward relative to HE.
 """
@@ -35,9 +30,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-DATA_ROOT = Path(__file__).resolve().parents[2] / "data" / "cropped"
-RESULT_FILENAME = "displacement.json"
-ALG_DIR = "elastix"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "setup" / "live_crop"))
+
+import crop_core
+import tile_metrics
+
+CACHE_DIR = REPO_ROOT / "data" / "c2f_cache"
 
 
 # ── Core registration ────────────────────────────────────────────────────────
@@ -105,138 +104,43 @@ def register_arrays(he_gray: np.ndarray, ihc_gray: np.ndarray) -> dict[str, floa
     In-memory registration of two grayscale arrays (HE fixed, IHC moving).
     Returns {dx, dy, psr}. Used by the coarse-to-fine orchestrator on warped tiles.
     """
-    fixed  = sobel_edge(he_gray.astype(np.float64))
+    fixed = sobel_edge(he_gray.astype(np.float64))
     moving = sobel_edge(ihc_gray.astype(np.float64))
     dx, dy, psr = phase_correlation(fixed, moving)
     return {"dx": dx, "dy": dy, "psr": psr}
 
 
-def register_tile(tile_dir: Path) -> dict[str, float]:
-    he  = cv2.imread(str(tile_dir / "he.png"),  cv2.IMREAD_GRAYSCALE)
-    ihc = cv2.imread(str(tile_dir / "ihc.png"), cv2.IMREAD_GRAYSCALE)
-    return register_arrays(he, ihc)
+# ── Level-3 from-scratch pass (raw crops -> c2f_cache) ────────────────────────
 
+def process(pair_id: int, depth: int) -> Path:
+    tiles = crop_core.tissue_tiles(pair_id, depth)["tiles"]
+    total = len(tiles)
+    candidates: list[dict] = []
 
-# ── Processing helpers ───────────────────────────────────────────────────────
+    for done, tile_loc in enumerate(tiles, start=1):
+        x, y = (int(p) for p in tile_loc.split("_"))
+        he = crop_core.crop_gray(pair_id, depth, x, y, "he")
+        ihc = crop_core.crop_gray(pair_id, depth, x, y, "ihc")
+        res = register_arrays(he, ihc)
+        u, v = res["dx"], res["dy"]
+        ihc_auto = crop_core.crop_gray(pair_id, depth, x, y, "ihc", dx=u, dy=v)
+        metrics = tile_metrics.tile_metrics(he, ihc, ihc_auto, u, v)
+        candidates.append({"tile_loc": tile_loc, "u": u, "v": v, "psr": res["psr"], **metrics})
+        print(f"done={done} total={total}", flush=True)
 
-def process_depth(depth_dir: Path, force: bool) -> tuple[int, int]:
-    """Process all tiles in one depth directory. Returns (done, skipped)."""
-    done = skipped = 0
-    tiles = sorted(d for d in depth_dir.iterdir() if d.is_dir())
-    for tile_dir in tiles:
-        out_file = tile_dir / ALG_DIR / RESULT_FILENAME
-        if out_file.exists() and not force:
-            skipped += 1
-            continue
-        if not (tile_dir / "he.png").exists() or not (tile_dir / "ihc.png").exists():
-            skipped += 1
-            continue
-        try:
-            result = register_tile(tile_dir)
-        except Exception as exc:
-            print(f"    ERROR {tile_dir.name}: {exc}")
-            skipped += 1
-            continue
-        (tile_dir / ALG_DIR).mkdir(exist_ok=True)
-        out_file.write_text(json.dumps(result))
-        done += 1
-    return done, skipped
+    payload = {"pair_id": pair_id, "depth": depth, "levels": [depth], "candidates": candidates}
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = CACHE_DIR / f"{pair_id}_d{depth}.json"
+    out_path.write_text(json.dumps(payload, separators=(",", ":")))
+    print(f"pair {pair_id}  depth {depth}: {total} tiles -> {out_path.name}")
+    return out_path
 
-
-def pair_is_processed(pair_dir: Path) -> bool:
-    return any(pair_dir.rglob(f"{ALG_DIR}/{RESULT_FILENAME}"))
-
-
-def process(pair_id: int, depth: int, tile_ids: list[str], force: bool) -> None:
-    depth_dir = DATA_ROOT / str(pair_id) / f"d{depth}"
-    if not depth_dir.is_dir():
-        sys.exit(f"Directory not found: {depth_dir}")
-
-    tiles = (
-        [depth_dir / t for t in tile_ids]
-        if tile_ids
-        else sorted(d for d in depth_dir.iterdir() if d.is_dir())
-    )
-
-    for tile_dir in tiles:
-        out_file = tile_dir / ALG_DIR / RESULT_FILENAME
-        if out_file.exists() and not force:
-            print(f"skip  {tile_dir.name}  (already computed)")
-            continue
-        if not (tile_dir / "he.png").exists() or not (tile_dir / "ihc.png").exists():
-            print(f"skip  {tile_dir.name}  (missing he.png / ihc.png)")
-            continue
-        print(f"align {tile_dir.name} ...", end="", flush=True)
-        try:
-            result = register_tile(tile_dir)
-        except Exception as exc:
-            print(f"  ERROR: {exc}")
-            continue
-        (tile_dir / ALG_DIR).mkdir(exist_ok=True)
-        out_file.write_text(json.dumps(result))
-        print(f"  dx={result['dx']:.2f}  dy={result['dy']:.2f}")
-
-
-def process_pairs(n: int, force: bool) -> None:
-    if not DATA_ROOT.is_dir():
-        sys.exit(f"Data root not found: {DATA_ROOT}")
-
-    pair_dirs = sorted(
-        (d for d in DATA_ROOT.iterdir() if d.is_dir() and d.name.isdigit()),
-        key=lambda d: int(d.name),
-    )
-
-    queued = [d for d in pair_dirs if force or not pair_is_processed(d)]
-    batch = queued[:n]
-
-    if not batch:
-        print("Nothing to process — all pairs already have results (use --force to rerun).")
-        return
-
-    total_done = total_skip = 0
-    for pair_dir in batch:
-        pair_id = pair_dir.name
-        depth_dirs = sorted(
-            (d for d in pair_dir.iterdir() if d.is_dir() and d.name.startswith("d")),
-            key=lambda d: int(d.name[1:]),
-        )
-        for depth_dir in depth_dirs:
-            level = int(depth_dir.name[1:])
-            tile_count = sum(1 for d in depth_dir.iterdir() if d.is_dir())
-            print(f"pair {pair_id}  level {level}  ({tile_count} tiles) ...", end="", flush=True)
-            done, skip = process_depth(depth_dir, force)
-            print(f"  {done} registered, {skip} skipped")
-            total_done += done
-            total_skip += skip
-
-    print(f"\ntotal: {total_done} registered, {total_skip} skipped")
-
-
-# ── Entry point ──────────────────────────────────────────────────────────────
 
 def main() -> None:
     argv = sys.argv[1:]
-    force = "--force" in argv or "-f" in argv
-    argv = [a for a in argv if a not in ("--force", "-f")]
-
-    if "--pairs" in argv:
-        idx = argv.index("--pairs")
-        if idx + 1 >= len(argv):
-            sys.exit("--pairs requires a number argument")
-        n = int(argv[idx + 1])
-        process_pairs(n, force=force)
-        return
-
     if len(argv) < 2:
-        sys.exit(
-            "Usage:\n"
-            "  python align.py <pair_id> <depth> [tile_id ...] [--force]\n"
-            "  python align.py --pairs N [--force]"
-        )
-    pair_id  = int(argv[0])
-    depth    = int(argv[1])
-    tile_ids = argv[2:]
-    process(pair_id, depth, tile_ids, force=force)
+        sys.exit("Usage: python align.py <pair_id> <depth>")
+    process(int(argv[0]), int(argv[1]))
 
 
 if __name__ == "__main__":

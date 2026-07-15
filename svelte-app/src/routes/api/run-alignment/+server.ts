@@ -1,17 +1,15 @@
 import { json, error } from '@sveltejs/kit';
 import { spawn } from 'child_process';
 import { resolve, join } from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import type { RequestHandler } from './$types';
 
 const REPO_ROOT = resolve('..');
 const PYTHON = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
 const ALIGN_SCRIPT = resolve(REPO_ROOT, 'setup', 'auto-alignment', 'align.py');
-const METRICS_SCRIPT = resolve(REPO_ROOT, 'setup', 'auto-alignment', 'svelte_metrics.py');
 const RUN_SCRIPT = resolve(REPO_ROOT, 'setup', 'coarse_to_fine', 'run.py');
 const CACHE_DIR = resolve(REPO_ROOT, 'data', 'c2f_cache');
 const SMOOTH_DIR = resolve(REPO_ROOT, 'data', 'smooth_c2f');
-const CROPPED_DIR = resolve(REPO_ROOT, 'data', 'cropped');
 const ANNOT_PATH = resolve(REPO_ROOT, 'data', 'registration_annotations.json');
 
 const PREV_COMPLETION_THRESHOLD = 1.0;
@@ -54,13 +52,18 @@ function prevFieldCoversDepth(pair: number, depth: number): boolean {
 function prevSeedCompletion(pair: number, depth: number): number {
 	if (depth <= 3) return 1.0;
 	const prevDepth = depth - 1;
-	const prevDir = join(CROPPED_DIR, String(pair), `d${prevDepth}`);
-	if (!existsSync(prevDir)) return 0;
+	const prevCache = join(CACHE_DIR, `${pair}_d${prevDepth}.json`);
+	if (!existsSync(prevCache)) return 0;
 
-	const seedTiles = readdirSync(prevDir, { withFileTypes: true })
-		.filter((e) => e.isDirectory() && e.name.includes('_'))
-		.map((e) => e.name)
-		.filter((name) => isSeedTile(name, prevDepth));
+	let candidates: { tile_loc: string }[] = [];
+	try {
+		candidates = JSON.parse(readFileSync(prevCache, 'utf-8')).candidates || [];
+	} catch {
+		return 0;
+	}
+	const seedTiles = candidates
+		.map((c) => c.tile_loc)
+		.filter((name) => typeof name === 'string' && isSeedTile(name, prevDepth));
 
 	if (seedTiles.length === 0) return 0;
 
@@ -114,22 +117,6 @@ function spawnPromise(
 	});
 }
 
-function writeDisplacementsFromCache(pair: number, depth: number) {
-	if (depth === 3) return;
-	const cachePath = join(CACHE_DIR, `${pair}_d${depth}.json`);
-	if (!existsSync(cachePath)) throw new Error('No alignment cache produced');
-	const cache = JSON.parse(readFileSync(cachePath, 'utf-8'));
-	for (const c of cache.candidates || []) {
-		if (typeof c.u !== 'number' || typeof c.v !== 'number' || typeof c.tile_loc !== 'string') continue;
-		const elastixDir = join(CROPPED_DIR, String(pair), `d${depth}`, c.tile_loc, 'elastix');
-		mkdirSync(elastixDir, { recursive: true });
-		writeFileSync(
-			join(elastixDir, 'displacement.json'),
-			JSON.stringify({ dx: c.u, dy: c.v, psr: c.psr ?? 0 })
-		);
-	}
-}
-
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
 	if (!body || typeof body.pair_id !== 'number' || typeof body.depth !== 'number') {
@@ -167,15 +154,7 @@ export const POST: RequestHandler = async ({ request }) => {
 					setStep,
 					'coarse-to-fine alignment'
 				);
-				setStep('writing displacements');
-				writeDisplacementsFromCache(pair_id, depth);
 			}
-			await spawnPromise(
-				METRICS_SCRIPT,
-				[String(pair_id), String(depth)],
-				setStep,
-				'metrics'
-			);
 			state.running = false;
 			state.step = 'done';
 			state.finishedAt = Date.now();

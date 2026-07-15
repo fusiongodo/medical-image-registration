@@ -2,11 +2,13 @@
 	let {
 		pairId,
 		depth,
-		patchSize = 50
+		patchSize = 50,
+		refreshKey = 0
 	}: {
 		pairId: number;
 		depth: number;
 		patchSize?: number;
+		refreshKey?: number;
 	} = $props();
 
 	interface DistData {
@@ -19,18 +21,8 @@
 		missing: number;
 	}
 
-	interface JobState {
-		running: boolean;
-		done: number;
-		total: number;
-		error: string | null;
-		finishedAt: number | null;
-	}
-
-	let open      = $state(true);
-	let dist      = $state<DistData | null>(null);
-	let job       = $state<JobState | null>(null);
-	let pollTimer = $state<ReturnType<typeof setInterval> | null>(null);
+	let open = $state(true);
+	let dist = $state<DistData | null>(null);
 
 	$effect(() => {
 		try {
@@ -52,42 +44,14 @@
 		dist = await r.json();
 	}
 
-	async function startCompute() {
-		const r = await fetch('/api/lncc-distribution/compute', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ pair_id: pairId, depth }),
-		});
-		const data = await r.json();
-		job = data.state;
-		if (job?.running) startPolling();
-	}
-
-	function startPolling() {
-		if (pollTimer) return;
-		pollTimer = setInterval(async () => {
-			const r = await fetch(`/api/lncc-distribution/progress?pair=${pairId}&depth=${depth}`);
-			job = await r.json();
-			if (!job?.running) {
-				clearInterval(pollTimer!);
-				pollTimer = null;
-				await fetchDist();
-			}
-		}, 1000);
-	}
-
 	$effect(() => {
 		if (open && dist === null) fetchDist();
-		return () => {
-			if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-		};
 	});
 
-	// Recompute on pair/depth/patchSize change
+	// Recompute on pair/depth/patchSize change or after an alignment run
 	$effect(() => {
-		void pairId; void depth; void patchSize;
+		void pairId; void depth; void patchSize; void refreshKey;
 		dist = null;
-		job = null;
 		if (open) fetchDist();
 	});
 
@@ -154,8 +118,7 @@
 		LNCC² distribution
 		{#if dist}
 			<span class="summary-inline">
-				· {dist.withMetrics} scored / {dist.withDisplacement} aligned
-				{#if dist.missing > 0}<span class="missing">· {dist.missing} missing</span>{/if}
+				· {dist.withMetrics} scored
 			</span>
 		{/if}
 	</button>
@@ -166,7 +129,7 @@
 				<span class="loading">loading…</span>
 			{:else}
 				{#if dist.withMetrics === 0}
-					<div class="no-data">No scored tiles yet — click "Compute missing" to start.</div>
+					<div class="no-data">No scored tiles yet — run alignment for this level.</div>
 				{:else}
 					<svg width={SVG_W} height={SVG_H} class="chart">
 						{#each bars as b}
@@ -187,25 +150,6 @@
 						{/each}
 					</svg>
 				{/if}
-
-				<div class="controls">
-					{#if dist.missing > 0}
-						{#if job?.running}
-							<span class="progress">
-								Computing… {job.done} / {job.total || '?'} tiles
-							</span>
-						{:else}
-							<button class="compute-btn" onclick={startCompute}>
-								Compute missing ({dist.missing})
-							</button>
-						{/if}
-						{#if job?.error}
-							<span class="err">{job.error}</span>
-						{/if}
-					{:else}
-						<span class="all-done">All {dist.withMetrics} tiles scored</span>
-					{/if}
-				</div>
 			{/if}
 		</div>
 	{/if}
@@ -244,8 +188,6 @@
 		color: #9ca3af;
 	}
 
-	.missing { color: #f59e0b; }
-
 	.body {
 		padding: 8px 14px 12px;
 		display: flex;
@@ -269,44 +211,5 @@
 		fill: #9ca3af;
 		font-size: 11px;
 		font-family: system-ui, sans-serif;
-	}
-
-	.controls {
-		display: flex;
-		flex-direction: row;
-		align-items: center;
-		gap: 12px;
-	}
-
-	.compute-btn {
-		all: unset;
-		cursor: pointer;
-		background: #6366f1;
-		color: #fff;
-		font-size: 0.72rem;
-		font-weight: 600;
-		padding: 5px 12px;
-		border-radius: 4px;
-		white-space: nowrap;
-	}
-
-	.compute-btn:hover { background: #4f51c8; }
-
-	.progress {
-		font-size: 0.72rem;
-		color: #f59e0b;
-		white-space: nowrap;
-	}
-
-	.all-done {
-		font-size: 0.72rem;
-		color: #22c55e;
-		white-space: nowrap;
-	}
-
-	.err {
-		font-size: 0.7rem;
-		color: #ef4444;
-		white-space: nowrap;
 	}
 </style>

@@ -2,11 +2,16 @@
 	import { page } from '$app/stores';
 	import { deriveStatus, nextDepthForPair, NUM_PAIRS, type ValidationStore } from '$lib/types';
 
-	let { data, children } = $props<{ data: { validation: ValidationStore }; children: any }>();
+	let { data, children } = $props<{
+		data: { validation: ValidationStore; fieldComplete: number[] };
+		children: any;
+	}>();
 
 	const pairs = Array.from({ length: NUM_PAIRS }, (_, i) => i);
+	const fieldComplete = $derived(new Set(data.fieldComplete));
 
 	function statusIcon(pairId: number) {
+		if (fieldComplete.has(pairId)) return '✓';
 		const s = deriveStatus(data.validation, pairId);
 		if (s.outcome === 'pass') return '✓';
 		if (s.outcome === 'fail') return '✗';
@@ -16,6 +21,7 @@
 	}
 
 	function statusClass(pairId: number) {
+		if (fieldComplete.has(pairId)) return 'pass';
 		const s = deriveStatus(data.validation, pairId);
 		if (s.outcome === 'pass') return 'pass';
 		if (s.outcome === 'fail') return 'fail';
@@ -32,10 +38,47 @@
 	function isActive(pairId: number) {
 		return $page.params.pair === String(pairId);
 	}
+
+	let sidebarOpen = $state(true);
+
+	$effect(() => {
+		try {
+			const stored = localStorage.getItem('mvrSidebarOpen');
+			if (stored !== null) sidebarOpen = stored === '1';
+		} catch {
+			/* ignore storage errors */ }
+	});
+
+	$effect(() => {
+		try {
+			localStorage.setItem('mvrSidebarOpen', sidebarOpen ? '1' : '0');
+		} catch {
+			/* ignore storage errors */ }
+	});
+
+	$effect(() => {
+		function onKeyDown(e: KeyboardEvent) {
+			if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+			const target = e.target as HTMLElement | null;
+			if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+			if (e.code === 'KeyB') {
+				e.preventDefault();
+				sidebarOpen = !sidebarOpen;
+			}
+		}
+		window.addEventListener('keydown', onKeyDown);
+		return () => window.removeEventListener('keydown', onKeyDown);
+	});
 </script>
 
 <div class="shell">
-	<aside>
+	<aside class:collapsed={!sidebarOpen} aria-hidden={!sidebarOpen}>
+		<div class="aside-head">
+			<button class="collapse-btn" onclick={() => (sidebarOpen = false)} title="Collapse sidebar (Shift+B)">«</button>
+		</div>
+		<nav class="tools">
+			<a href="/live" class:active={$page.url.pathname === '/live'}>Live crop</a>
+		</nav>
 		<h2>Pairs</h2>
 		<ul>
 			{#each pairs as pairId}
@@ -48,6 +91,10 @@
 			{/each}
 		</ul>
 	</aside>
+
+	{#if !sidebarOpen}
+		<button class="hamburger" onclick={() => (sidebarOpen = true)} title="Open sidebar (Shift+B)">☰</button>
+	{/if}
 
 	<main>
 		{@render children()}
@@ -68,6 +115,7 @@
 	}
 
 	.shell {
+		position: relative;
 		display: flex;
 		height: 100dvh;
 		overflow: hidden;
@@ -81,6 +129,77 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
+		transition: width 0.16s ease, border-color 0.16s ease;
+	}
+
+	aside.collapsed {
+		width: 0;
+		border-right-color: transparent;
+	}
+
+	.aside-head {
+		display: flex;
+		justify-content: flex-end;
+		align-items: center;
+		padding: 8px 8px 0;
+		flex-shrink: 0;
+	}
+
+	.collapse-btn,
+	.hamburger {
+		all: unset;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		height: 26px;
+		border-radius: 5px;
+		color: #9ca3af;
+		font-size: 0.95rem;
+		line-height: 1;
+	}
+
+	.collapse-btn:hover,
+	.hamburger:hover {
+		background: #1e2130;
+		color: #e8eaf0;
+	}
+
+	.hamburger {
+		position: absolute;
+		top: 8px;
+		left: 8px;
+		z-index: 20;
+		background: #181b23;
+		border: 1px solid #2a2d3a;
+	}
+
+	.tools {
+		padding: 8px 14px 4px;
+		flex-shrink: 0;
+	}
+
+	.tools a {
+		display: block;
+		padding: 6px 10px;
+		font-size: 0.8rem;
+		text-decoration: none;
+		color: #9ca3af;
+		border: 1px solid #2a2d3a;
+		border-radius: 5px;
+		transition: background 0.1s, color 0.1s;
+	}
+
+	.tools a:hover {
+		background: #1e2130;
+		color: #e8eaf0;
+	}
+
+	.tools a.active {
+		border-color: #6366f1;
+		background: #1e2130;
+		color: #e8eaf0;
 	}
 
 	aside h2 {

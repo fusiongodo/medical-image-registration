@@ -16,19 +16,30 @@
 			depth: number;
 			tiles: TileMeta[];
 			validation: ValidationStore;
-			smooth: boolean;
-			smoothAvailable: boolean;
 		};
 	}>();
 
 	let submitting = $state(false);
+	let autoDispRefreshKey = $state(0);
 	const PATCH_SIZES = [5, 10, 20, 30, 40, 50] as const;
 	let patchSize = $state<5 | 10 | 20 | 30 | 40 | 50>(50);
-	let sortByScore = $state(false);
-	let sortByFactor = $state(false);
+	let sortMode = $state<'off' | 'lncc' | 'factor'>('off');
+	let displayMenuOpen = $state(false);
+	let displayMenuEl = $state<HTMLElement | null>(null);
 	interface PatchEntry { lncc2: number; lncc2_auto: number; factor_auto: number; }
 	interface TileMetrics { delta_px: number; dx: number; dy: number; by_patch: Record<string, PatchEntry>; }
-	let tileMetrics = $state<Map<string, TileMetrics>>(new Map());
+
+	function tileXY(tile: string): [number, number] {
+		const [x, y] = tile.split('_').map((n) => parseInt(n, 10));
+		return [x, y];
+	}
+
+	function cropUrl(tile: string, side: 'he' | 'ihc', dx = 0, dy = 0): string {
+		const [x, y] = tileXY(tile);
+		let u = `/api/live-crop/tile?pair=${data.pairId}&level=${data.depth}&x=${x}&y=${y}&side=${side}`;
+		if (dx !== 0 || dy !== 0) u += `&dx=${dx}&dy=${dy}`;
+		return u;
+	}
 
 	let tileKeypoints = $state<Map<string, number[][]>>(new Map());
 	let showKeypoints = $state(false);
@@ -39,9 +50,24 @@
 	}
 
 	$effect(() => {
+		if (!displayMenuOpen) return;
+		function onPointerDown(e: PointerEvent) {
+			if (displayMenuEl && !displayMenuEl.contains(e.target as Node)) displayMenuOpen = false;
+		}
+		window.addEventListener('pointerdown', onPointerDown);
+		return () => window.removeEventListener('pointerdown', onPointerDown);
+	});
+
+	$effect(() => {
 		function onKeyDown(e: KeyboardEvent) {
 			if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
-			if (e.key === 'Q' || e.key === 'q') {
+			const target = e.target as HTMLElement | null;
+			if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+			const digit = e.code.startsWith('Digit') ? Number(e.code.slice(5)) : NaN;
+			if (digit >= 1 && digit <= MAX_DEPTH) {
+				e.preventDefault();
+				if (digit !== data.depth) goto(`/${data.pairId}/${digit}`);
+			} else if (e.key === 'Q' || e.key === 'q') {
 				e.preventDefault();
 				overlayEmphasis = overlayEmphasis === 'he' ? null : 'he';
 			} else if (e.key === 'W' || e.key === 'w') {
@@ -58,8 +84,16 @@
 	let annotationVersion = $state(0);
 	let busyTile = $state<string | null>(null);
 
-	interface C2fCandidate { u: number; v: number; psr: number; }
+	interface C2fCandidate { u: number; v: number; psr: number; delta_px?: number; by_patch?: Record<string, PatchEntry>; }
 	let c2fCandidates = $state<Map<string, C2fCandidate>>(new Map());
+
+	const tileMetrics = $derived.by(() => {
+		const m = new Map<string, TileMetrics>();
+		for (const [tile, c] of c2fCandidates) {
+			if (c.by_patch) m.set(tile, { delta_px: c.delta_px ?? 0, dx: c.u, dy: c.v, by_patch: c.by_patch });
+		}
+		return m;
+	});
 
 	interface RegAnnotation { type: 'approve' | 'correct' | 'exclude'; u: number; v: number; }
 	let regAnnotations = $state<Map<string, RegAnnotation>>(new Map());
@@ -102,18 +136,6 @@
 		return () => { stale = true; tileKeypoints = new Map(); };
 	});
 
-	$effect(() => {
-		const pair = data.pairId, depth = data.depth;
-		let stale = false;
-		fetch(`/api/tile-metrics?pair=${pair}&depth=${depth}`)
-			.then((r) => r.json())
-			.then((fetched: Record<string, TileMetrics>) => {
-				if (stale) return;
-				tileMetrics = new Map(Object.entries(fetched));
-			});
-		return () => { stale = true; tileMetrics = new Map(); };
-	});
-
 	const sortedTiles = $derived.by(() => {
 		const factorOf = (tile: string): number | undefined => {
 			const m = tileMetrics.get(tile);
@@ -121,14 +143,14 @@
 			const entry = m.by_patch[String(patchSize)];
 			return entry ? entry.factor_auto : undefined;
 		};
-		if (sortByFactor) {
+		if (sortMode === 'factor') {
 			const factored = data.tiles
 				.filter((t: TileMeta) => factorOf(t.tile) !== undefined)
 				.sort((a: TileMeta, b: TileMeta) => (factorOf(b.tile) ?? 0) - (factorOf(a.tile) ?? 0));
 			const rest = data.tiles.filter((t: TileMeta) => factorOf(t.tile) === undefined);
 			return [...factored, ...rest];
 		}
-		if (!sortByScore) return data.tiles;
+		if (sortMode !== 'lncc') return data.tiles;
 		const lncc2Of = (tile: string): number | undefined => {
 			const entry = tileMetrics.get(tile)?.by_patch[String(patchSize)];
 			return entry?.lncc2_auto;
@@ -187,19 +209,37 @@
 	}
 
 	$effect(() => {
+		autoDispRefreshKey; // re-fetch after an alignment run
 		const pair = data.pairId, depth = data.depth;
 		let stale = false;
 		fetch(`/api/c2f/candidates?pair=${pair}&depth=${depth}`)
 			.then((r) => r.json())
-			.then((d: { cached?: boolean; candidates?: { tile_loc: string; u: number; v: number; psr: number }[] }) => {
+			.then((d: { cached?: boolean; candidates?: (C2fCandidate & { tile_loc: string })[] }) => {
 				if (stale) return;
 				const m = new Map<string, C2fCandidate>();
 				if (d.cached && Array.isArray(d.candidates)) {
-					for (const c of d.candidates) m.set(c.tile_loc, { u: c.u, v: c.v, psr: c.psr });
+					for (const c of d.candidates)
+						m.set(c.tile_loc, { u: c.u, v: c.v, psr: c.psr, delta_px: c.delta_px, by_patch: c.by_patch });
 				}
 				c2fCandidates = m;
 			});
 		return () => { stale = true; c2fCandidates = new Map(); };
+	});
+
+	// ── Base offset per tile: previous level's saved field (0 at L3) ─────────
+	let fieldOffsets = $state<Map<string, { dx: number; dy: number }>>(new Map());
+	$effect(() => {
+		autoDispRefreshKey; // re-fetch after an alignment / save
+		const pair = data.pairId, depth = data.depth;
+		if (depth <= 3) { fieldOffsets = new Map(); return; }
+		let stale = false;
+		fetch(`/api/field?pair=${pair}&depth=${depth}`)
+			.then((r) => r.json())
+			.then((fetched: Record<string, { dx: number; dy: number }>) => {
+				if (stale) return;
+				fieldOffsets = new Map(Object.entries(fetched));
+			});
+		return () => { stale = true; fieldOffsets = new Map(); };
 	});
 
 	$effect(() => {
@@ -337,7 +377,8 @@
 		if (!ann || ann.hePoints.length < 1 || ann.ihcPoints.length < 1) return;
 		const he = ann.hePoints[ann.hePoints.length - 1];
 		const ihc = ann.ihcPoints[ann.ihcPoints.length - 1];
-		postAnnotate(tile, 'correct', he.x - ihc.x, he.y - ihc.y);
+		const base = fieldOffsets.get(tile) ?? { dx: 0, dy: 0 };
+		postAnnotate(tile, 'correct', base.dx + he.x - ihc.x, base.dy + he.y - ihc.y);
 	}
 
 	function excludeTile(tile: string) {
@@ -358,36 +399,22 @@
 			dx += ann.hePoints[i].x - ann.ihcPoints[i].x;
 			dy += ann.hePoints[i].y - ann.ihcPoints[i].y;
 		}
-		return { dx: dx / pairs, dy: dy / pairs };
+		const base = fieldOffsets.get(tile) ?? { dx: 0, dy: 0 };
+		return { dx: base.dx + dx / pairs, dy: base.dy + dy / pairs };
 	}
 
-	// ── Auto-displacement (per tile, Python-written) ─────────────────────────
+	// ── Auto-displacement (per tile, from c2f_cache FFT candidates) ──────────
 	interface AutoDisp { dx: number; dy: number; }
-	let autoDisps = $state<Map<string, AutoDisp>>(new Map());
-	let autoDispRefreshKey = $state(0);
-
-	$effect(() => {
-		autoDispRefreshKey; // tracked so Refresh button re-runs this effect
-		const pair = data.pairId, depth = data.depth;
-		let stale = false;
-		fetch(`/api/python-displacement?pair=${pair}&depth=${depth}`)
-			.then((r) => r.json())
-			.then((fetched: Record<string, AutoDisp>) => {
-				if (stale) return;
-				autoDisps = new Map(Object.entries(fetched));
-			});
-		return () => { stale = true; autoDisps = new Map(); };
+	const autoDisps = $derived.by(() => {
+		const m = new Map<string, AutoDisp>();
+		for (const [tile, c] of c2fCandidates) m.set(tile, { dx: c.u, dy: c.v });
+		return m;
 	});
 
-	const autoTargets = $derived(displayOrder.slice(0, 5));
-
 	const alignCommand = $derived(
-		`python setup/auto-alignment/align.py ${data.pairId} ${data.depth}` +
-		(autoTargets.length > 0 ? ' ' + autoTargets.map((t: TileMeta) => t.tile).join(' ') : '')
-	);
-
-	const alignAllCommand = $derived(
-		`python setup/auto-alignment/align.py ${data.pairId} ${data.depth}`
+		data.depth === 3
+			? `python setup/auto-alignment/align.py ${data.pairId} ${data.depth}`
+			: `python setup/coarse_to_fine/run.py ${data.pairId} --cache-depth ${data.depth}`
 	);
 
 	let pollingActive = $state(false);
@@ -438,13 +465,6 @@
 					if (finishedAt !== null && finishedAt !== lastFinishedAt) {
 						lastFinishedAt = finishedAt;
 						autoDispRefreshKey++;
-						tileMetrics = new Map();
-						fetch(`/api/tile-metrics?pair=${pair}&depth=${depth}`)
-							.then((r) => r.json())
-							.then((fetched: Record<string, TileMetrics>) => {
-								if (stale) return;
-								tileMetrics = new Map(Object.entries(fetched));
-							});
 					}
 				});
 		}
@@ -555,7 +575,7 @@
 
 <div class="scrollable">
 
-<LnccDistributionPanel pairId={data.pairId} depth={data.depth} {patchSize} />
+<LnccDistributionPanel pairId={data.pairId} depth={data.depth} {patchSize} refreshKey={autoDispRefreshKey} />
 <C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} seed={seedLocs} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} />
 
 <div class="viewer">
@@ -567,62 +587,66 @@
 			<span class="tile-count">{data.tiles.length} tiles</span>
 		</div>
 
-		<label class="sort-control">
-			<input type="checkbox" bind:checked={sortByScore} onchange={() => { if (sortByScore) sortByFactor = false; }} />
-			<span>Sort by LNCC²</span>
-		</label>
-		<label class="sort-control">
-			<input type="checkbox" bind:checked={sortByFactor} onchange={() => { if (sortByFactor) sortByScore = false; }} />
-			<span>Sort by Factor</span>
-		</label>
-		<label class="sort-control">
-			<input type="checkbox" bind:checked={showKeypoints} />
-			<span>Keypoints</span>
-		</label>
-		{#if REFINE_LEVELS.includes(data.depth)}
-			<label
-				class="sort-control refine-toggle"
-				class:refine-locked={!canRefine}
-				title={!canRefine
-					? `Complete level ${data.depth - 1} refine set first (${prevSeedDone}/${prevSeedTiles.length})`
-					: 'Toggle refine set'}
+		<div class="display-menu" bind:this={displayMenuEl}>
+			<button
+				class="display-trigger"
+				class:open={displayMenuOpen}
+				class:has-active={sortMode !== 'off' || showKeypoints || refineMode}
+				onclick={() => (displayMenuOpen = !displayMenuOpen)}
 			>
-				<input
-					type="checkbox"
-					bind:checked={refineMode}
-					onchange={() => { activeRow = null; }}
-					disabled={!canRefine}
-				/>
-				<span>Refine set{#if refineMode} · {seedDone}/{seedTiles.length}{/if}</span>
-			</label>
-			{#if !canRefine && data.depth > 3}
-				<span class="refine-lock-hint">
-					🔒 level {data.depth - 1} incomplete ({prevSeedDone}/{prevSeedTiles.length})
-				</span>
+				Display <span class="caret">▾</span>
+			</button>
+			{#if displayMenuOpen}
+				<div class="display-panel">
+					<label class="menu-select">
+						<span class="menu-label">Sort</span>
+						<select bind:value={sortMode}>
+							<option value="off">Off</option>
+							<option value="lncc">LNCC²</option>
+							<option value="factor">Factor</option>
+						</select>
+					</label>
+					<label class="menu-check">
+						<input type="checkbox" bind:checked={showKeypoints} />
+						<span>Keypoints</span>
+					</label>
+					{#if REFINE_LEVELS.includes(data.depth)}
+						<label
+							class="menu-check refine-toggle"
+							class:refine-locked={!canRefine}
+							title={!canRefine
+								? `Complete level ${data.depth - 1} refine set first (${prevSeedDone}/${prevSeedTiles.length})`
+								: 'Toggle refine set'}
+						>
+							<input
+								type="checkbox"
+								bind:checked={refineMode}
+								onchange={() => { activeRow = null; }}
+								disabled={!canRefine}
+							/>
+							<span>Refine set{#if refineMode} · {seedDone}/{seedTiles.length}{/if}</span>
+						</label>
+						{#if !canRefine && data.depth > 3}
+							<span class="menu-hint">
+								🔒 level {data.depth - 1} incomplete ({prevSeedDone}/{prevSeedTiles.length})
+							</span>
+						{/if}
+					{:else}
+						<span class="menu-check refine-disabled" title="Refinement available at levels 3–5">
+							Refine set · n/a
+						</span>
+					{/if}
+				</div>
 			{/if}
-		{:else}
-			<span class="sort-control refine-disabled" title="Refinement available at levels 3–5">
-				Refine set · n/a
-			</span>
-		{/if}
-		{#if data.smooth}
-			<a class="source-badge source-smooth" href="/{data.pairId}/{data.depth}">Standard</a>
-		{:else if data.smoothAvailable}
-			<a class="source-badge source-standard" href="/{data.pairId}/{data.depth}?source=smooth">Smooth IHC</a>
-		{/if}
-
-		<div class="patch-control">
-			<span class="patch-label">Patch</span>
-			<div class="patch-btns">
-				{#each PATCH_SIZES as ps}
-					<button
-						class="patch-btn"
-						class:active={patchSize === ps}
-						onclick={() => { patchSize = ps; }}
-					>{ps}px</button>
-				{/each}
-			</div>
 		</div>
+		<label class="patch-select">
+			<span class="patch-label">Patch</span>
+			<select bind:value={patchSize}>
+				{#each PATCH_SIZES as ps}
+					<option value={ps}>{ps}px</option>
+				{/each}
+			</select>
+		</label>
 
 		<div class="auto-disp-controls">
 			<div class="auto-disp-control">
@@ -710,10 +734,10 @@
 			>
 			<span class="col-header sticky-header"></span>
 			<span class="col-header sticky-header">HE norm</span>
-			<span class="col-header sticky-header">{data.smooth ? 'IHC smooth' : 'IHC norm'}</span>
+			<span class="col-header sticky-header">IHC norm</span>
 			<span class="col-header sticky-header">Overlay</span>
 			<span class="col-header sticky-header col-header-flex">
-				{data.smooth ? 'Pre-aligned' : 'Auto overlay'}
+				Auto overlay
 				<span class="emph-pills">
 					<button
 						class="emph-pill"
@@ -736,8 +760,9 @@
 			{#if refineMode}<span class="col-header sticky-header">Refine</span>{/if}
 
 	{#each displayOrder as t (`${data.pairId}-${data.depth}-${t.tile}`)}
-			{@const heSrc  = `/api/image?path=${encodeURIComponent(t.he)}`}
-			{@const ihcSrc = `/api/image?path=${encodeURIComponent(t.ihc)}`}
+			{@const base = fieldOffsets.get(t.tile) ?? { dx: 0, dy: 0 }}
+			{@const heSrc  = cropUrl(t.tile, 'he')}
+			{@const ihcSrc = cropUrl(t.tile, 'ihc', base.dx, base.dy)}
 			{@const isActive = activeRow === t.tile}
 			{@const ann = annotations[t.tile] ?? { hePoints: [], ihcPoints: [] }}
 		{@const tileAutoDisp = autoDisps.get(t.tile)}
@@ -760,26 +785,15 @@
 		<OverlayCanvas {heSrc} {ihcSrc} />
 		{@const manual = manualDisplacement(t.tile)}
 		{@const corrDisp = regAnnotations.get(t.tile)}
-		{@const overlayDx = data.smooth
-			? 0
-			: corrDisp && corrDisp.type === 'correct'
-				? corrDisp.u
-				: manual
-					? manual.dx
-					: tileAutoDisp !== undefined
-						? tileAutoDisp.dx
-						: 0}
-		{@const overlayDy = data.smooth
-			? 0
-			: corrDisp && corrDisp.type === 'correct'
-				? corrDisp.v
-				: manual
-					? manual.dy
-					: tileAutoDisp !== undefined
-						? tileAutoDisp.dy
-						: 0}
-		{#if data.smooth || corrDisp?.type === 'correct' || manual || tileAutoDisp !== undefined}
-			<DisplacedOverlay {heSrc} {ihcSrc} dx={overlayDx} dy={overlayDy}
+		{@const autoVec = corrDisp?.type === 'correct'
+			? { dx: corrDisp.u, dy: corrDisp.v }
+			: manual
+				? manual
+				: tileAutoDisp !== undefined
+					? { dx: tileAutoDisp.dx, dy: tileAutoDisp.dy }
+					: null}
+		{#if autoVec}
+			<DisplacedOverlay {heSrc} ihcSrc={cropUrl(t.tile, 'ihc', autoVec.dx, autoVec.dy)} dx={0} dy={0}
 				keypoints={tileKps} emphasis={overlayEmphasis} />
 		{:else}
 			<div class="factor-cell align-pending-cell" title="Run FFT alignment to enable this overlay">
@@ -793,15 +807,7 @@
 			{:else}
 				<div class="score-cell-pre"><span class="factor-placeholder">…</span></div>
 			{/if}
-			{@const arrowDisp = data.smooth
-				? (tileAutoDisp !== undefined
-					? tileAutoDisp
-					: m && (m.dx !== 0 || m.dy !== 0)
-						? { dx: m!.dx, dy: m!.dy }
-						: null)
-				: (corrDisp?.type === 'correct' || manual || tileAutoDisp !== undefined
-					? { dx: overlayDx, dy: overlayDy }
-					: null)}
+			{@const arrowDisp = autoVec}
 			{#if arrowDisp}
 			{@const dvx = arrowDisp.dx}
 			{@const dvy = arrowDisp.dy}
@@ -1000,56 +1006,90 @@
 		border-radius: 10px;
 	}
 
-	.sort-control {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 0.78rem;
-		color: #9ca3af;
-		cursor: pointer;
+	.display-menu {
+		position: relative;
 		flex-shrink: 0;
 	}
 
-	.sort-control input[type='checkbox'] {
+	.display-trigger {
+		all: unset;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 10px;
+		border-radius: 5px;
+		font-size: 0.78rem;
+		color: #9ca3af;
+		border: 1px solid #2a2d3a;
+		background: #181b23;
+		transition: color 0.12s, border-color 0.12s;
+	}
+
+	.display-trigger:hover { color: #e8eaf0; border-color: #3a3f52; }
+	.display-trigger.open { color: #e8eaf0; border-color: #6366f1; }
+	.display-trigger .caret { font-size: 0.6rem; }
+
+	.display-trigger.has-active {
+		color: #e0e7ff;
+		border-color: #6366f1;
+	}
+
+	.display-panel {
+		position: absolute;
+		top: calc(100% + 6px);
+		left: 0;
+		z-index: 30;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		min-width: 180px;
+		padding: 12px;
+		border-radius: 8px;
+		background: #181b23;
+		border: 1px solid #2a2d3a;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+	}
+
+	.menu-select {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		font-size: 0.78rem;
+		color: #9ca3af;
+	}
+
+	.menu-label {
+		font-size: 0.7rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #6b7280;
+	}
+
+	.menu-check {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.78rem;
+		color: #9ca3af;
+		cursor: pointer;
+	}
+
+	.menu-check input[type='checkbox'] {
 		accent-color: #6366f1;
 		width: 14px;
 		height: 14px;
 		cursor: pointer;
 	}
 
-	.source-badge {
-		font-size: 0.75rem;
-		font-weight: 700;
-		border-radius: 6px;
-		padding: 4px 10px;
-		text-decoration: none;
-		flex-shrink: 0;
-		border: 1px solid;
+	.menu-hint {
+		font-size: 0.68rem;
+		color: #6b7280;
 	}
 
-	.source-standard {
-		color: #6ee7b7;
-		border-color: #065f46;
-		background: #022c22;
-	}
-
-	.source-standard:hover {
-		background: #064e3b;
-		border-color: #10b981;
-	}
-
-	.source-smooth {
-		color: #fcd34d;
-		border-color: #92400e;
-		background: #1c1407;
-	}
-
-	.source-smooth:hover {
-		background: #292007;
-		border-color: #d97706;
-	}
-
-	.patch-control {
+	.patch-select {
 		display: flex;
 		align-items: center;
 		gap: 8px;
@@ -1064,30 +1104,31 @@
 		color: #6b7280;
 	}
 
-	.patch-btns {
-		display: flex;
-		gap: 2px;
-	}
-
-	.patch-btn {
+	.menu-select select,
+	.patch-select select {
 		all: unset;
 		cursor: pointer;
-		padding: 2px 7px;
-		border-radius: 3px;
-		font-size: 0.7rem;
+		padding: 3px 8px;
+		border-radius: 5px;
+		font-size: 0.75rem;
 		font-variant-numeric: tabular-nums;
-		color: #6b7280;
-		background: transparent;
-		border: 1px solid transparent;
-		transition: color 0.12s, background 0.12s;
+		color: #e8eaf0;
+		background: #0f1117;
+		border: 1px solid #2a2d3a;
 	}
 
-	.patch-btn:hover { color: #e8eaf0; }
+	.menu-select select:hover,
+	.patch-select select:hover { border-color: #3a3f52; }
+	.menu-select select:focus,
+	.patch-select select:focus { border-color: #6366f1; }
 
-	.patch-btn.active {
-		background: #6366f1;
-		color: #fff;
-		border-color: #6366f1;
+	.menu-select select,
+	.patch-select select {
+		appearance: none;
+		padding-right: 20px;
+		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6' viewBox='0 0 8 6'%3E%3Cpath fill='%236b7280' d='M0 0h8L4 6z'/%3E%3C/svg%3E");
+		background-repeat: no-repeat;
+		background-position: right 7px center;
 	}
 
 	.depth-nav {

@@ -101,10 +101,14 @@
 		previewTile ? refit?.tiles.find((t) => t.tile_loc === previewTile) ?? null : null
 	);
 	const previewHeSrc = $derived(
-		previewTile ? `/api/image?path=${encodeURIComponent(`data/cropped/${pairId}/d${depth}/${previewTile}/he.png`)}` : ''
+		previewTile
+			? `/api/live-crop/tile?pair=${pairId}&level=${depth}&x=${previewTile.split('_')[0]}&y=${previewTile.split('_')[1]}&side=he`
+			: ''
 	);
 	const previewIhcSrc = $derived(
-		previewTile ? `/api/image?path=${encodeURIComponent(`data/cropped/${pairId}/d${depth}/${previewTile}/ihc.png`)}` : ''
+		previewTile
+			? `/api/live-crop/tile?pair=${pairId}&level=${depth}&x=${previewTile.split('_')[0]}&y=${previewTile.split('_')[1]}&side=ihc`
+			: ''
 	);
 
 	function onSelect(tile: string | null) {

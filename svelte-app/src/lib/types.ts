@@ -6,8 +6,6 @@ export type ValidationStore = Record<string, PairValidation>;
 
 export interface TileMeta {
 	tile: string;
-	he: string;
-	ihc: string;
 }
 
 export interface PairStatus {
