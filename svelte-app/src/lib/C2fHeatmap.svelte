@@ -91,43 +91,43 @@
 			const [xi, yi] = t.tile_loc.split('_').map((n) => parseInt(n, 10));
 			// intensity 0..1: how strongly the cell asserts its state
 			const ratio = tau > 0 ? t.residual / tau : 0;
+			const isExcluded = t.annotated === 'exclude' || t.excluded;
+			// excluded tiles keep the residual-based green->red mapping (marked with an "E")
+			const asKept = isExcluded ? ratio <= 1 : t.kept;
 			let opacity: number;
 			let fill: string;
-			let stateLabel: string;
-			if (t.annotated === 'exclude' || t.excluded) {
-				// soft pastel grey: deliberately ignored tile
-				fill = '#a1a1aa';
-				opacity = 0.55;
-				stateLabel = 'excluded';
-			} else if (t.kept) {
+			if (asKept) {
 				// solid green for near-perfect agreement, fading toward tau
 				fill = '#22c55e';
 				opacity = 0.9 - 0.5 * Math.min(1, ratio);
-				stateLabel = 'kept';
 			} else {
 				// deeper red the further above tau
 				fill = '#ef4444';
 				opacity = 0.5 + 0.45 * Math.min(1, (ratio - 1) / 3);
-				stateLabel = 'rejected';
 			}
+			const stateLabel = isExcluded ? 'excluded' : asKept ? 'kept' : 'rejected';
 			const isSeed = seedSet.has(t.tile_loc);
-			const stroke =
-				t.annotated === 'correct' ? '#a5b4fc'
+			const stroke = isExcluded
+				? null
+				: t.annotated === 'correct' ? '#a5b4fc'
 				: t.annotated === 'approve' ? '#eab308'
-				: t.annotated === 'exclude' ? '#6b7280'
 				: isSeed ? '#e8eaf0'
 				: null;
-			const strokeWidth = t.annotated ? 2 : isSeed ? 1 : 0;
+			const strokeWidth = isExcluded ? 0 : t.annotated ? 2 : isSeed ? 1 : 0;
 			const strokeOpacity = t.annotated ? 1 : 0.5;
 			const isSelected = t.tile_loc === selected;
 			return {
 				x: xi * cell,
 				y: yi * cell,
+				cx: xi * cell + cell / 2,
+				cy: yi * cell + cell / 2,
 				fill,
 				opacity,
 				stroke,
 				strokeWidth,
 				strokeOpacity,
+				label: isExcluded ? 'E' : null,
+				fontSize: Math.min(cell * 0.55, 12),
 				title: `${t.tile_loc}  psr=${t.psr.toFixed(1)}  res=${t.residual.toExponential(2)}  ${stateLabel}`,
 				isSelected
 			};
@@ -165,6 +165,9 @@
 				stroke-opacity={c.isSelected ? 1 : c.strokeOpacity}
 			/>
 		{/if}
+		{#if c.label}
+			<text x={c.cx} y={c.cy} class="cell-label" font-size={c.fontSize}>{c.label}</text>
+		{/if}
 	{/each}
 </svg>
 
@@ -177,4 +180,11 @@
 		user-select: none;
 	}
 	.bg { fill: #0f1117; }
+	.cell-label {
+		fill: #0f1117;
+		font-weight: 700;
+		text-anchor: middle;
+		dominant-baseline: central;
+		pointer-events: none;
+	}
 </style>

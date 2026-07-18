@@ -17,7 +17,9 @@
 		onToggleEmphasis,
 		onApprove,
 		onExclude,
-		onClear
+		onClear,
+		onReload,
+		onComputed
 	}: {
 		pairId: number;
 		depth: number;
@@ -30,7 +32,27 @@
 		onApprove?: (tile: string, u: number, v: number) => void;
 		onExclude?: (tile: string) => void;
 		onClear?: (tile: string) => void;
+		onReload?: () => void;
+		onComputed?: () => void;
 	} = $props();
+
+	interface FieldSet {
+		id: string;
+		name: string;
+		saved_depth: number | null;
+		tau?: number;
+		n_human?: number;
+		updated: number;
+	}
+
+	let sets = $state<FieldSet[]>([]);
+	let activeSetId = $state<string | null>(null);
+	let selectedSetId = $state('');
+	let setBusy = $state(false);
+	let pendingSetId = $state<string | null>(null);
+
+	const activeSet = $derived(sets.find((s) => s.id === activeSetId) ?? null);
+	const pendingSet = $derived(sets.find((s) => s.id === pendingSetId) ?? null);
 
 	interface TileResult {
 		tile_loc: string;
@@ -84,9 +106,17 @@
 	let tauExp = $state(-4); // default tau = 1e-4
 	const tau = $derived(Math.pow(10, tauExp));
 
+	// z-score margin: tau derived server-side as median + z * 1.4826 * MAD
+	type TauMode = 'tau' | 'z';
+	let tauMode = $state<TauMode>('z');
+	const Z_MIN = 0.5;
+	const Z_MAX = 3.0;
+	let zVal = $state(1.96);
+
 	let open = $state(true);
 	let cached = $state<boolean | null>(null);
 	let refit = $state<RefitData | null>(null);
+	const effectiveTau = $derived(tauMode === 'z' ? refit?.tau ?? null : tau);
 	let job = $state<JobState | null>(null);
 	let saving = $state(false);
 	let savedAt = $state<number | null>(null);
@@ -130,6 +160,24 @@
 			/* ignore storage errors */ }
 	});
 
+	$effect(() => {
+		try {
+			const m = localStorage.getItem('mvrC2fTauMode');
+			if (m === 'tau' || m === 'z') tauMode = m;
+			const z = localStorage.getItem('mvrC2fZ');
+			if (z !== null && !Number.isNaN(Number(z))) zVal = Number(z);
+		} catch {
+			/* ignore storage errors */ }
+	});
+
+	$effect(() => {
+		try {
+			localStorage.setItem('mvrC2fTauMode', tauMode);
+			localStorage.setItem('mvrC2fZ', String(zVal));
+		} catch {
+			/* ignore storage errors */ }
+	});
+
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 	let tauDebounce: ReturnType<typeof setTimeout> | null = null;
 
@@ -142,7 +190,8 @@
 
 	async function runRefit() {
 		if (!cached) return;
-		const r = await fetch(`/api/c2f/refit?pair=${pairId}&depth=${depth}&tau=${tau}`);
+		const q = tauMode === 'z' ? `z=${zVal}` : `tau=${tau}`;
+		const r = await fetch(`/api/c2f/refit?pair=${pairId}&depth=${depth}&${q}`);
 		if (r.ok) refit = await r.json();
 	}
 
@@ -150,6 +199,18 @@
 		tauExp = (e.target as HTMLInputElement).valueAsNumber;
 		if (tauDebounce) clearTimeout(tauDebounce);
 		tauDebounce = setTimeout(runRefit, 300);
+	}
+
+	function onZInput(e: Event) {
+		zVal = (e.target as HTMLInputElement).valueAsNumber;
+		if (tauDebounce) clearTimeout(tauDebounce);
+		tauDebounce = setTimeout(runRefit, 300);
+	}
+
+	function setTauMode(mode: TauMode) {
+		if (tauMode === mode) return;
+		tauMode = mode;
+		runRefit();
 	}
 
 	async function startCompute() {
@@ -174,6 +235,7 @@
 				if (!job?.error) {
 					cached = true;
 					runRefit();
+					onComputed?.();
 				}
 			}
 		}, 1000);
@@ -182,15 +244,143 @@
 	async function saveField() {
 		saving = true;
 		try {
+			const body =
+				tauMode === 'z'
+					? { pair_id: pairId, depth, z: zVal }
+					: { pair_id: pairId, depth, tau };
 			const r = await fetch('/api/c2f/save-field', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ pair_id: pairId, depth, tau })
+				body: JSON.stringify(body)
 			});
 			if (r.ok) savedAt = Date.now();
 		} finally {
 			saving = false;
 		}
+	}
+
+	async function loadSets() {
+		try {
+			const r = await fetch(`/api/c2f/field-set?pair=${pairId}`);
+			if (!r.ok) return;
+			const data = await r.json();
+			sets = data.sets ?? [];
+			activeSetId = data.active ?? null;
+			selectedSetId = activeSetId ?? (sets[0]?.id ?? '');
+		} catch {
+			/* ignore */ }
+	}
+
+	async function postSet(bodyExtra: Record<string, unknown>): Promise<{ ok?: boolean } | null> {
+		setBusy = true;
+		try {
+			const r = await fetch('/api/c2f/field-set', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ pair_id: pairId, ...bodyExtra })
+			});
+			if (!r.ok) return null;
+			return await r.json();
+		} catch {
+			return null;
+		} finally {
+			setBusy = false;
+		}
+	}
+
+	async function reloadWorkspace() {
+		cached = null;
+		refit = null;
+		savedAt = null;
+		selectedTile = null;
+		await checkCache();
+		onReload?.();
+	}
+
+	async function saveSet() {
+		const active = sets.find((s) => s.id === activeSetId);
+		let name = active?.name;
+		const setId = active?.id;
+		if (!setId) {
+			const entered = prompt('Name this field set:');
+			if (!entered) return;
+			name = entered;
+		}
+		const res = await postSet({ action: 'save', set_id: setId, name });
+		if (res?.ok) await loadSets();
+	}
+
+	async function newSet() {
+		const entered = prompt('Name the new field set:', 'attempt');
+		if (!entered) { selectedSetId = activeSetId ?? ''; return; }
+		if (!confirm('Start a new field set? The active annotations and field for this pair will be cleared (existing saved sets are kept).')) {
+			selectedSetId = activeSetId ?? '';
+			return;
+		}
+		const res = await postSet({ action: 'new', name: entered });
+		if (res?.ok) { await loadSets(); await reloadWorkspace(); }
+		else selectedSetId = activeSetId ?? '';
+	}
+
+	function onSelectChange(e: Event) {
+		const id = (e.target as HTMLSelectElement).value;
+		if (id === '__new__') {
+			newSet();
+			return;
+		}
+		selectedSetId = id;
+		if (id && id !== activeSetId) pendingSetId = id;
+	}
+
+	function cancelLoad() {
+		pendingSetId = null;
+		selectedSetId = activeSetId ?? '';
+	}
+
+	$effect(() => {
+		if (!pendingSetId) return;
+		function onKey(e: KeyboardEvent) {
+			if (e.key === 'Escape') cancelLoad();
+		}
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	});
+
+	async function saveActive(): Promise<boolean> {
+		let name = activeSet?.name;
+		if (!name) {
+			const entered = prompt('Name the current field set before switching:');
+			if (!entered) return false;
+			name = entered;
+		}
+		const res = await postSet({ action: 'save', name });
+		return !!res?.ok;
+	}
+
+	async function confirmLoad(save: boolean) {
+		const target = pendingSetId;
+		pendingSetId = null;
+		if (!target) return;
+		if (save && !(await saveActive())) {
+			selectedSetId = activeSetId ?? '';
+			return;
+		}
+		const res = await postSet({ action: 'load', set_id: target });
+		if (res?.ok) {
+			await loadSets();
+			await reloadWorkspace();
+		} else {
+			selectedSetId = activeSetId ?? '';
+		}
+	}
+
+	async function renameSelectedSet() {
+		if (!selectedSetId) return;
+		const s = sets.find((x) => x.id === selectedSetId);
+		const entered = prompt('Rename field set:', s?.name ?? '');
+		if (!entered) return;
+		const res = await postSet({ action: 'rename', set_id: selectedSetId, name: entered });
+		if (res?.ok) await loadSets();
 	}
 
 	$effect(() => {
@@ -208,6 +398,7 @@
 		job = null;
 		savedAt = null;
 		selectedTile = null;
+		loadSets();
 		if (open) checkCache();
 	});
 
@@ -389,7 +580,7 @@
 		Coarse-to-fine field
 		{#if refit}
 			<span class="summary-inline">
-				· τ={tau.toExponential(1)} · {refit.kept} kept / {refit.rejected} rejected
+				· τ={refit.tau.toExponential(1)}{#if tauMode === 'z'} (z={zVal}){/if} · {refit.kept} kept / {refit.rejected} rejected
 				{#if refit.n_human}· {refit.n_human} human{/if}
 			</span>
 		{/if}
@@ -397,6 +588,38 @@
 
 	{#if open}
 		<div class="body">
+			<div class="set-bar">
+				<span class="set-label">Field set</span>
+				<select class="set-select" value={selectedSetId} onchange={onSelectChange} disabled={setBusy}>
+					{#if sets.length === 0}
+						<option value="">— none saved —</option>
+					{/if}
+					{#each sets as s (s.id)}
+						<option value={s.id}>
+							{s.name}{s.id === activeSetId ? ' ●' : ''}{s.saved_depth != null ? ` · L${s.saved_depth}` : ''}
+						</option>
+					{/each}
+					<option value="__new__">＋ New field set…</option>
+				</select>
+				<button class="set-btn set-btn-primary" onclick={saveSet} disabled={setBusy}>Save</button>
+				<button class="set-btn set-btn-ghost" onclick={renameSelectedSet} disabled={setBusy || !selectedSetId}>Rename</button>
+			</div>
+
+			{#if pendingSetId}
+				<div class="set-modal-backdrop">
+					<div class="set-modal" role="dialog" aria-modal="true">
+						<p class="set-modal-title">Load “{pendingSet?.name ?? pendingSetId}”</p>
+						<p class="set-modal-text">
+							Save changes to the current set{activeSet ? ` “${activeSet.name}”` : ''} before switching?
+						</p>
+						<div class="set-modal-actions">
+							<button class="set-btn set-btn-primary" onclick={() => confirmLoad(true)} disabled={setBusy}>Save & continue</button>
+							<button class="set-btn" onclick={() => confirmLoad(false)} disabled={setBusy}>Continue without saving</button>
+							<button class="set-btn set-btn-ghost" onclick={cancelLoad} disabled={setBusy}>Cancel</button>
+						</div>
+					</div>
+				</div>
+			{/if}
 			{#if cached === null}
 				<span class="loading">loading…</span>
 			{:else if !cached}
@@ -431,17 +654,49 @@
 						onselect={onSelect}
 					/>
 					<div class="controls">
-						<label class="tau-control">
-							<span class="tau-label">τ = {tau.toExponential(2)}</span>
-							<input
-								type="range"
-								min={EXP_MIN}
-								max={EXP_MAX}
-								step="0.05"
-								value={tauExp}
-								oninput={onTauInput}
-							/>
-						</label>
+						<div class="mode-group">
+							<span class="mode-label">Gate by</span>
+							<div class="mode-buttons">
+								<button
+									class="mode-btn"
+									class:active={tauMode === 'tau'}
+									onclick={() => setTauMode('tau')}
+								>τ</button>
+								<button
+									class="mode-btn"
+									class:active={tauMode === 'z'}
+									onclick={() => setTauMode('z')}
+								>z-score</button>
+							</div>
+						</div>
+						{#if tauMode === 'tau'}
+							<label class="tau-control">
+								<span class="tau-label">τ = {tau.toExponential(2)}</span>
+								<input
+									type="range"
+									min={EXP_MIN}
+									max={EXP_MAX}
+									step="0.05"
+									value={tauExp}
+									oninput={onTauInput}
+								/>
+							</label>
+						{:else}
+							<label class="tau-control">
+								<span class="tau-label">
+									z = {zVal.toFixed(2)}
+									<span class="tau-derived">τ = {effectiveTau != null ? effectiveTau.toExponential(2) : '…'}</span>
+								</span>
+								<input
+									type="range"
+									min={Z_MIN}
+									max={Z_MAX}
+									step="0.05"
+									value={zVal}
+									oninput={onZInput}
+								/>
+							</label>
+						{/if}
 						<div class="mode-group">
 							<span class="mode-label">Vector field</span>
 							<div class="mode-buttons">
@@ -622,6 +877,104 @@
 	.body { padding: 8px 14px 14px; }
 	.loading { font-size: 0.8rem; color: #6b7280; }
 
+	.set-bar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		padding-bottom: 10px;
+		margin-bottom: 10px;
+		border-bottom: 1px solid #2a2d3a;
+	}
+
+	.set-label {
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #6b7280;
+	}
+
+	.set-select {
+		all: unset;
+		cursor: pointer;
+		min-width: 180px;
+		padding: 4px 8px;
+		border-radius: 5px;
+		font-size: 0.75rem;
+		color: #e8eaf0;
+		background: #0f1117;
+		border: 1px solid #2a2d3a;
+	}
+	.set-select:hover { border-color: #3a3f52; }
+	.set-select:focus { border-color: #6366f1; }
+	.set-select:disabled { opacity: 0.5; cursor: default; }
+
+	.set-btn {
+		all: unset;
+		cursor: pointer;
+		font-size: 0.7rem;
+		font-weight: 600;
+		padding: 4px 9px;
+		border-radius: 5px;
+		border: 1px solid #4b5563;
+		color: #e8eaf0;
+		background: #1e2130;
+	}
+	.set-btn:hover { background: #2a2d3a; border-color: #6b7280; }
+	.set-btn:disabled { opacity: 0.4; cursor: default; }
+	.set-btn:disabled:hover { background: #1e2130; border-color: #4b5563; }
+
+	.set-btn-primary {
+		background: #6366f1;
+		border-color: #6366f1;
+		color: #fff;
+	}
+	.set-btn-primary:hover { background: #4f51c8; border-color: #4f51c8; }
+
+	.set-btn-ghost { color: #9ca3af; }
+
+	.set-modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(0, 0, 0, 0.55);
+	}
+
+	.set-modal {
+		min-width: 320px;
+		max-width: 420px;
+		padding: 18px;
+		border-radius: 10px;
+		background: #181b23;
+		border: 1px solid #2a2d3a;
+		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+	}
+
+	.set-modal-title {
+		font-size: 0.9rem;
+		font-weight: 700;
+		color: #e8eaf0;
+		margin-bottom: 6px;
+	}
+
+	.set-modal-text {
+		font-size: 0.78rem;
+		color: #9ca3af;
+		margin-bottom: 16px;
+		line-height: 1.4;
+	}
+
+	.set-modal-actions {
+		display: flex;
+		gap: 8px;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+
 	.controls-row { display: flex; align-items: center; gap: 12px; }
 
 	.top { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
@@ -638,6 +991,7 @@
 
 	.tau-control { display: flex; flex-direction: column; gap: 4px; }
 	.tau-label { font-size: 0.72rem; color: #9ca3af; font-variant-numeric: tabular-nums; }
+	.tau-derived { margin-left: 6px; color: #6b7280; }
 	.tau-control input[type='range'] { width: 100%; accent-color: #6366f1; cursor: pointer; }
 
 	.stat {

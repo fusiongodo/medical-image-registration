@@ -30,10 +30,14 @@ export const GET: RequestHandler = async ({ url }) => {
 	const pair  = url.searchParams.get('pair');
 	const depth = url.searchParams.get('depth');
 	const tau   = url.searchParams.get('tau');
-	if (!pair || !depth || !tau) error(400, 'Missing pair / depth / tau');
+	const z     = url.searchParams.get('z');
+	if (!pair || !depth || (!tau && !z)) error(400, 'Missing pair / depth / (tau or z)');
+
+	const args = [pair, depth, tau ?? '0'];
+	if (z) args.push('--z', z);
 
 	try {
-		const result = await runRefit([pair, depth, tau]);
+		const result = await runRefit(args);
 		return json(result);
 	} catch (e) {
 		error(500, `refit failed: ${(e as Error).message}`);

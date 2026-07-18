@@ -49,6 +49,12 @@
 		overlayEmphasis = overlayEmphasis === side ? null : side;
 	}
 
+	async function reloadAfterFieldSet() {
+		annotationVersion++;
+		autoDispRefreshKey++;
+		await invalidateAll();
+	}
+
 	$effect(() => {
 		if (!displayMenuOpen) return;
 		function onPointerDown(e: PointerEvent) {
@@ -411,89 +417,6 @@
 		return m;
 	});
 
-	const alignCommand = $derived(
-		data.depth === 3
-			? `python setup/auto-alignment/align.py ${data.pairId} ${data.depth}`
-			: `python setup/coarse_to_fine/run.py ${data.pairId} --cache-depth ${data.depth}`
-	);
-
-	let pollingActive = $state(false);
-	let pollingInterval: ReturnType<typeof setInterval> | null = null;
-
-	$effect(() => {
-		if (!pollingActive) {
-			if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
-			return;
-		}
-		pollingInterval = setInterval(() => { autoDispRefreshKey++; }, 2000);
-		return () => { if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; } };
-	});
-
-	// ── Alignment job (run from header) ──────────────────────────────────────
-	interface AlignJobState {
-		running: boolean;
-		step: string;
-		error: string | null;
-		finishedAt: number | null;
-	}
-	let alignJob = $state<AlignJobState | null>(null);
-	let alignJobLocked = $state(false);
-	let alignJobReason = $state<string | null>(null);
-
-	$effect(() => {
-		const pair = data.pairId, depth = data.depth;
-		let stale = false;
-		let lastFinishedAt: number | null = null;
-		function sameState(a: AlignJobState | null, b: AlignJobState | null): boolean {
-			if (a === b) return true;
-			if (!a || !b) return false;
-			return a.running === b.running && a.step === b.step && a.error === b.error && a.finishedAt === b.finishedAt;
-		}
-		function poll() {
-			fetch(`/api/run-alignment?pair=${pair}&depth=${depth}`)
-				.then((r) => r.json())
-				.then((d: { state: AlignJobState | null; locked: boolean; reason: string | null }) => {
-					if (stale) return;
-					alignJobLocked = d.locked;
-					alignJobReason = d.reason;
-
-					if (!sameState(alignJob, d.state)) {
-						alignJob = d.state;
-					}
-
-					const finishedAt = d.state?.finishedAt ?? null;
-					if (finishedAt !== null && finishedAt !== lastFinishedAt) {
-						lastFinishedAt = finishedAt;
-						autoDispRefreshKey++;
-					}
-				});
-		}
-		poll();
-		const interval = setInterval(poll, 2000);
-		return () => {
-			stale = true;
-			clearInterval(interval);
-			alignJob = null;
-			alignJobLocked = false;
-			alignJobReason = null;
-		};
-	});
-
-	async function runAlignment() {
-		const res = await fetch('/api/run-alignment', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ pair_id: data.pairId, depth: data.depth })
-		});
-		const d = await res.json();
-		if (d.locked) {
-			alignJobLocked = true;
-			alignJobReason = d.reason;
-		} else {
-			alignJob = d.state ?? null;
-		}
-	}
-
 	const levelCorrelation = null as { r: number; n: number } | null; /* disabled
 	$derived.by(() => {
 		const xs: number[] = [];
@@ -576,7 +499,7 @@
 <div class="scrollable">
 
 <LnccDistributionPanel pairId={data.pairId} depth={data.depth} {patchSize} refreshKey={autoDispRefreshKey} />
-<C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} seed={seedLocs} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} />
+<C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} seed={seedLocs} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} onReload={reloadAfterFieldSet} onComputed={() => { autoDispRefreshKey++; }} />
 
 <div class="viewer">
 	<header>
@@ -647,53 +570,6 @@
 				{/each}
 			</select>
 		</label>
-
-		<div class="auto-disp-controls">
-			<div class="auto-disp-control">
-				{#if alignJob?.running}
-					<span class="auto-disp-badge running-badge" title={alignJob.step}>
-						⏳ {alignJob.step}
-					</span>
-				{:else if alignJob?.error}
-					<span class="auto-disp-badge error-badge" title={alignJob.error}>
-						✗ failed
-					</span>
-				{:else if autoDisps.size === 0}
-					<span class="auto-disp-badge pending-badge">FFT alignment not computed</span>
-				{:else}
-					<span class="auto-disp-badge" class:done-badge={autoDisps.size === data.tiles.length}>
-						{autoDisps.size} / {data.tiles.length}{autoDisps.size === data.tiles.length ? ' ✓' : ''}
-					</span>
-				{/if}
-
-				<button
-					class="btn btn-auto"
-					onclick={runAlignment}
-					disabled={alignJobLocked || alignJob?.running || autoDisps.size === data.tiles.length}
-					title={alignJobReason ?? 'Run FFT alignment for this level'}
-				>
-					{alignJob?.running ? 'Running…' : '▶ Run alignment'}
-				</button>
-
-				{#if alignJobLocked}
-					<span class="refine-lock-hint">{alignJobReason}</span>
-				{/if}
-			</div>
-
-			{#if autoDisps.size > 0}
-				<div class="auto-disp-control">
-					<code class="align-cmd">{alignCommand}</code>
-					<button class="btn btn-ghost btn-sm" onclick={() => navigator.clipboard.writeText(alignCommand)} title="Copy top-5 command">⎘</button>
-					<button class="btn btn-auto" onclick={() => { autoDispRefreshKey++; }}>↺ Refresh</button>
-					<button
-						class="btn btn-auto"
-						class:btn-polling={pollingActive}
-						onclick={() => { pollingActive = !pollingActive; if (pollingActive) autoDispRefreshKey++; }}>
-						{pollingActive ? '⏹ Stop' : '⟳ Watch'}
-					</button>
-				</div>
-			{/if}
-		</div>
 
 		<div class="depth-nav">
 			{#each Array.from({ length: MAX_DEPTH + 1 }, (_, i) => i) as d}
@@ -1384,16 +1260,6 @@
 		accent-color: #6b7280;
 	}
 
-	.refine-lock-hint {
-		font-size: 0.7rem;
-		color: #f87171;
-		background: #2a0e0e;
-		border: 1px solid #991b1b;
-		border-radius: 4px;
-		padding: 2px 6px;
-		white-space: nowrap;
-	}
-
 	.refine-disabled {
 		color: #4b5563;
 		cursor: help;
@@ -1505,89 +1371,6 @@
 	.btn-fail {
 		background: #7f1d1d;
 		color: #fecaca;
-	}
-
-	.auto-disp-controls {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		flex-shrink: 0;
-	}
-
-	.auto-disp-control {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-
-	.auto-disp-badge {
-		font-size: 0.75rem;
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
-		color: #a5b4fc;
-		background: #1e2130;
-		border: 1px solid #4338ca;
-		border-radius: 6px;
-		padding: 4px 10px;
-	}
-
-	.done-badge {
-		color: #86efac;
-		background: #0d2218;
-		border-color: #15803d;
-	}
-
-	.running-badge {
-		color: #fcd34d;
-		background: #1c1407;
-		border-color: #d97706;
-	}
-
-	.error-badge {
-		color: #f87171;
-		background: #2a0e0e;
-		border-color: #991b1b;
-		cursor: help;
-	}
-
-	.pending-badge {
-		color: #9ca3af;
-		background: #1a1d27;
-		border-color: #4b5563;
-	}
-
-	.btn-polling {
-		border-color: #d97706;
-		color: #fcd34d;
-		background: #1c1407;
-	}
-
-	.align-cmd {
-		font-family: ui-monospace, monospace;
-		font-size: 0.7rem;
-		color: #93c5fd;
-		background: #0d1a2e;
-		border: 1px solid #1d4ed8;
-		border-radius: 5px;
-		padding: 4px 8px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		max-width: 340px;
-	}
-
-	.btn-sm {
-		padding: 4px 8px;
-		font-size: 0.8rem;
-	}
-
-	.btn-auto {
-		background: #1e3a5f;
-		color: #93c5fd;
-		border: 1px solid #1d4ed8;
-		padding: 6px 14px;
-		font-size: 0.78rem;
-		font-variant-numeric: tabular-nums;
 	}
 
 	.btn-ghost {

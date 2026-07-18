@@ -28,18 +28,28 @@ function runSave(args: string[]): Promise<unknown> {
 
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
+	const hasZ = body && typeof body.z === 'number';
 	if (
 		!body ||
 		typeof body.pair_id !== 'number' ||
 		typeof body.depth !== 'number' ||
-		typeof body.tau !== 'number'
+		(typeof body.tau !== 'number' && !hasZ)
 	) {
-		error(400, 'Expected { pair_id: number, depth: number, tau: number }');
+		error(400, 'Expected { pair_id: number, depth: number, tau?: number, z?: number }');
 	}
 
-	const { pair_id, depth, tau } = body as { pair_id: number; depth: number; tau: number };
+	const { pair_id, depth, tau, z } = body as {
+		pair_id: number;
+		depth: number;
+		tau?: number;
+		z?: number;
+	};
+
+	const args = [String(pair_id), String(depth), String(tau ?? 0), '--save'];
+	if (hasZ) args.push('--z', String(z));
+
 	try {
-		const result = await runSave([String(pair_id), String(depth), String(tau), '--save']);
+		const result = await runSave(args);
 		return json(result);
 	} catch (e) {
 		error(500, `save failed: ${(e as Error).message}`);

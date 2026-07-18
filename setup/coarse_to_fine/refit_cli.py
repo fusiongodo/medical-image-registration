@@ -35,6 +35,7 @@ from setup.coarse_to_fine.field import (
     fit_field,
     fit_gated,
     residuals,
+    tau_for_z,
     write_field_json,
 )
 from setup.coarse_to_fine.run import _level_candidates
@@ -82,7 +83,7 @@ def _compute_prior_field(
     return field
 
 
-def refit(pair_id: int, depth: int, tau: float, save: bool) -> dict:
+def refit(pair_id: int, depth: int, tau: float, save: bool, z: float | None = None) -> dict:
     cache_path = CACHE_DIR / f"{pair_id}_d{depth}.json"
     if not cache_path.exists():
         return {"error": f"no cached candidates for pair {pair_id} depth {depth}"}
@@ -103,13 +104,16 @@ def refit(pair_id: int, depth: int, tau: float, save: bool) -> dict:
 
     if not candidates and not human_anchors:
         return {
-            "tau": tau, "kept": 0, "rejected": 0, "n_human": 0,
+            "tau": tau, "z": z, "kept": 0, "rejected": 0, "n_human": 0,
             "mean_residual": 0.0, "tiles": [],
         }
 
+    fit_candidates = [c for c in candidates if c.tile_loc not in excluded_locs]
+    if z is not None:
+        tau = tau_for_z(human_anchors, fit_candidates, z)
+
     prior_field = _compute_prior_field(pair_id, depth, tau, levels)
 
-    fit_candidates = [c for c in candidates if c.tile_loc not in excluded_locs]
     field, _ = fit_gated(human_anchors, fit_candidates, tau)
     devs = residuals(candidates, field)
 
@@ -138,6 +142,7 @@ def refit(pair_id: int, depth: int, tau: float, save: bool) -> dict:
     n_excluded = sum(1 for t in tiles if t["excluded"])
     result = {
         "tau": tau,
+        "z": z,
         "kept": n_kept,
         "rejected": len(tiles) - n_kept - n_excluded,
         "excluded": n_excluded,
@@ -150,6 +155,7 @@ def refit(pair_id: int, depth: int, tau: float, save: bool) -> dict:
         meta = {
             "levels": levels,
             "tau": tau,
+            "z": z,
             "saved_depth": depth,
             "n_kept": n_kept,
             "n_seen": len(tiles),
@@ -165,10 +171,17 @@ def main() -> None:
     argv = sys.argv[1:]
     save = "--save" in argv
     argv = [a for a in argv if a != "--save"]
+
+    z: float | None = None
+    if "--z" in argv:
+        i = argv.index("--z")
+        z = float(argv[i + 1])
+        argv = argv[:i] + argv[i + 2:]
+
     if len(argv) < 3:
-        sys.exit("Usage: refit_cli.py <pair_id> <depth> <tau> [--save]")
+        sys.exit("Usage: refit_cli.py <pair_id> <depth> <tau> [--z <z>] [--save]")
     pair_id, depth, tau = int(argv[0]), int(argv[1]), float(argv[2])
-    print(json.dumps(refit(pair_id, depth, tau, save), separators=(",", ":")))
+    print(json.dumps(refit(pair_id, depth, tau, save, z), separators=(",", ":")))
 
 
 if __name__ == "__main__":
