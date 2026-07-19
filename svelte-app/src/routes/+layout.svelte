@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { deriveStatus, nextDepthForPair, NUM_PAIRS, type ValidationStore } from '$lib/types';
+	import { deriveStatus, nextDepthForPair, type ValidationStore } from '$lib/types';
 
 	type Rating = 'bad' | 'ok' | 'good';
 
 	let { data, children } = $props<{
-		data: { validation: ValidationStore; fieldComplete: number[]; ratings: Record<number, Rating> };
+		data: { validation: ValidationStore; numPairs: number; fieldComplete: number[]; ratings: Record<number, Rating> };
 		children: any;
 	}>();
 
-	const pairs = Array.from({ length: NUM_PAIRS }, (_, i) => i);
+	const pairs = $derived(Array.from({ length: data.numPairs }, (_, i) => i));
 	const fieldComplete = $derived(new Set(data.fieldComplete));
 
 	function pairRating(pairId: number): Rating | null {

@@ -19,7 +19,8 @@
 		onExclude,
 		onClear,
 		onReload,
-		onComputed
+		onComputed,
+		onFlash
 	}: {
 		pairId: number;
 		depth: number;
@@ -34,6 +35,7 @@
 		onClear?: (tile: string) => void;
 		onReload?: () => void;
 		onComputed?: () => void;
+		onFlash?: (msg: string, kind?: 'ok' | 'warn' | 'err') => void;
 	} = $props();
 
 	type Rating = 'bad' | 'ok' | 'good';
@@ -125,6 +127,7 @@
 	let open = $state(true);
 	let cached = $state<boolean | null>(null);
 	let refit = $state<RefitData | null>(null);
+	let refitError = $state<string | null>(null);
 	const effectiveTau = $derived(tauMode === 'keep' ? refit?.tau ?? null : tau);
 	let job = $state<JobState | null>(null);
 	let saving = $state(false);
@@ -204,17 +207,37 @@
 	let tauDebounce: ReturnType<typeof setTimeout> | null = null;
 
 	async function checkCache() {
-		const r = await fetch(`/api/c2f/candidates?pair=${pairId}&depth=${depth}`);
-		const data = await r.json();
-		cached = data.cached === true;
-		if (cached) runRefit();
+		const p = pairId, d = depth;
+		refitError = null;
+		try {
+			const r = await fetch(`/api/c2f/candidates?pair=${p}&depth=${d}`);
+			if (p !== pairId || d !== depth) return; // navigated away mid-flight
+			const data = await r.json();
+			cached = data.cached === true;
+			if (cached) runRefit();
+		} catch (err) {
+			if (p !== pairId || d !== depth) return;
+			refitError = err instanceof Error ? err.message : 'failed to check candidates';
+		}
 	}
 
 	async function runRefit() {
 		if (!cached) return;
+		const p = pairId, d = depth;
+		refitError = null;
 		const q = tauMode === 'keep' ? `keep=${keepFraction}` : `tau=${tau}`;
-		const r = await fetch(`/api/c2f/refit?pair=${pairId}&depth=${depth}&${q}`);
-		if (r.ok) refit = await r.json();
+		try {
+			const r = await fetch(`/api/c2f/refit?pair=${p}&depth=${d}&${q}`);
+			if (p !== pairId || d !== depth) return; // stale response for a prior pair/depth
+			if (r.ok) {
+				refit = await r.json();
+			} else {
+				refitError = (await r.text().catch(() => '')) || `refit failed (${r.status})`;
+			}
+		} catch (err) {
+			if (p !== pairId || d !== depth) return;
+			refitError = err instanceof Error ? err.message : 'refit request failed';
+		}
 	}
 
 	function onTauInput(e: Event) {
@@ -430,6 +453,7 @@
 		void pairId; void depth;
 		cached = null;
 		refit = null;
+		refitError = null;
 		job = null;
 		savedAt = null;
 		selectedTile = null;
@@ -557,24 +581,30 @@
 			if (!e.shiftKey) return;
 			const target = e.target as HTMLElement | null;
 			if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+			const key = e.key.toLowerCase();
+			if (key !== 'a' && key !== 'x' && key !== 's') return;
+			e.preventDefault();
+
 			const tile = previewTile;
+			if (!tile) {
+				onFlash?.('Hover or select a tile first', 'warn');
+				return;
+			}
 			const result = previewResult;
-			if (!tile || !result) return;
-			if (e.key === 'A' || e.key === 'a') {
-				if (!result.annotated) {
-					e.preventDefault();
-					onApprove?.(tile, result.ux, result.uy);
-				}
-			} else if (e.key === 'X' || e.key === 'x') {
-				if (!result.annotated) {
-					e.preventDefault();
-					onExclude?.(tile);
-				}
-			} else if (e.key === 'S' || e.key === 's') {
-				if (result.annotated) {
-					e.preventDefault();
-					onClear?.(tile);
-				}
+			if (!result) {
+				onFlash?.(`No candidate for ${tile} — recompute candidates`, 'warn');
+				return;
+			}
+
+			if (key === 'a') {
+				if (result.annotated) onFlash?.(`${tile} already voted — Shift+S to clear`, 'warn');
+				else onApprove?.(tile, result.ux, result.uy);
+			} else if (key === 'x') {
+				if (result.annotated) onFlash?.(`${tile} already voted — Shift+S to clear`, 'warn');
+				else onExclude?.(tile);
+			} else {
+				if (result.annotated) onClear?.(tile);
+				else onFlash?.(`${tile} has no vote to clear`, 'warn');
 			}
 		}
 		window.addEventListener('keydown', onKeyDown);
@@ -660,6 +690,12 @@
 						<button class="compute-btn" onclick={startCompute}>Compute candidates</button>
 					{/if}
 					{#if job?.error}<span class="err">{job.error}</span>{/if}
+				</div>
+			{:else if refitError}
+				<div class="controls-row">
+					<span class="err">Fit failed: {refitError}</span>
+					<button class="compute-btn" onclick={() => runRefit()}>Retry fit</button>
+					<button class="compute-btn" onclick={() => startCompute()}>Recompute candidates</button>
 				</div>
 			{:else if refit === null}
 				<span class="loading">fitting…</span>

@@ -17,7 +17,6 @@ export interface PairStatus {
 }
 
 export const MAX_DEPTH = 5;
-export const NUM_PAIRS = 24;
 
 export function deriveStatus(validation: ValidationStore, pairId: number): PairStatus {
 	const pv = validation[String(pairId)];

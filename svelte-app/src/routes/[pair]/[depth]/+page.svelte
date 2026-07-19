@@ -125,6 +125,22 @@
 	let annotationVersion = $state(0);
 	let busyTile = $state<string | null>(null);
 
+	// Transient user feedback so refine actions are never silent no-ops.
+	let flash = $state<{ msg: string; kind: 'ok' | 'warn' | 'err' } | null>(null);
+	let flashTimer: ReturnType<typeof setTimeout> | null = null;
+	function showFlash(msg: string, kind: 'ok' | 'warn' | 'err' = 'ok') {
+		flash = { msg, kind };
+		if (flashTimer) clearTimeout(flashTimer);
+		flashTimer = setTimeout(() => { flash = null; }, 2600);
+	}
+
+	const ACTION_LABEL: Record<string, string> = {
+		approve: 'Approved',
+		correct: 'Corrected',
+		exclude: 'Excluded',
+		clear: 'Cleared'
+	};
+
 	interface C2fCandidate { u: number; v: number; psr: number; delta_px?: number; by_patch?: Record<string, PatchEntry>; }
 	let c2fCandidates = $state<Map<string, C2fCandidate>>(new Map());
 
@@ -400,12 +416,20 @@
 				payload.u = u;
 				payload.v = v;
 			}
-			await fetch('/api/c2f/annotate', {
+			const res = await fetch('/api/c2f/annotate', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload)
 			});
+			if (!res.ok) {
+				const detail = await res.text().catch(() => '');
+				showFlash(`${action} failed for ${tile}${detail ? `: ${detail.slice(0, 120)}` : ''}`, 'err');
+				return;
+			}
 			annotationVersion++;
+			showFlash(`${ACTION_LABEL[action]} ${tile}`, 'ok');
+		} catch (e) {
+			showFlash(`${action} failed for ${tile}: ${(e as Error).message}`, 'err');
 		} finally {
 			busyTile = null;
 		}
@@ -413,7 +437,10 @@
 
 	function approveTile(tile: string) {
 		const c = c2fCandidates.get(tile);
-		if (!c) return;
+		if (!c) {
+			showFlash(`No FFT candidate for ${tile} — compute candidates first`, 'warn');
+			return;
+		}
 		postAnnotate(tile, 'approve', c.u, c.v);
 	}
 
@@ -423,7 +450,10 @@
 
 	function correctTile(tile: string) {
 		const ann = annotations[tile];
-		if (!ann || ann.hePoints.length < 1 || ann.ihcPoints.length < 1) return;
+		if (!ann || ann.hePoints.length < 1 || ann.ihcPoints.length < 1) {
+			showFlash(`Place a landmark on HE and its match on IHC to correct ${tile}`, 'warn');
+			return;
+		}
 		const he = ann.hePoints[ann.hePoints.length - 1];
 		const ihc = ann.ihcPoints[ann.ihcPoints.length - 1];
 		const base = tileBase(tile);
@@ -614,7 +644,11 @@
 <div class="scrollable">
 
 <LnccDistributionPanel pairId={data.pairId} depth={data.depth} {patchSize} refreshKey={autoDispRefreshKey} />
-<C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} seed={seedLocs} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} onReload={reloadAfterFieldSet} onComputed={() => { autoDispRefreshKey++; }} />
+<C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} seed={seedLocs} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} onReload={reloadAfterFieldSet} onComputed={() => { autoDispRefreshKey++; }} onFlash={showFlash} />
+
+{#if flash}
+	<div class="flash flash-{flash.kind}" role="status">{flash.msg}</div>
+{/if}
 
 <div class="viewer">
 	<header>
@@ -1360,6 +1394,25 @@
 	.factor-cell.cm-live {
 		font-style: italic;
 	}
+
+	.flash {
+		position: fixed;
+		bottom: 20px;
+		right: 20px;
+		z-index: 1000;
+		max-width: 380px;
+		padding: 10px 14px;
+		border-radius: 8px;
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: #f8fafc;
+		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+	}
+
+	.flash-ok { background: #166534; }
+	.flash-warn { background: #92400e; }
+	.flash-err { background: #991b1b; }
 
 	.factor-cell {
 		height: 180px;

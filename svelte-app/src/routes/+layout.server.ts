@@ -1,6 +1,7 @@
 import type { LayoutServerLoad } from './$types';
 import type { ValidationStore } from '$lib/types';
-import { MAX_DEPTH, NUM_PAIRS } from '$lib/types';
+import { MAX_DEPTH } from '$lib/types';
+import { pairCount } from '$lib/server/pairs';
 import { readFileSync, existsSync } from 'fs';
 import { resolve, join } from 'path';
 
@@ -12,16 +13,21 @@ const FIELD_SETS_DIR  = join(DATA_ROOT, 'field_sets');
 
 type Rating = 'bad' | 'ok' | 'good';
 
-/** Rating of each pair's pinned main field set (only for pairs that have one). */
-function pairRatings(): Record<number, Rating> {
+/**
+ * Rating surfaced in the sidebar for each pair. Prefers the pinned "main" set,
+ * but falls back to the active set so that rating a set is visible immediately
+ * without also having to pin it as main.
+ */
+function pairRatings(n: number): Record<number, Rating> {
 	const out: Record<number, Rating> = {};
-	for (let pair = 0; pair < NUM_PAIRS; pair++) {
+	for (let pair = 0; pair < n; pair++) {
 		const activePath = join(FIELD_SETS_DIR, String(pair), 'active.json');
 		if (!existsSync(activePath)) continue;
 		try {
-			const mainId = JSON.parse(readFileSync(activePath, 'utf-8')).main_set_id;
-			if (!mainId) continue;
-			const manifestPath = join(FIELD_SETS_DIR, String(pair), mainId, 'manifest.json');
+			const active = JSON.parse(readFileSync(activePath, 'utf-8'));
+			const setId = active.main_set_id ?? active.set_id;
+			if (!setId) continue;
+			const manifestPath = join(FIELD_SETS_DIR, String(pair), setId, 'manifest.json');
 			if (!existsSync(manifestPath)) continue;
 			const rating = JSON.parse(readFileSync(manifestPath, 'utf-8')).rating;
 			if (rating === 'bad' || rating === 'ok' || rating === 'good') out[pair] = rating;
@@ -33,9 +39,9 @@ function pairRatings(): Record<number, Rating> {
 }
 
 /** Pairs whose smooth field was saved at the deepest level (registration complete). */
-function fieldCompletePairs(): number[] {
+function fieldCompletePairs(n: number): number[] {
 	const out: number[] = [];
-	for (let pair = 0; pair < NUM_PAIRS; pair++) {
+	for (let pair = 0; pair < n; pair++) {
 		const fieldPath = join(SMOOTH_DIR, `${pair}_smooth_field.json`);
 		if (!existsSync(fieldPath)) continue;
 
@@ -67,5 +73,11 @@ export const load: LayoutServerLoad = () => {
 			validation = {};
 		}
 	}
-	return { validation, fieldComplete: fieldCompletePairs(), ratings: pairRatings() };
+	const numPairs = pairCount();
+	return {
+		validation,
+		numPairs,
+		fieldComplete: fieldCompletePairs(numPairs),
+		ratings: pairRatings(numPairs)
+	};
 };

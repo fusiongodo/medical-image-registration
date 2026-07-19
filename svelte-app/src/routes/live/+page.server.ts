@@ -1,6 +1,7 @@
 import type { PageServerLoad } from './$types';
-import { NUM_PAIRS, MAX_DEPTH } from '$lib/types';
+import { MAX_DEPTH } from '$lib/types';
+import { pairCount } from '$lib/server/pairs';
 
 export const load: PageServerLoad = () => {
-	return { numPairs: NUM_PAIRS, maxDepth: MAX_DEPTH };
+	return { numPairs: pairCount(), maxDepth: MAX_DEPTH };
 };

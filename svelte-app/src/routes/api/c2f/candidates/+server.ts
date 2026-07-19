@@ -4,6 +4,7 @@ import { resolve, join } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import type { RequestHandler } from './$types';
 import { jobs, jobKey, type JobState } from '$lib/c2fJobs';
+import { pairCount } from '$lib/server/pairs';
 
 const REPO_ROOT = resolve('..'); // svelte-app sits one level below repo root
 const PYTHON    = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
@@ -33,6 +34,9 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 
 	const { pair_id, depth } = body as { pair_id: number; depth: number };
+	if (pair_id < 0 || pair_id >= pairCount()) {
+		error(400, `Pair ${pair_id} does not exist (valid range 0..${pairCount() - 1})`);
+	}
 	const key = jobKey(pair_id, depth);
 
 	const existing = jobs.get(key);
@@ -46,6 +50,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	const child = spawn(PYTHON, [SCRIPT, String(pair_id), '--cache-depth', String(depth)], { cwd: REPO_ROOT });
 
 	let stdout = '';
+	let stderr = '';
 	child.stdout.on('data', (chunk: Buffer) => {
 		stdout += chunk.toString();
 		for (const line of stdout.split('\n')) {
@@ -56,11 +61,17 @@ export const POST: RequestHandler = async ({ request }) => {
 			}
 		}
 	});
+	child.stderr.on('data', (chunk: Buffer) => {
+		stderr += chunk.toString();
+	});
 
 	child.on('close', (code) => {
 		state.running = false;
 		state.finishedAt = Date.now();
-		if (code !== 0) state.error = `Process exited with code ${code}`;
+		if (code !== 0) {
+			const lastLine = stderr.trim().split('\n').filter(Boolean).pop();
+			state.error = lastLine || `Process exited with code ${code}`;
+		}
 		jobs.set(key, { ...state });
 	});
 

@@ -28,6 +28,7 @@ from dataclasses import dataclass, field as dc_field
 from pathlib import Path
 
 import numpy as np
+from numpy.linalg import LinAlgError
 from scipy.interpolate import RBFInterpolator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -87,8 +88,10 @@ def candidate_from_dict(level: int, d: dict) -> Candidate:
 @dataclass
 class Field:
     """A fitted (or degenerate) translation field over normalised [0,1]^2 space."""
-    kind: str = "identity"                       # "identity" | "constant" | "rbf"
+    kind: str = "identity"                       # "identity" | "constant" | "affine" | "rbf"
     const: tuple[float, float] = (0.0, 0.0)      # normalised (du, dv) for "constant"
+    # per-component coefficients (a0, a1, a2) so that d = a0 + a1*x + a2*y (for "affine")
+    affine: tuple[tuple[float, float, float], tuple[float, float, float]] | None = dc_field(default=None)
     rbf_dx: object = dc_field(default=None)
     rbf_dy: object = dc_field(default=None)
 
@@ -99,6 +102,10 @@ class Field:
             return np.zeros((len(pts), 2))
         if self.kind == "constant":
             return np.tile(np.asarray(self.const, dtype=float), (len(pts), 1))
+        if self.kind == "affine" and self.affine is not None:
+            (au, bu, cu), (av, bv, cv) = self.affine
+            x, y = pts[:, 0], pts[:, 1]
+            return np.stack([au + bu * x + cu * y, av + bv * x + cv * y], axis=1)
         return np.stack([self.rbf_dx(pts), self.rbf_dy(pts)], axis=1)
 
     def predict_tile_px(self, depth: int) -> dict[str, dict[str, float]]:
@@ -130,12 +137,28 @@ def psr_to_conf(psr: float) -> float:
     return p / (p + PSR_CONF_K)
 
 
+def _fit_affine(pts: np.ndarray, du: np.ndarray, dv: np.ndarray, w: np.ndarray) -> Field:
+    """
+    Weighted least-squares affine field (d = a0 + a1*x + a2*y per component).
+    Used when the anchor points are collinear/coincident, where a thin-plate
+    spline is singular. lstsq returns the minimum-norm solution, so this degrades
+    gracefully to a constant for coincident points while preserving the
+    along-line gradient for collinear ones.
+    """
+    sw = np.sqrt(w)
+    design = np.column_stack([np.ones(len(pts)), pts[:, 0], pts[:, 1]]) * sw[:, None]
+    cu, *_ = np.linalg.lstsq(design, du * sw, rcond=None)
+    cv, *_ = np.linalg.lstsq(design, dv * sw, rcond=None)
+    return Field(kind="affine", affine=(tuple(map(float, cu)), tuple(map(float, cv))))
+
+
 def fit_field(anchors: list[Anchor], base_smoothing: float = BASE_SMOOTHING) -> Field:
     """
     Fit a weighted thin-plate-spline field from normalised-space anchors.
-      0 anchors           -> identity field (zero displacement)
-      1-2 anchors         -> constant field (weighted-mean displacement)
-      >=3 anchors         -> thin-plate-spline RBF (per-point smoothing = base / weight)
+      0 anchors            -> identity field (zero displacement)
+      1-2 anchors          -> constant field (weighted-mean displacement)
+      >=3 collinear anchors -> affine field (TPS is singular for rank-deficient points)
+      >=3 anchors          -> thin-plate-spline RBF (per-point smoothing = base / weight)
     """
     if not anchors:
         return Field(kind="identity")
@@ -150,9 +173,17 @@ def fit_field(anchors: list[Anchor], base_smoothing: float = BASE_SMOOTHING) -> 
         cv = float(np.average(dv, weights=w))
         return Field(kind="constant", const=(cu, cv))
 
+    # The thin-plate spline needs the [1, x, y] monomial matrix at full rank;
+    # collinear/coincident anchors make it singular, so fall back to an affine fit.
+    if np.linalg.matrix_rank(pts - pts.mean(axis=0)) < 2:
+        return _fit_affine(pts, du, dv, w)
+
     smoothing = base_smoothing / w
-    rbf_dx = RBFInterpolator(pts, du, kernel="thin_plate_spline", smoothing=smoothing)
-    rbf_dy = RBFInterpolator(pts, dv, kernel="thin_plate_spline", smoothing=smoothing)
+    try:
+        rbf_dx = RBFInterpolator(pts, du, kernel="thin_plate_spline", smoothing=smoothing)
+        rbf_dy = RBFInterpolator(pts, dv, kernel="thin_plate_spline", smoothing=smoothing)
+    except LinAlgError:
+        return _fit_affine(pts, du, dv, w)
     return Field(kind="rbf", rbf_dx=rbf_dx, rbf_dy=rbf_dy)
 
 
