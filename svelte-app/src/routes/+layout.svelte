@@ -2,13 +2,19 @@
 	import { page } from '$app/stores';
 	import { deriveStatus, nextDepthForPair, NUM_PAIRS, type ValidationStore } from '$lib/types';
 
+	type Rating = 'bad' | 'ok' | 'good';
+
 	let { data, children } = $props<{
-		data: { validation: ValidationStore; fieldComplete: number[] };
+		data: { validation: ValidationStore; fieldComplete: number[]; ratings: Record<number, Rating> };
 		children: any;
 	}>();
 
 	const pairs = Array.from({ length: NUM_PAIRS }, (_, i) => i);
 	const fieldComplete = $derived(new Set(data.fieldComplete));
+
+	function pairRating(pairId: number): Rating | null {
+		return data.ratings?.[pairId] ?? null;
+	}
 
 	function statusIcon(pairId: number) {
 		if (fieldComplete.has(pairId)) return '✓';
@@ -85,7 +91,11 @@
 				<li class:active={isActive(pairId)}>
 					<a href={pairHref(pairId)}>
 						<span class="label">Pair {pairId}</span>
-						<span class="icon {statusClass(pairId)}">{statusIcon(pairId)}</span>
+						{#if pairRating(pairId)}
+							<span class="rating-dot {pairRating(pairId)}" title={`Main field set rated ${pairRating(pairId)}`}></span>
+						{:else}
+							<span class="icon {statusClass(pairId)}">{statusIcon(pairId)}</span>
+						{/if}
 					</a>
 				</li>
 			{/each}
@@ -258,6 +268,16 @@
 	.icon.pass { color: #22c55e; }
 	.icon.fail { color: #ef4444; }
 	.icon.progress { color: #f59e0b; }
+
+	.rating-dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.rating-dot.bad { background: #ef4444; }
+	.rating-dot.ok { background: #f59e0b; }
+	.rating-dot.good { background: #22c55e; }
 
 	main {
 		flex: 1;

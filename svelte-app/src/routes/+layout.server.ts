@@ -8,6 +8,29 @@ const DATA_ROOT       = resolve('..', 'data');
 const VALIDATION_PATH = join(DATA_ROOT, 'quadtree_level_validation.json');
 const SMOOTH_DIR      = join(DATA_ROOT, 'smooth_c2f');
 const CACHE_DIR       = join(DATA_ROOT, 'c2f_cache');
+const FIELD_SETS_DIR  = join(DATA_ROOT, 'field_sets');
+
+type Rating = 'bad' | 'ok' | 'good';
+
+/** Rating of each pair's pinned main field set (only for pairs that have one). */
+function pairRatings(): Record<number, Rating> {
+	const out: Record<number, Rating> = {};
+	for (let pair = 0; pair < NUM_PAIRS; pair++) {
+		const activePath = join(FIELD_SETS_DIR, String(pair), 'active.json');
+		if (!existsSync(activePath)) continue;
+		try {
+			const mainId = JSON.parse(readFileSync(activePath, 'utf-8')).main_set_id;
+			if (!mainId) continue;
+			const manifestPath = join(FIELD_SETS_DIR, String(pair), mainId, 'manifest.json');
+			if (!existsSync(manifestPath)) continue;
+			const rating = JSON.parse(readFileSync(manifestPath, 'utf-8')).rating;
+			if (rating === 'bad' || rating === 'ok' || rating === 'good') out[pair] = rating;
+		} catch {
+			/* skip malformed */
+		}
+	}
+	return out;
+}
 
 /** Pairs whose smooth field was saved at the deepest level (registration complete). */
 function fieldCompletePairs(): number[] {
@@ -44,5 +67,5 @@ export const load: LayoutServerLoad = () => {
 			validation = {};
 		}
 	}
-	return { validation, fieldComplete: fieldCompletePairs() };
+	return { validation, fieldComplete: fieldCompletePairs(), ratings: pairRatings() };
 };

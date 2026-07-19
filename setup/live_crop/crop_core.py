@@ -33,7 +33,9 @@ sys.path.insert(0, str(REPO_ROOT / "setup" / "labelme"))
 
 import conf
 import pair_mask
-from preprocess_tiles import crop_tile, tile_to_gray_png_array
+from preprocess_tiles import tile_to_gray_png_array
+
+PAD_FILL = 255
 
 MAX_CACHED_PAGES = 6
 
@@ -153,6 +155,31 @@ def _load_page(image_id: int, page_idx: int) -> np.ndarray:
     return page
 
 
+def _crop_padded(page: np.ndarray, x_idx: int, y_idx: int, grid: int, dx_wsi: float, dy_wsi: float) -> np.ndarray:
+    """
+    Crop one tile with out-of-page regions padded (not clamped).
+
+    A positive dx/dy shifts the moving crop into registration; at coarse levels
+    (or edge tiles) the requested window can extend past the page, which
+    clamping would collapse to a no-op. Padding preserves the true displacement
+    by filling the missing region with PAD_FILL (background glass).
+    """
+    h, w = page.shape[:2]
+    tile_w = w // grid
+    tile_h = h // grid
+    x0 = int(round(x_idx * tile_w - dx_wsi))
+    y0 = int(round(y_idx * tile_h - dy_wsi))
+    x1 = x0 + tile_w
+    y1 = y0 + tile_h
+
+    out = np.full((tile_h, tile_w) + page.shape[2:], PAD_FILL, dtype=page.dtype)
+    sx0, sy0 = max(0, x0), max(0, y0)
+    sx1, sy1 = min(w, x1), min(h, y1)
+    if sx1 > sx0 and sy1 > sy0:
+        out[sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = page[sy0:sy1, sx0:sx1]
+    return out
+
+
 def _crop_pil(pair_id: int, level: int, x: int, y: int, side: str, dx: float, dy: float):
     """Return a PIL Image (mode 'L', cnn_w x cnn_h) for one tile with a tile-pixel offset."""
     he_id, ihc_id = pair_image_ids(pair_id)
@@ -170,7 +197,7 @@ def _crop_pil(pair_id: int, level: int, x: int, y: int, side: str, dx: float, dy
     dx_wsi = dx * tile_w_wsi / conf.CNN_INPUT_WIDTH
     dy_wsi = dy * tile_h_wsi / conf.CNN_INPUT_HEIGHT
 
-    tile = crop_tile(page, x, y, grid, dx_wsi, dy_wsi)
+    tile = _crop_padded(page, x, y, grid, dx_wsi, dy_wsi)
     return tile_to_gray_png_array(tile)
 
 

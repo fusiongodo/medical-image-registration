@@ -35,7 +35,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		const b64 = payload.png as string;
 		const buffer = Buffer.from(b64, 'base64');
 		return new Response(buffer, {
-			headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=3600' }
+			headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }
 		});
 	} catch (err) {
 		error(500, err instanceof Error ? err.message : 'live-crop worker failed');

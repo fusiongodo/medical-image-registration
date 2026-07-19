@@ -68,20 +68,39 @@ def _active_file(pair_id: int) -> Path:
     return _pair_dir(pair_id) / "active.json"
 
 
-def _read_active(pair_id: int) -> str | None:
+def _read_pair_state(pair_id: int) -> dict:
     path = _active_file(pair_id)
     if not path.exists():
-        return None
+        return {}
     try:
-        return json.loads(path.read_text()).get("set_id")
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
     except Exception:
-        return None
+        return {}
+
+
+def _write_pair_state(pair_id: int, **updates) -> None:
+    state = _read_pair_state(pair_id)
+    state.update(updates)
+    path = _active_file(pair_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, separators=(",", ":")))
+
+
+def _read_active(pair_id: int) -> str | None:
+    return _read_pair_state(pair_id).get("set_id")
 
 
 def _write_active(pair_id: int, set_id: str | None) -> None:
-    path = _active_file(pair_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"set_id": set_id}, separators=(",", ":")))
+    _write_pair_state(pair_id, set_id=set_id)
+
+
+def _read_main(pair_id: int) -> str | None:
+    return _read_pair_state(pair_id).get("main_set_id")
+
+
+def _write_main(pair_id: int, set_id: str | None) -> None:
+    _write_pair_state(pair_id, main_set_id=set_id)
 
 
 def _field_path(pair_id: int) -> Path:
@@ -121,6 +140,7 @@ def _read_manifest(pair_id: int, set_id: str) -> dict | None:
 
 def list_sets(pair_id: int) -> dict:
     active = _read_active(pair_id)
+    main = _read_main(pair_id)
     pair_dir = _pair_dir(pair_id)
     sets: list[dict] = []
     if pair_dir.exists():
@@ -131,7 +151,7 @@ def list_sets(pair_id: int) -> dict:
             if manifest is not None:
                 sets.append(manifest)
     sets.sort(key=lambda m: m.get("updated", 0), reverse=True)
-    return {"pair_id": pair_id, "active": active, "sets": sets}
+    return {"pair_id": pair_id, "active": active, "main": main, "sets": sets}
 
 
 def _snapshot_into(pair_id: int, set_dir: Path) -> None:
@@ -172,6 +192,7 @@ def save_set(pair_id: int, name: str, set_id: str | None = None) -> dict:
         "pair_id": pair_id,
         "created": created,
         "updated": now,
+        "rating": existing.get("rating") if existing else None,
         **_field_meta(pair_id),
     }
     (set_dir / "manifest.json").write_text(json.dumps(manifest, separators=(",", ":")))
@@ -225,6 +246,8 @@ def delete_set(pair_id: int, set_id: str) -> dict:
         shutil.rmtree(set_dir)
     if _read_active(pair_id) == set_id:
         _write_active(pair_id, None)
+    if _read_main(pair_id) == set_id:
+        _write_main(pair_id, None)
     return {"ok": True, "deleted": set_id}
 
 
@@ -241,6 +264,8 @@ def rename_set(pair_id: int, set_id: str, name: str) -> dict:
         _set_dir(pair_id, set_id).rename(new_dir)
         if _read_active(pair_id) == set_id:
             _write_active(pair_id, new_slug)
+        if _read_main(pair_id) == set_id:
+            _write_main(pair_id, new_slug)
 
     manifest["id"] = new_slug
     manifest["name"] = name
@@ -249,6 +274,31 @@ def rename_set(pair_id: int, set_id: str, name: str) -> dict:
         json.dumps(manifest, separators=(",", ":"))
     )
     return {"ok": True, "set": manifest}
+
+
+_RATINGS = {"bad", "ok", "good"}
+
+
+def rate_set(pair_id: int, set_id: str, rating: str) -> dict:
+    if rating not in _RATINGS:
+        return {"error": f"rating must be one of {sorted(_RATINGS)}"}
+    manifest = _read_manifest(pair_id, set_id)
+    if manifest is None:
+        return {"error": f"no field set {set_id} for pair {pair_id}"}
+    manifest["rating"] = rating
+    manifest["updated"] = int(time.time())
+    (_set_dir(pair_id, set_id) / "manifest.json").write_text(
+        json.dumps(manifest, separators=(",", ":"))
+    )
+    return {"ok": True, "set": manifest}
+
+
+def set_main(pair_id: int, set_id: str) -> dict:
+    manifest = _read_manifest(pair_id, set_id)
+    if manifest is None:
+        return {"error": f"no field set {set_id} for pair {pair_id}"}
+    _write_main(pair_id, set_id)
+    return {"ok": True, "main": set_id}
 
 
 def main() -> None:
@@ -280,6 +330,15 @@ def main() -> None:
     p_ren.add_argument("--id", dest="set_id", required=True)
     p_ren.add_argument("--name", required=True)
 
+    p_rate = sub.add_parser("rate")
+    p_rate.add_argument("pair", type=int)
+    p_rate.add_argument("--id", dest="set_id", required=True)
+    p_rate.add_argument("--rating", required=True, choices=sorted(_RATINGS))
+
+    p_main = sub.add_parser("main")
+    p_main.add_argument("pair", type=int)
+    p_main.add_argument("--id", dest="set_id", required=True)
+
     args = parser.parse_args()
 
     if args.command == "list":
@@ -294,6 +353,10 @@ def main() -> None:
         result = delete_set(args.pair, args.set_id)
     elif args.command == "rename":
         result = rename_set(args.pair, args.set_id, args.name)
+    elif args.command == "rate":
+        result = rate_set(args.pair, args.set_id, args.rating)
+    elif args.command == "main":
+        result = set_main(args.pair, args.set_id)
     else:
         result = {"error": f"unknown command {args.command}"}
 

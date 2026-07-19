@@ -46,7 +46,7 @@ from setup.coarse_to_fine.field import (
 )
 
 CACHE_DIR = conf.PROJECT_ROOT / "data" / "c2f_cache"
-DEFAULT_LEVELS = [3, 4, 5]
+DEFAULT_LEVELS = [0, 1, 2, 3, 4, 5]
 DEFAULT_TAU = 0.01
 
 

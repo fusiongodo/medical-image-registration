@@ -7,6 +7,7 @@
 	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
 	import LnccDistributionPanel from '$lib/LnccDistributionPanel.svelte';
 	import C2fPanel from '$lib/C2fPanel.svelte';
+	import { computeLNCC } from '$lib/imageUtils';
 
 	let {
 		data
@@ -40,6 +41,40 @@
 		if (dx !== 0 || dy !== 0) u += `&dx=${dx}&dy=${dy}`;
 		return u;
 	}
+
+	// Crop reference for the moving IHC base crop: recrop at the previous-level
+	// saved field ('field', default) or at the raw quadtree grid ('blind').
+	type CropRef = 'field' | 'blind';
+	let cropRef = $state<CropRef>('field');
+	let cropRefLoaded = $state(false);
+	let fieldRefreshKey = $state(0);
+
+	function tileBase(tile: string): { dx: number; dy: number } {
+		if (cropRef === 'blind') return { dx: 0, dy: 0 };
+		return fieldOffsets.get(tile) ?? { dx: 0, dy: 0 };
+	}
+
+	function toggleRecrop() {
+		cropRef = cropRef === 'field' ? 'blind' : 'field';
+		if (cropRef === 'field') fieldRefreshKey++;
+	}
+
+	$effect(() => {
+		try {
+			const s = localStorage.getItem('mvrCropRef');
+			if (s === 'field' || s === 'blind') cropRef = s;
+		} catch {
+			/* ignore storage errors */ }
+		cropRefLoaded = true;
+	});
+
+	$effect(() => {
+		if (!cropRefLoaded) return;
+		try {
+			localStorage.setItem('mvrCropRef', cropRef);
+		} catch {
+			/* ignore storage errors */ }
+	});
 
 	let tileKeypoints = $state<Map<string, number[][]>>(new Map());
 	let showKeypoints = $state(false);
@@ -104,12 +139,19 @@
 	interface RegAnnotation { type: 'approve' | 'correct' | 'exclude'; u: number; v: number; }
 	let regAnnotations = $state<Map<string, RegAnnotation>>(new Map());
 
-	const REFINE_LEVELS = [3, 4, 5] as const;
+	// LNCC² recomputed live for tiles whose displacement is human-driven
+	// (manual correction / concordant points) rather than the cached FFT value.
+	interface CorrectedMetric { lncc2: number; lncc2_auto: number; factor_auto: number; }
+	let correctedMetrics = $state<Map<string, CorrectedMetric>>(new Map());
+
+	const REFINE_LEVELS = [0, 1, 2, 3, 4, 5] as const;
+	const MIN_REFINE_LEVEL = 0;
 	const PREV_COMPLETION_THRESHOLD = 1.0;
 
 	function seedStride(depth: number): number {
-		// keep the refine set roughly constant at ~16 seeds per level
-		return Math.pow(2, depth - 2); // level 3 -> 2, 4 -> 4, 5 -> 8
+		// keep the refine set roughly constant at ~16 seeds per level; the coarse
+		// levels (0-2) have few tiles, so every tile is a seed (stride 1)
+		return Math.max(1, Math.pow(2, depth - 2)); // 0-2 -> 1, 3 -> 2, 4 -> 4, 5 -> 8
 	}
 
 	function isSeed(tile: string, depth: number): boolean {
@@ -232,12 +274,13 @@
 		return () => { stale = true; c2fCandidates = new Map(); };
 	});
 
-	// ── Base offset per tile: previous level's saved field (0 at L3) ─────────
+	// ── Base offset per tile: previous level's saved field (0 at the base L0) ──
 	let fieldOffsets = $state<Map<string, { dx: number; dy: number }>>(new Map());
 	$effect(() => {
 		autoDispRefreshKey; // re-fetch after an alignment / save
+		fieldRefreshKey; // force reload when the recrop toggle is re-enabled
 		const pair = data.pairId, depth = data.depth;
-		if (depth <= 3) { fieldOffsets = new Map(); return; }
+		if (depth <= MIN_REFINE_LEVEL) { fieldOffsets = new Map(); return; }
 		let stale = false;
 		fetch(`/api/field?pair=${pair}&depth=${depth}`)
 			.then((r) => r.json())
@@ -267,7 +310,7 @@
 
 	$effect(() => {
 		const pair = data.pairId, depth = data.depth;
-		if (depth <= 3) { prevTiles = []; return; }
+		if (depth <= MIN_REFINE_LEVEL) { prevTiles = []; return; }
 		let stale = false;
 		fetch(`/api/tiles/${pair}/${depth - 1}`)
 			.then((r) => r.json())
@@ -280,7 +323,7 @@
 
 	$effect(() => {
 		const pair = data.pairId, depth = data.depth;
-		if (depth <= 3) { prevRegAnnotations = new Map(); return; }
+		if (depth <= MIN_REFINE_LEVEL) { prevRegAnnotations = new Map(); return; }
 		let stale = false;
 		fetch(`/api/c2f/annotate?pair=${pair}&level=${depth - 1}`)
 			.then((r) => r.json())
@@ -292,7 +335,7 @@
 	});
 
 	const prevSeedTiles = $derived(
-		data.depth > 3 ? prevTiles.filter((t: TileMeta) => isSeed(t.tile, data.depth - 1)) : []
+		data.depth > MIN_REFINE_LEVEL ? prevTiles.filter((t: TileMeta) => isSeed(t.tile, data.depth - 1)) : []
 	);
 	const prevSeedDone = $derived(
 		prevSeedTiles.filter((t: TileMeta) => prevRegAnnotations.has(t.tile)).length
@@ -302,7 +345,7 @@
 	);
 	const canRefine = $derived(
 		REFINE_LEVELS.includes(data.depth) &&
-		(data.depth === 3 || prevSeedCompletion >= PREV_COMPLETION_THRESHOLD)
+		(data.depth === MIN_REFINE_LEVEL || prevSeedCompletion >= PREV_COMPLETION_THRESHOLD)
 	);
 
 	$effect(() => {
@@ -383,7 +426,7 @@
 		if (!ann || ann.hePoints.length < 1 || ann.ihcPoints.length < 1) return;
 		const he = ann.hePoints[ann.hePoints.length - 1];
 		const ihc = ann.ihcPoints[ann.ihcPoints.length - 1];
-		const base = fieldOffsets.get(tile) ?? { dx: 0, dy: 0 };
+		const base = tileBase(tile);
 		postAnnotate(tile, 'correct', base.dx + he.x - ihc.x, base.dy + he.y - ihc.y);
 	}
 
@@ -405,7 +448,7 @@
 			dx += ann.hePoints[i].x - ann.ihcPoints[i].x;
 			dy += ann.hePoints[i].y - ann.ihcPoints[i].y;
 		}
-		const base = fieldOffsets.get(tile) ?? { dx: 0, dy: 0 };
+		const base = tileBase(tile);
 		return { dx: base.dx + dx / pairs, dy: base.dy + dy / pairs };
 	}
 
@@ -415,6 +458,78 @@
 		const m = new Map<string, AutoDisp>();
 		for (const [tile, c] of c2fCandidates) m.set(tile, { dx: c.u, dy: c.v });
 		return m;
+	});
+
+	async function loadNormalizedGray(src: string): Promise<{ data: Float32Array; w: number; h: number }> {
+		const img = new Image();
+		img.src = src;
+		await new Promise<void>((res, rej) => {
+			img.onload = () => res();
+			img.onerror = () => rej(new Error(`failed to load ${src}`));
+		});
+		const c = document.createElement('canvas');
+		c.width = img.naturalWidth;
+		c.height = img.naturalHeight;
+		const ctx = c.getContext('2d')!;
+		ctx.drawImage(img, 0, 0);
+		const raw = ctx.getImageData(0, 0, c.width, c.height).data;
+		const n = c.width * c.height;
+		const grayRaw = new Float64Array(n);
+		for (let i = 0; i < n; i++) grayRaw[i] = (raw[i * 4] + raw[i * 4 + 1] + raw[i * 4 + 2]) / 3;
+		const mean = grayRaw.reduce((a, b) => a + b, 0) / n;
+		let variance = 0;
+		for (let i = 0; i < n; i++) { const d = grayRaw[i] - mean; variance += d * d; }
+		const std = Math.sqrt(variance / n) || 1;
+		const gray = new Float32Array(n);
+		for (let i = 0; i < n; i++) gray[i] = Math.min(255, Math.max(0, ((grayRaw[i] - mean) / std) * 64 + 128));
+		return { data: gray, w: c.width, h: c.height };
+	}
+
+	// Recompute LNCC² for tiles whose displacement is human-driven, so the
+	// score columns reflect the manual correction instead of the stale FFT cache.
+	$effect(() => {
+		const ps = patchSize;
+		annotationVersion; fieldRefreshKey; cropRef;
+		void data.pairId; void data.depth;
+		const jobs: { tile: string; heSrc: string; baseSrc: string; autoSrc: string }[] = [];
+		for (const t of data.tiles) {
+			const corr = regAnnotations.get(t.tile);
+			const manual = manualDisplacement(t.tile);
+			const vec = manual ?? (corr?.type === 'correct' ? { dx: corr.u, dy: corr.v } : null);
+			if (!vec) continue;
+			const base = tileBase(t.tile);
+			jobs.push({
+				tile: t.tile,
+				heSrc: cropUrl(t.tile, 'he'),
+				baseSrc: cropUrl(t.tile, 'ihc', base.dx, base.dy),
+				autoSrc: cropUrl(t.tile, 'ihc', vec.dx, vec.dy)
+			});
+		}
+
+		if (jobs.length === 0) { correctedMetrics = new Map(); return; }
+
+		let cancelled = false;
+		(async () => {
+			const next = new Map<string, CorrectedMetric>();
+			for (const job of jobs) {
+				try {
+					const [he, baseImg, autoImg] = await Promise.all([
+						loadNormalizedGray(job.heSrc),
+						loadNormalizedGray(job.baseSrc),
+						loadNormalizedGray(job.autoSrc)
+					]);
+					if (cancelled) return;
+					const lncc2 = computeLNCC(he.data, baseImg.data, he.w, he.h, ps, true);
+					const lncc2_auto = computeLNCC(he.data, autoImg.data, he.w, he.h, ps, true);
+					const factor_auto = lncc2 > 1e-9 ? lncc2_auto / lncc2 : 0;
+					next.set(job.tile, { lncc2, lncc2_auto, factor_auto });
+					correctedMetrics = new Map(next);
+				} catch (err) {
+					console.error('corrected metric failed', job.tile, err);
+				}
+			}
+		})();
+		return () => { cancelled = true; };
 	});
 
 	const levelCorrelation = null as { r: number; n: number } | null; /* disabled
@@ -549,13 +664,13 @@
 							/>
 							<span>Refine set{#if refineMode} · {seedDone}/{seedTiles.length}{/if}</span>
 						</label>
-						{#if !canRefine && data.depth > 3}
+						{#if !canRefine && data.depth > MIN_REFINE_LEVEL}
 							<span class="menu-hint">
 								🔒 level {data.depth - 1} incomplete ({prevSeedDone}/{prevSeedTiles.length})
 							</span>
 						{/if}
 					{:else}
-						<span class="menu-check refine-disabled" title="Refinement available at levels 3–5">
+						<span class="menu-check refine-disabled" title="Refinement available at levels 0–5">
 							Refine set · n/a
 						</span>
 					{/if}
@@ -570,6 +685,18 @@
 				{/each}
 			</select>
 		</label>
+
+		{#if data.depth > MIN_REFINE_LEVEL}
+			<button
+				class="recrop-btn"
+				class:active={cropRef === 'field'}
+				disabled={fieldOffsets.size === 0}
+				title={fieldOffsets.size === 0
+					? 'No saved field for this pair/level yet'
+					: 'Recrop moving IHC at the saved field (toggle off = blind raw crop)'}
+				onclick={toggleRecrop}
+			>Recrop (prev field)</button>
+		{/if}
 
 		<div class="depth-nav">
 			{#each Array.from({ length: MAX_DEPTH + 1 }, (_, i) => i) as d}
@@ -636,7 +763,7 @@
 			{#if refineMode}<span class="col-header sticky-header">Refine</span>{/if}
 
 	{#each displayOrder as t (`${data.pairId}-${data.depth}-${t.tile}`)}
-			{@const base = fieldOffsets.get(t.tile) ?? { dx: 0, dy: 0 }}
+			{@const base = tileBase(t.tile)}
 			{@const heSrc  = cropUrl(t.tile, 'he')}
 			{@const ihcSrc = cropUrl(t.tile, 'ihc', base.dx, base.dy)}
 			{@const isActive = activeRow === t.tile}
@@ -644,6 +771,10 @@
 		{@const tileAutoDisp = autoDisps.get(t.tile)}
 	{@const m = tileMetrics.get(t.tile)}
 	{@const entry = m?.by_patch[String(patchSize)]}
+	{@const cm = correctedMetrics.get(t.tile)}
+	{@const lncc2Base = cm?.lncc2 ?? entry?.lncc2}
+	{@const lncc2Auto = cm?.lncc2_auto ?? entry?.lncc2_auto}
+	{@const factorAuto = cm?.factor_auto ?? entry?.factor_auto}
 	{@const tileKps = showKeypoints ? (tileKeypoints.get(t.tile) ?? []) : []}
 		<span
 			class="tile-id"
@@ -661,10 +792,10 @@
 		<OverlayCanvas {heSrc} {ihcSrc} />
 		{@const manual = manualDisplacement(t.tile)}
 		{@const corrDisp = regAnnotations.get(t.tile)}
-		{@const autoVec = corrDisp?.type === 'correct'
-			? { dx: corrDisp.u, dy: corrDisp.v }
-			: manual
-				? manual
+		{@const autoVec = manual
+			? manual
+			: corrDisp?.type === 'correct'
+				? { dx: corrDisp.u, dy: corrDisp.v }
 				: tileAutoDisp !== undefined
 					? { dx: tileAutoDisp.dx, dy: tileAutoDisp.dy }
 					: null}
@@ -676,9 +807,9 @@
 				<span class="align-pending">Align<br>pending</span>
 			</div>
 		{/if}
-			{#if entry}
-				<div class="score-cell-pre" style:background={lnccColor(entry.lncc2)}>
-					<span class="value">{entry.lncc2.toFixed(3)}</span>
+			{#if lncc2Base !== undefined}
+				<div class="score-cell-pre" class:cm-live={cm !== undefined} style:background={lnccColor(lncc2Base)}>
+					<span class="value">{lncc2Base.toFixed(3)}</span>
 				</div>
 			{:else}
 				<div class="score-cell-pre"><span class="factor-placeholder">…</span></div>
@@ -712,16 +843,16 @@
 				<span class="factor-placeholder">…</span>
 			</div>
 		{/if}
-			{#if entry}
-				<div class="score-cell-pre" style:background={lnccColor(entry.lncc2_auto)}>
-					<span class="value">{entry.lncc2_auto.toFixed(3)}</span>
+			{#if lncc2Auto !== undefined}
+				<div class="score-cell-pre" class:cm-live={cm !== undefined} style:background={lnccColor(lncc2Auto)}>
+					<span class="value">{lncc2Auto.toFixed(3)}</span>
 				</div>
 			{:else}
 				<div class="score-cell-pre"><span class="factor-placeholder">…</span></div>
 			{/if}
-			<div class="factor-cell" class:factor-positive={entry !== undefined && entry.factor_auto > 1}>
-				{#if entry}
-					{entry.factor_auto.toFixed(3)}
+			<div class="factor-cell" class:factor-positive={factorAuto !== undefined && factorAuto > 1} class:cm-live={cm !== undefined}>
+				{#if factorAuto !== undefined}
+					{factorAuto.toFixed(3)}
 				{:else}
 					<span class="factor-placeholder">…</span>
 				{/if}
@@ -972,6 +1103,30 @@
 		flex-shrink: 0;
 	}
 
+	.recrop-btn {
+		flex-shrink: 0;
+		cursor: pointer;
+		padding: 4px 10px;
+		border-radius: 5px;
+		font-size: 0.75rem;
+		color: #cbd0dc;
+		background: #0f1117;
+		border: 1px solid #2a2d3a;
+	}
+
+	.recrop-btn:hover:not(:disabled) { border-color: #3a3f52; }
+
+	.recrop-btn.active {
+		color: #fff;
+		background: #6366f1;
+		border-color: #6366f1;
+	}
+
+	.recrop-btn:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
 	.patch-label {
 		font-size: 0.7rem;
 		font-weight: 600;
@@ -1195,6 +1350,15 @@
 		color: #000;
 		text-shadow: 0 1px 2px rgba(255,255,255,0.4);
 		font-variant-numeric: tabular-nums;
+	}
+
+	.score-cell-pre.cm-live .value {
+		text-decoration: underline dotted rgba(0, 0, 0, 0.55);
+		text-underline-offset: 2px;
+	}
+
+	.factor-cell.cm-live {
+		font-style: italic;
 	}
 
 	.factor-cell {

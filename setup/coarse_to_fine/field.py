@@ -172,36 +172,30 @@ def residuals(candidates: list[Candidate], field: Field) -> list[float]:
     return out
 
 
-def tau_from_zscore(resid: list[float], z: float) -> float:
+def tau_for_keep(human_anchors: list[Anchor], candidates: list[Candidate], keep: float) -> float:
     """
-    Robust outlier margin from a residual distribution: median + z * 1.4826 * MAD.
-    The 1.4826 factor scales the median absolute deviation to a Gaussian-sigma
-    estimate, so z is interpretable as a number of standard deviations.
-    """
-    if not resid:
-        return 0.0
-    arr = np.asarray(resid, dtype=float)
-    med = float(np.median(arr))
-    mad = float(np.median(np.abs(arr - med)))
-    return med + z * 1.4826 * mad
-
-
-def tau_for_z(human_anchors: list[Anchor], candidates: list[Candidate], z: float) -> float:
-    """
-    Derive tau from a z-score margin over the residuals used for gating.
+    Derive tau as the `keep`-quantile (0..1) of the candidate residuals, so that
+    roughly a `keep` fraction of the auto candidates fall at or below tau and are
+    included in the fit (keep=0.5 -> median residual -> ~50% kept; keep=1.0 ->
+    all kept).
 
     The reference field mirrors fit_gated: the human-only field when human
     anchors exist, otherwise an initial fit over all candidates.  Residuals of
-    the candidates against that reference form the distribution.
+    the candidates against that reference form the distribution the quantile is
+    taken over.
     """
     if not candidates:
         return 0.0
+    keep = min(1.0, max(0.0, keep))
     reference = (
         fit_field(human_anchors)
         if human_anchors
         else fit_field([c.anchor() for c in candidates])
     )
-    return tau_from_zscore(residuals(candidates, reference), z)
+    resid = residuals(candidates, reference)
+    if not resid:
+        return 0.0
+    return float(np.quantile(np.asarray(resid, dtype=float), keep))
 
 
 def tau_gate(

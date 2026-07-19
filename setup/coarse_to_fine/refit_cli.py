@@ -35,7 +35,7 @@ from setup.coarse_to_fine.field import (
     fit_field,
     fit_gated,
     residuals,
-    tau_for_z,
+    tau_for_keep,
     write_field_json,
 )
 from setup.coarse_to_fine.run import _level_candidates
@@ -83,13 +83,13 @@ def _compute_prior_field(
     return field
 
 
-def refit(pair_id: int, depth: int, tau: float, save: bool, z: float | None = None) -> dict:
+def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None = None) -> dict:
     cache_path = CACHE_DIR / f"{pair_id}_d{depth}.json"
     if not cache_path.exists():
         return {"error": f"no cached candidates for pair {pair_id} depth {depth}"}
 
     payload = json.loads(cache_path.read_text())
-    levels = payload.get("levels", [3, 4, 5])
+    levels = payload.get("levels", [0, 1, 2, 3, 4, 5])
     candidates = [candidate_from_dict(depth, d) for d in payload.get("candidates", [])]
 
     entries = annotations.load(pair_id)
@@ -104,18 +104,25 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, z: float | None = No
 
     if not candidates and not human_anchors:
         return {
-            "tau": tau, "z": z, "kept": 0, "rejected": 0, "n_human": 0,
+            "tau": tau, "keep": keep, "kept": 0, "rejected": 0, "n_human": 0,
             "mean_residual": 0.0, "tiles": [],
         }
 
     fit_candidates = [c for c in candidates if c.tile_loc not in excluded_locs]
-    if z is not None:
-        tau = tau_for_z(human_anchors, fit_candidates, z)
+    if keep is not None:
+        # the keep-fraction is measured over auto tiles only: human-annotated
+        # (approve/correct/exclude) tiles are always decided by the user
+        auto_candidates = [c for c in fit_candidates if c.tile_loc not in annotated]
+        tau = tau_for_keep(human_anchors, auto_candidates, keep)
 
     prior_field = _compute_prior_field(pair_id, depth, tau, levels)
 
     field, _ = fit_gated(human_anchors, fit_candidates, tau)
-    devs = residuals(candidates, field)
+    # Judge residuals/kept against the same reference fit_gated tau-gates against
+    # (human-only field when anchors exist), so the reported kept set matches the
+    # tiles that actually shape the spline and the keep-fraction is exact.
+    gate_field = fit_field(human_anchors) if human_anchors else field
+    devs = residuals(candidates, gate_field)
 
     tiles = []
     for cand, dev in zip(candidates, devs):
@@ -142,7 +149,7 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, z: float | None = No
     n_excluded = sum(1 for t in tiles if t["excluded"])
     result = {
         "tau": tau,
-        "z": z,
+        "keep": keep,
         "kept": n_kept,
         "rejected": len(tiles) - n_kept - n_excluded,
         "excluded": n_excluded,
@@ -155,7 +162,7 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, z: float | None = No
         meta = {
             "levels": levels,
             "tau": tau,
-            "z": z,
+            "keep": keep,
             "saved_depth": depth,
             "n_kept": n_kept,
             "n_seen": len(tiles),
@@ -172,16 +179,16 @@ def main() -> None:
     save = "--save" in argv
     argv = [a for a in argv if a != "--save"]
 
-    z: float | None = None
-    if "--z" in argv:
-        i = argv.index("--z")
-        z = float(argv[i + 1])
+    keep: float | None = None
+    if "--keep" in argv:
+        i = argv.index("--keep")
+        keep = float(argv[i + 1])
         argv = argv[:i] + argv[i + 2:]
 
     if len(argv) < 3:
-        sys.exit("Usage: refit_cli.py <pair_id> <depth> <tau> [--z <z>] [--save]")
+        sys.exit("Usage: refit_cli.py <pair_id> <depth> <tau> [--keep <fraction>] [--save]")
     pair_id, depth, tau = int(argv[0]), int(argv[1]), float(argv[2])
-    print(json.dumps(refit(pair_id, depth, tau, save, z), separators=(",", ":")))
+    print(json.dumps(refit(pair_id, depth, tau, save, keep), separators=(",", ":")))
 
 
 if __name__ == "__main__":

@@ -30,11 +30,11 @@ export const GET: RequestHandler = async ({ url }) => {
 	const pair  = url.searchParams.get('pair');
 	const depth = url.searchParams.get('depth');
 	const tau   = url.searchParams.get('tau');
-	const z     = url.searchParams.get('z');
-	if (!pair || !depth || (!tau && !z)) error(400, 'Missing pair / depth / (tau or z)');
+	const keep  = url.searchParams.get('keep');
+	if (!pair || !depth || (!tau && !keep)) error(400, 'Missing pair / depth / (tau or keep)');
 
 	const args = [pair, depth, tau ?? '0'];
-	if (z) args.push('--z', z);
+	if (keep) args.push('--keep', keep);
 
 	try {
 		const result = await runRefit(args);

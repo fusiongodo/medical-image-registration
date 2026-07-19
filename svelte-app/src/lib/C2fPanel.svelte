@@ -36,6 +36,8 @@
 		onComputed?: () => void;
 	} = $props();
 
+	type Rating = 'bad' | 'ok' | 'good';
+
 	interface FieldSet {
 		id: string;
 		name: string;
@@ -43,16 +45,20 @@
 		tau?: number;
 		n_human?: number;
 		updated: number;
+		rating?: Rating | null;
 	}
 
 	let sets = $state<FieldSet[]>([]);
 	let activeSetId = $state<string | null>(null);
+	let mainSetId = $state<string | null>(null);
 	let selectedSetId = $state('');
 	let setBusy = $state(false);
 	let pendingSetId = $state<string | null>(null);
 
 	const activeSet = $derived(sets.find((s) => s.id === activeSetId) ?? null);
 	const pendingSet = $derived(sets.find((s) => s.id === pendingSetId) ?? null);
+	const selectedSet = $derived(sets.find((s) => s.id === selectedSetId) ?? null);
+	const RATINGS: Rating[] = ['bad', 'ok', 'good'];
 
 	interface TileResult {
 		tile_loc: string;
@@ -106,17 +112,20 @@
 	let tauExp = $state(-4); // default tau = 1e-4
 	const tau = $derived(Math.pow(10, tauExp));
 
-	// z-score margin: tau derived server-side as median + z * 1.4826 * MAD
-	type TauMode = 'tau' | 'z';
-	let tauMode = $state<TauMode>('z');
-	const Z_MIN = 0.5;
-	const Z_MAX = 3.0;
-	let zVal = $state(1.96);
+	// keep-fraction gate: tau derived server-side as the (1 - exclude%) quantile
+	// of the auto-tile residuals, so the exclude% directly targets the ratio of
+	// tiles dropped from the spline.
+	type TauMode = 'tau' | 'keep';
+	let tauMode = $state<TauMode>('keep');
+	const EXCLUDE_MIN = 0;
+	const EXCLUDE_MAX = 50;
+	let excludePct = $state(10);
+	const keepFraction = $derived(1 - excludePct / 100);
 
 	let open = $state(true);
 	let cached = $state<boolean | null>(null);
 	let refit = $state<RefitData | null>(null);
-	const effectiveTau = $derived(tauMode === 'z' ? refit?.tau ?? null : tau);
+	const effectiveTau = $derived(tauMode === 'keep' ? refit?.tau ?? null : tau);
 	let job = $state<JobState | null>(null);
 	let saving = $state(false);
 	let savedAt = $state<number | null>(null);
@@ -130,15 +139,28 @@
 	const previewResult = $derived(
 		previewTile ? refit?.tiles.find((t) => t.tile_loc === previewTile) ?? null : null
 	);
-	const previewHeSrc = $derived(
-		previewTile
-			? `/api/live-crop/tile?pair=${pairId}&level=${depth}&x=${previewTile.split('_')[0]}&y=${previewTile.split('_')[1]}&side=he`
+
+	// Field-aware crops: the moving IHC is recropped from the raw WSI at the
+	// given offset (baked into the crop, never translated), so large per-level
+	// displacements still keep full intersection with the fixed HE tile.
+	function liveCropSrc(side: 'he' | 'ihc', dx = 0, dy = 0): string {
+		if (!previewTile) return '';
+		const [x, y] = previewTile.split('_');
+		let u = `/api/live-crop/tile?pair=${pairId}&level=${depth}&x=${x}&y=${y}&side=${side}`;
+		if (dx !== 0 || dy !== 0) u += `&dx=${dx}&dy=${dy}`;
+		return u;
+	}
+
+	const previewHeSrc = $derived(previewTile ? liveCropSrc('he') : '');
+	// Base IHC recropped at the previous-level field prediction (prior).
+	const previewIhcSrc = $derived(
+		previewTile && previewResult
+			? liveCropSrc('ihc', previewResult.prior_dx, previewResult.prior_dy)
 			: ''
 	);
-	const previewIhcSrc = $derived(
-		previewTile
-			? `/api/live-crop/tile?pair=${pairId}&level=${depth}&x=${previewTile.split('_')[0]}&y=${previewTile.split('_')[1]}&side=ihc`
-			: ''
+	// Included IHC recropped at the full refined displacement (total).
+	const previewIhcIncludedSrc = $derived(
+		previewTile && previewResult ? liveCropSrc('ihc', previewResult.ux, previewResult.uy) : ''
 	);
 
 	function onSelect(tile: string | null) {
@@ -163,9 +185,9 @@
 	$effect(() => {
 		try {
 			const m = localStorage.getItem('mvrC2fTauMode');
-			if (m === 'tau' || m === 'z') tauMode = m;
-			const z = localStorage.getItem('mvrC2fZ');
-			if (z !== null && !Number.isNaN(Number(z))) zVal = Number(z);
+			if (m === 'tau' || m === 'keep') tauMode = m;
+			const ex = localStorage.getItem('mvrC2fExclude');
+			if (ex !== null && !Number.isNaN(Number(ex))) excludePct = Number(ex);
 		} catch {
 			/* ignore storage errors */ }
 	});
@@ -173,7 +195,7 @@
 	$effect(() => {
 		try {
 			localStorage.setItem('mvrC2fTauMode', tauMode);
-			localStorage.setItem('mvrC2fZ', String(zVal));
+			localStorage.setItem('mvrC2fExclude', String(excludePct));
 		} catch {
 			/* ignore storage errors */ }
 	});
@@ -190,7 +212,7 @@
 
 	async function runRefit() {
 		if (!cached) return;
-		const q = tauMode === 'z' ? `z=${zVal}` : `tau=${tau}`;
+		const q = tauMode === 'keep' ? `keep=${keepFraction}` : `tau=${tau}`;
 		const r = await fetch(`/api/c2f/refit?pair=${pairId}&depth=${depth}&${q}`);
 		if (r.ok) refit = await r.json();
 	}
@@ -201,8 +223,8 @@
 		tauDebounce = setTimeout(runRefit, 300);
 	}
 
-	function onZInput(e: Event) {
-		zVal = (e.target as HTMLInputElement).valueAsNumber;
+	function onExcludeInput(e: Event) {
+		excludePct = (e.target as HTMLInputElement).valueAsNumber;
 		if (tauDebounce) clearTimeout(tauDebounce);
 		tauDebounce = setTimeout(runRefit, 300);
 	}
@@ -245,8 +267,8 @@
 		saving = true;
 		try {
 			const body =
-				tauMode === 'z'
-					? { pair_id: pairId, depth, z: zVal }
+				tauMode === 'keep'
+					? { pair_id: pairId, depth, keep: keepFraction }
 					: { pair_id: pairId, depth, tau };
 			const r = await fetch('/api/c2f/save-field', {
 				method: 'POST',
@@ -266,9 +288,22 @@
 			const data = await r.json();
 			sets = data.sets ?? [];
 			activeSetId = data.active ?? null;
+			mainSetId = data.main ?? null;
 			selectedSetId = activeSetId ?? (sets[0]?.id ?? '');
 		} catch {
 			/* ignore */ }
+	}
+
+	async function rateSet(rating: Rating) {
+		if (!selectedSetId) return;
+		const res = await postSet({ action: 'rate', set_id: selectedSetId, rating });
+		if (res?.ok) { await loadSets(); onReload?.(); }
+	}
+
+	async function pinMain() {
+		if (!selectedSetId) return;
+		const res = await postSet({ action: 'main', set_id: selectedSetId });
+		if (res?.ok) { await loadSets(); onReload?.(); }
 	}
 
 	async function postSet(bodyExtra: Record<string, unknown>): Promise<{ ok?: boolean } | null> {
@@ -475,42 +510,14 @@
 		return { data: gray, w: c.width, h: c.height };
 	}
 
-	function shiftGray(src: Float32Array, w: number, h: number, dx: number, dy: number, fill = 128): Float32Array {
-		// Mirrors scipy.ndimage.shift(src, shift=(dy, dx), order=1, mode='constant', cval=128)
-		const out = new Float32Array(w * h);
-		for (let y = 0; y < h; y++) {
-			for (let x = 0; x < w; x++) {
-				const sx = x - dx;
-				const sy = y - dy;
-				const x0 = Math.floor(sx);
-				const y0 = Math.floor(sy);
-				const wx = sx - x0;
-				const wy = sy - y0;
-				let v = fill;
-				if (x0 >= 0 && x0 < w && y0 >= 0 && y0 < h) {
-					const x1 = Math.min(x0 + 1, w - 1);
-					const y1 = Math.min(y0 + 1, h - 1);
-					const v00 = src[y0 * w + x0];
-					const v01 = src[y0 * w + x1];
-					const v10 = src[y1 * w + x0];
-					const v11 = src[y1 * w + x1];
-					const v0 = v00 + (v01 - v00) * wx;
-					const v1 = v10 + (v11 - v10) * wx;
-					v = v0 + (v1 - v0) * wy;
-				}
-				out[y * w + x] = v;
-			}
-		}
-		return out;
-	}
-
 	$effect(() => {
-		if (!previewResult || !previewHeSrc || !previewIhcSrc) {
+		if (!previewResult || !previewHeSrc || !previewIhcSrc || !previewIhcIncludedSrc) {
 			tileStats = null;
 			return;
 		}
 		const heSrc = previewHeSrc;
-		const ihcSrc = previewIhcSrc;
+		const priorSrc = previewIhcSrc;
+		const includedSrc = previewIhcIncludedSrc;
 		const ps = patchSize;
 		const ux = previewResult.ux;
 		const uy = previewResult.uy;
@@ -518,14 +525,16 @@
 		const pdy = previewResult.prior_dy;
 		let cancelled = false;
 		tileStats = null;
-		Promise.all([loadNormalizedGray(heSrc), loadNormalizedGray(ihcSrc)])
-			.then(([he, ihc]) => {
+		Promise.all([
+			loadNormalizedGray(heSrc),
+			loadNormalizedGray(priorSrc),
+			loadNormalizedGray(includedSrc)
+		])
+			.then(([he, prior, included]) => {
 				if (cancelled) return;
-				const lncc2 = computeLNCC(he.data, ihc.data, he.w, he.h, ps, true);
-				const includedShifted = shiftGray(ihc.data, ihc.w, ihc.h, ux, uy);
-				const excludedShifted = shiftGray(ihc.data, ihc.w, ihc.h, pdx, pdy);
-				const lncc2Included = computeLNCC(he.data, includedShifted, he.w, he.h, ps, true);
-				const lncc2Excluded = computeLNCC(he.data, excludedShifted, he.w, he.h, ps, true);
+				const lncc2 = computeLNCC(he.data, prior.data, he.w, he.h, ps, true);
+				const lncc2Included = computeLNCC(he.data, included.data, he.w, he.h, ps, true);
+				const lncc2Excluded = lncc2;
 				const base = lncc2 > 1e-9 ? lncc2 : 0;
 				tileStats = {
 					lncc2,
@@ -580,7 +589,7 @@
 		Coarse-to-fine field
 		{#if refit}
 			<span class="summary-inline">
-				· τ={refit.tau.toExponential(1)}{#if tauMode === 'z'} (z={zVal}){/if} · {refit.kept} kept / {refit.rejected} rejected
+				· {refit.tiles.length} tiles · τ={refit.tau.toExponential(1)}{#if tauMode === 'keep'} (excl {excludePct}%){/if} · {refit.kept} kept / {refit.rejected} rejected
 				{#if refit.n_human}· {refit.n_human} human{/if}
 			</span>
 		{/if}
@@ -596,13 +605,34 @@
 					{/if}
 					{#each sets as s (s.id)}
 						<option value={s.id}>
-							{s.name}{s.id === activeSetId ? ' ●' : ''}{s.saved_depth != null ? ` · L${s.saved_depth}` : ''}
+							{s.name}{s.id === activeSetId ? ' ●' : ''}{s.id === mainSetId ? ' ★' : ''}{s.saved_depth != null ? ` · L${s.saved_depth}` : ''}
 						</option>
 					{/each}
 					<option value="__new__">＋ New field set…</option>
 				</select>
 				<button class="set-btn set-btn-primary" onclick={saveSet} disabled={setBusy}>Save</button>
 				<button class="set-btn set-btn-ghost" onclick={renameSelectedSet} disabled={setBusy || !selectedSetId}>Rename</button>
+			</div>
+
+			<div class="rating-bar">
+				<span class="set-label">Rating</span>
+				<span class="rating-group">
+					{#each RATINGS as r}
+						<button
+							class="rating-btn rating-{r}"
+							class:active={selectedSet?.rating === r}
+							onclick={() => rateSet(r)}
+							disabled={setBusy || !selectedSetId}
+						>{r === 'bad' ? 'Bad' : r === 'ok' ? 'OK' : 'Good'}</button>
+					{/each}
+				</span>
+				<button
+					class="set-btn set-btn-ghost main-btn"
+					class:active={!!selectedSetId && selectedSetId === mainSetId}
+					onclick={pinMain}
+					disabled={setBusy || !selectedSetId}
+					title="Pin this set as the pair's main set (its rating shows in the sidebar)"
+				>{selectedSetId && selectedSetId === mainSetId ? '★ Main' : '☆ Main'}</button>
 			</div>
 
 			{#if pendingSetId}
@@ -638,7 +668,7 @@
 					<C2fHeatmap
 						{depth}
 						tiles={refit.tiles}
-						{tau}
+						tau={refit.tau}
 						{seed}
 						selected={selectedTile}
 						onhover={(t) => hoveredTile = t}
@@ -664,9 +694,9 @@
 								>τ</button>
 								<button
 									class="mode-btn"
-									class:active={tauMode === 'z'}
-									onclick={() => setTauMode('z')}
-								>z-score</button>
+									class:active={tauMode === 'keep'}
+									onclick={() => setTauMode('keep')}
+								>exclude %</button>
 							</div>
 						</div>
 						{#if tauMode === 'tau'}
@@ -684,16 +714,16 @@
 						{:else}
 							<label class="tau-control">
 								<span class="tau-label">
-									z = {zVal.toFixed(2)}
+									exclude {excludePct}%
 									<span class="tau-derived">τ = {effectiveTau != null ? effectiveTau.toExponential(2) : '…'}</span>
 								</span>
 								<input
 									type="range"
-									min={Z_MIN}
-									max={Z_MAX}
-									step="0.05"
-									value={zVal}
-									oninput={onZInput}
+									min={EXCLUDE_MIN}
+									max={EXCLUDE_MAX}
+									step="1"
+									value={excludePct}
+									oninput={onExcludeInput}
 								/>
 							</label>
 						{/if}
@@ -804,12 +834,12 @@
 									{/key}
 								</div>
 								<div class="fr-overlay">
-									{#key previewTile}
+									{#key `${previewTile}-${row.label}`}
 										<DisplacedOverlay
 											heSrc={previewHeSrc}
-											ihcSrc={previewIhcSrc}
-											dx={row.dx}
-											dy={row.dy}
+											ihcSrc={liveCropSrc('ihc', row.dx, row.dy)}
+											dx={0}
+											dy={0}
 											emphasis={emphasis}
 										/>
 									{/key}
@@ -894,6 +924,40 @@
 		text-transform: uppercase;
 		color: #6b7280;
 	}
+
+	.rating-bar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		padding-bottom: 10px;
+		margin-bottom: 10px;
+		border-bottom: 1px solid #2a2d3a;
+	}
+
+	.rating-group {
+		display: inline-flex;
+		gap: 4px;
+	}
+
+	.rating-btn {
+		all: unset;
+		cursor: pointer;
+		padding: 3px 10px;
+		border-radius: 5px;
+		font-size: 0.72rem;
+		color: #9ca3af;
+		background: #1e2130;
+		border: 1px solid #2a2d3a;
+	}
+	.rating-btn:hover { border-color: #6b7280; }
+	.rating-btn:disabled { opacity: 0.4; cursor: default; }
+	.rating-btn:disabled:hover { border-color: #2a2d3a; }
+	.rating-btn.rating-bad.active { background: #ef4444; border-color: #ef4444; color: #fff; }
+	.rating-btn.rating-ok.active { background: #f59e0b; border-color: #f59e0b; color: #1a1205; }
+	.rating-btn.rating-good.active { background: #22c55e; border-color: #22c55e; color: #06210f; }
+
+	.main-btn.active { color: #fbbf24; border-color: #fbbf24; }
 
 	.set-select {
 		all: unset;

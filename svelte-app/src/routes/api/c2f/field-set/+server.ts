@@ -38,16 +38,17 @@ export const GET: RequestHandler = async ({ url }) => {
 
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
-	const valid = ['save', 'load', 'new', 'delete', 'rename'];
+	const valid = ['save', 'load', 'new', 'delete', 'rename', 'rate', 'main'];
 	if (!body || typeof body.pair_id !== 'number' || !valid.includes(body.action)) {
-		error(400, 'Expected { pair_id: number, action: save|load|new|delete|rename, set_id?, name? }');
+		error(400, 'Expected { pair_id: number, action: save|load|new|delete|rename|rate|main, set_id?, name?, rating? }');
 	}
 
-	const { pair_id, action, set_id, name } = body as {
+	const { pair_id, action, set_id, name, rating } = body as {
 		pair_id: number;
-		action: 'save' | 'load' | 'new' | 'delete' | 'rename';
+		action: 'save' | 'load' | 'new' | 'delete' | 'rename' | 'rate' | 'main';
 		set_id?: string;
 		name?: string;
+		rating?: string;
 	};
 
 	const args: string[] = [action, String(pair_id)];
@@ -58,13 +59,17 @@ export const POST: RequestHandler = async ({ request }) => {
 	} else if (action === 'new') {
 		if (typeof name !== 'string' || !name.trim()) error(400, 'new requires name');
 		args.push('--name', name.trim());
-	} else if (action === 'load' || action === 'delete') {
+	} else if (action === 'load' || action === 'delete' || action === 'main') {
 		if (!set_id) error(400, `${action} requires set_id`);
 		args.push('--id', set_id);
 	} else if (action === 'rename') {
 		if (!set_id) error(400, 'rename requires set_id');
 		if (typeof name !== 'string' || !name.trim()) error(400, 'rename requires name');
 		args.push('--id', set_id, '--name', name.trim());
+	} else if (action === 'rate') {
+		if (!set_id) error(400, 'rate requires set_id');
+		if (!['bad', 'ok', 'good'].includes(rating ?? '')) error(400, 'rate requires rating in bad|ok|good');
+		args.push('--id', set_id, '--rating', rating as string);
 	}
 
 	try {
