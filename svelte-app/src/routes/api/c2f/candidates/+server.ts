@@ -4,7 +4,7 @@ import { resolve, join } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import type { RequestHandler } from './$types';
 import { jobs, jobKey, type JobState } from '$lib/c2fJobs';
-import { pairCount } from '$lib/server/pairs';
+import { pairCount, fingerprintMatches } from '$lib/server/pairs';
 
 const REPO_ROOT = resolve('..'); // svelte-app sits one level below repo root
 const PYTHON    = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
@@ -21,6 +21,11 @@ export const GET: RequestHandler = ({ url }) => {
 
 	try {
 		const payload = JSON.parse(readFileSync(file, 'utf-8'));
+		if (!fingerprintMatches(Number(pair), payload.identity)) {
+			console.warn(
+				`[candidates] pair ${pair} identity mismatch: cached ${file} was written for different images (labels likely regenerated).`
+			);
+		}
 		return json({ cached: true, ...payload });
 	} catch {
 		return json({ cached: false });

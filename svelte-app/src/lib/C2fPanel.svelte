@@ -4,7 +4,17 @@
 	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
 	import DisplacementArrow from '$lib/DisplacementArrow.svelte';
 	import OverlayCanvas from '$lib/OverlayCanvas.svelte';
-	import { computeLNCC } from '$lib/imageUtils';
+	import { computeLNCC, loadNormalizedGray } from '$lib/imageUtils';
+	import { liveCropUrl } from '$lib/liveCropUrl';
+	import {
+		getCandidates,
+		computeCandidates,
+		getProgress,
+		getRefit,
+		saveFieldRequest,
+		getFieldSets,
+		postFieldSet
+	} from '$lib/c2fClient';
 
 	let {
 		pairId,
@@ -148,10 +158,7 @@
 	// displacements still keep full intersection with the fixed HE tile.
 	function liveCropSrc(side: 'he' | 'ihc', dx = 0, dy = 0): string {
 		if (!previewTile) return '';
-		const [x, y] = previewTile.split('_');
-		let u = `/api/live-crop/tile?pair=${pairId}&level=${depth}&x=${x}&y=${y}&side=${side}`;
-		if (dx !== 0 || dy !== 0) u += `&dx=${dx}&dy=${dy}`;
-		return u;
+		return liveCropUrl(pairId, depth, previewTile, side, dx, dy);
 	}
 
 	const previewHeSrc = $derived(previewTile ? liveCropSrc('he') : '');
@@ -210,9 +217,8 @@
 		const p = pairId, d = depth;
 		refitError = null;
 		try {
-			const r = await fetch(`/api/c2f/candidates?pair=${p}&depth=${d}`);
+			const data = await getCandidates(p, d);
 			if (p !== pairId || d !== depth) return; // navigated away mid-flight
-			const data = await r.json();
 			cached = data.cached === true;
 			if (cached) runRefit();
 		} catch (err) {
@@ -225,14 +231,14 @@
 		if (!cached) return;
 		const p = pairId, d = depth;
 		refitError = null;
-		const q = tauMode === 'keep' ? `keep=${keepFraction}` : `tau=${tau}`;
+		const gate = tauMode === 'keep' ? { keep: keepFraction } : { tau };
 		try {
-			const r = await fetch(`/api/c2f/refit?pair=${p}&depth=${d}&${q}`);
+			const res = await getRefit(p, d, gate);
 			if (p !== pairId || d !== depth) return; // stale response for a prior pair/depth
-			if (r.ok) {
-				refit = await r.json();
+			if (res.ok) {
+				refit = res.data ?? null;
 			} else {
-				refitError = (await r.text().catch(() => '')) || `refit failed (${r.status})`;
+				refitError = res.error ?? `refit failed`;
 			}
 		} catch (err) {
 			if (p !== pairId || d !== depth) return;
@@ -259,12 +265,7 @@
 	}
 
 	async function startCompute() {
-		const r = await fetch('/api/c2f/candidates', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ pair_id: pairId, depth })
-		});
-		const data = await r.json();
+		const data = await computeCandidates(pairId, depth);
 		job = data.state;
 		if (job?.running) startPolling();
 	}
@@ -272,8 +273,7 @@
 	function startPolling() {
 		if (pollTimer) return;
 		pollTimer = setInterval(async () => {
-			const r = await fetch(`/api/c2f/candidates/progress?pair=${pairId}&depth=${depth}`);
-			job = await r.json();
+			job = await getProgress(pairId, depth);
 			if (!job?.running) {
 				clearInterval(pollTimer!);
 				pollTimer = null;
@@ -289,16 +289,8 @@
 	async function saveField() {
 		saving = true;
 		try {
-			const body =
-				tauMode === 'keep'
-					? { pair_id: pairId, depth, keep: keepFraction }
-					: { pair_id: pairId, depth, tau };
-			const r = await fetch('/api/c2f/save-field', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body)
-			});
-			if (r.ok) savedAt = Date.now();
+			const gate = tauMode === 'keep' ? { keep: keepFraction } : { tau };
+			if (await saveFieldRequest(pairId, depth, gate)) savedAt = Date.now();
 		} finally {
 			saving = false;
 		}
@@ -306,9 +298,7 @@
 
 	async function loadSets() {
 		try {
-			const r = await fetch(`/api/c2f/field-set?pair=${pairId}`);
-			if (!r.ok) return;
-			const data = await r.json();
+			const data = await getFieldSets(pairId);
 			sets = data.sets ?? [];
 			activeSetId = data.active ?? null;
 			mainSetId = data.main ?? null;
@@ -332,15 +322,7 @@
 	async function postSet(bodyExtra: Record<string, unknown>): Promise<{ ok?: boolean } | null> {
 		setBusy = true;
 		try {
-			const r = await fetch('/api/c2f/field-set', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ pair_id: pairId, ...bodyExtra })
-			});
-			if (!r.ok) return null;
-			return await r.json();
-		} catch {
-			return null;
+			return await postFieldSet(pairId, bodyExtra);
 		} finally {
 			setBusy = false;
 		}
@@ -501,38 +483,6 @@
 				]
 			: []
 	);
-
-	async function loadNormalizedGray(src: string): Promise<{ data: Float32Array; w: number; h: number }> {
-		const img = new Image();
-		img.src = src;
-		await new Promise<void>((resolve, reject) => {
-			img.onload = () => resolve();
-			img.onerror = () => reject(new Error(`failed to load ${src}`));
-		});
-		const c = document.createElement('canvas');
-		c.width = img.naturalWidth;
-		c.height = img.naturalHeight;
-		const ctx = c.getContext('2d')!;
-		ctx.drawImage(img, 0, 0);
-		const raw = ctx.getImageData(0, 0, c.width, c.height).data;
-		const n = c.width * c.height;
-		const grayRaw = new Float64Array(n);
-		for (let i = 0; i < n; i++) {
-			grayRaw[i] = (raw[i * 4] + raw[i * 4 + 1] + raw[i * 4 + 2]) / 3;
-		}
-		const mean = grayRaw.reduce((a, b) => a + b, 0) / n;
-		let variance = 0;
-		for (let i = 0; i < n; i++) {
-			const d = grayRaw[i] - mean;
-			variance += d * d;
-		}
-		const std = Math.sqrt(variance / n) || 1;
-		const gray = new Float32Array(n);
-		for (let i = 0; i < n; i++) {
-			gray[i] = Math.min(255, Math.max(0, ((grayRaw[i] - mean) / std) * 64 + 128));
-		}
-		return { data: gray, w: c.width, h: c.height };
-	}
 
 	$effect(() => {
 		if (!previewResult || !previewHeSrc || !previewIhcSrc || !previewIhcIncludedSrc) {

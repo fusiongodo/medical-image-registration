@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { resolve, join } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import type { RequestHandler } from './$types';
+import { fingerprintMatches } from '$lib/server/pairs';
 
 const REPO_ROOT = resolve('..');
 const SMOOTH_DIR = resolve(REPO_ROOT, 'data', 'smooth_c2f');
@@ -16,6 +17,11 @@ export const GET: RequestHandler = ({ url }) => {
 
 	try {
 		const data = JSON.parse(readFileSync(file, 'utf-8'));
+		if (!fingerprintMatches(Number(pair), data.identity)) {
+			console.warn(
+				`[field] pair ${pair} identity mismatch: ${file} was written for different images (labels likely regenerated).`
+			);
+		}
 		return json(data.depths?.[String(depth)] ?? {});
 	} catch {
 		return json({});

@@ -36,6 +36,7 @@ import crop_core  # noqa: E402
 import tile_metrics  # noqa: E402
 
 from setup.coarse_to_fine import annotations
+from setup.coarse_to_fine.identity import pair_fingerprint
 from setup.coarse_to_fine.field import (
     Candidate,
     Field,
@@ -152,6 +153,7 @@ def cache_candidates(pair_id: int, target_depth: int, levels: list[int], tau: fl
     records, _ = compute_candidates(pair_id, target_depth, levels, tau, on_progress=_progress)
     payload = {
         "pair_id": pair_id,
+        "identity": pair_fingerprint(pair_id),
         "depth": target_depth,
         "levels": levels,
         "candidates": records,

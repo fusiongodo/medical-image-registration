@@ -37,18 +37,34 @@ from preprocess_tiles import tile_to_gray_png_array
 
 PAD_FILL = 255
 
-MAX_CACHED_PAGES = 6
+# Decoded WSI pyramid pages can be ~1 GB each, so cap the warm cache by total
+# bytes rather than a fixed page count to keep worker memory bounded.
+MAX_CACHE_BYTES = 4 * 1024 ** 3
 
 _labels_cache = None
+_labels_mtime: float | None = None
 _page_choice_cache: dict[tuple[int, int], tuple[int, int, int] | None] = {}
 _mask_cache: dict[int, "np.ndarray | None"] = {}
 _page_cache: "OrderedDict[tuple[int, int], np.ndarray]" = OrderedDict()
 
 
 def _labels() -> list[dict]:
-    global _labels_cache
-    if _labels_cache is None:
-        _labels_cache = json.loads(Path(conf.LABELS_PATH).read_text())
+    """Pair→image-id mapping, reloaded whenever the labels file changes on disk.
+
+    The worker is long-lived, so a stale in-memory copy would keep serving the
+    old pair set after fetch_labels regenerates the file. Watching the mtime
+    lets crops pick up regenerated labels without a manual worker restart.
+    """
+    global _labels_cache, _labels_mtime
+    path = Path(conf.LABELS_PATH)
+    mtime = path.stat().st_mtime
+    if _labels_cache is None or mtime != _labels_mtime:
+        _labels_cache = json.loads(path.read_text())
+        _labels_mtime = mtime
+        # These caches are keyed by pair id, whose meaning depends on the
+        # labels ordering; the page cache is keyed by image id and stays valid.
+        _page_choice_cache.clear()
+        _mask_cache.clear()
     return _labels_cache
 
 
@@ -141,6 +157,10 @@ def tissue_tiles(pair_id: int, level: int) -> dict:
     }
 
 
+def _page_cache_bytes() -> int:
+    return sum(p.nbytes for p in _page_cache.values())
+
+
 def _load_page(image_id: int, page_idx: int) -> np.ndarray:
     key = (image_id, page_idx)
     page = _page_cache.get(key)
@@ -148,7 +168,9 @@ def _load_page(image_id: int, page_idx: int) -> np.ndarray:
         with tifffile.TiffFile(_image_path(image_id)) as slide:
             page = slide.pages[page_idx].asarray()
         _page_cache[key] = page
-        while len(_page_cache) > MAX_CACHED_PAGES:
+        # Evict least-recently-used pages until within the byte budget, but
+        # always keep the page just loaded (it may alone exceed the budget).
+        while len(_page_cache) > 1 and _page_cache_bytes() > MAX_CACHE_BYTES:
             _page_cache.popitem(last=False)
     else:
         _page_cache.move_to_end(key)

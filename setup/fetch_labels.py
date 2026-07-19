@@ -64,6 +64,10 @@ def main():
 
     print(f"Matched {len(labels)} pair(s) with local images.")
 
+    # Deterministic order so a pair's array index (its id everywhere else) is
+    # reproducible across runs; otherwise re-fetching can silently renumber pairs.
+    labels.sort(key=lambda e: (e["target_image_id"], e["source_image_id"]))
+
     if not labels:
         print("[WARNING] No matching pairs found – labels file will not be written.")
         return

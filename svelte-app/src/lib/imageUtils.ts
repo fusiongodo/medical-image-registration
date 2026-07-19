@@ -203,6 +203,36 @@ export function loadGray(src: string): Promise<{ gray: Float32Array; w: number; 
 	});
 }
 
+/**
+ * Loads an image URL and returns a z-score-normalised grayscale Float32Array
+ * (mean 128, std 64, clamped to [0,255]). Browser-only (Image + Canvas).
+ * Used for in-browser LNCC² recomputation of human-corrected tiles.
+ */
+export async function loadNormalizedGray(src: string): Promise<{ data: Float32Array; w: number; h: number }> {
+	const img = new Image();
+	img.src = src;
+	await new Promise<void>((resolve, reject) => {
+		img.onload = () => resolve();
+		img.onerror = () => reject(new Error(`failed to load ${src}`));
+	});
+	const c = document.createElement('canvas');
+	c.width = img.naturalWidth;
+	c.height = img.naturalHeight;
+	const ctx = c.getContext('2d')!;
+	ctx.drawImage(img, 0, 0);
+	const raw = ctx.getImageData(0, 0, c.width, c.height).data;
+	const n = c.width * c.height;
+	const grayRaw = new Float64Array(n);
+	for (let i = 0; i < n; i++) grayRaw[i] = (raw[i * 4] + raw[i * 4 + 1] + raw[i * 4 + 2]) / 3;
+	const mean = grayRaw.reduce((a, b) => a + b, 0) / n;
+	let variance = 0;
+	for (let i = 0; i < n; i++) { const d = grayRaw[i] - mean; variance += d * d; }
+	const std = Math.sqrt(variance / n) || 1;
+	const gray = new Float32Array(n);
+	for (let i = 0; i < n; i++) gray[i] = Math.min(255, Math.max(0, ((grayRaw[i] - mean) / std) * 64 + 128));
+	return { data: gray, w: c.width, h: c.height };
+}
+
 function shiftGrayInner(gray: Float32Array, w: number, h: number, dx: number, dy: number): Float32Array {
 	const out = new Float32Array(w * h);
 	const rdx = Math.round(dx), rdy = Math.round(dy);

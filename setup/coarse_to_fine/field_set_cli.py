@@ -38,6 +38,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import conf
 
 from setup.coarse_to_fine import annotations
+from setup.coarse_to_fine.identity import pair_fingerprint
 
 DATA_ROOT = conf.PROJECT_ROOT / "data"
 SETS_ROOT = DATA_ROOT / "field_sets"
@@ -190,6 +191,7 @@ def save_set(pair_id: int, name: str, set_id: str | None = None) -> dict:
         "id": slug,
         "name": name,
         "pair_id": pair_id,
+        "identity": pair_fingerprint(pair_id),
         "created": created,
         "updated": now,
         "rating": existing.get("rating") if existing else None,

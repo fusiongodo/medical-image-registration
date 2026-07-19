@@ -36,6 +36,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import conf
 
 from setup.coarse_to_fine.annotations import Anchor
+from setup.coarse_to_fine.identity import pair_fingerprint
 
 CNN_W = conf.CNN_INPUT_WIDTH
 CNN_H = conf.CNN_INPUT_HEIGHT
@@ -302,6 +303,7 @@ def write_field_json(
     depths_out = {str(d): field.predict_tile_px(d) for d in range(max_depth + 1)}
     result: dict = {
         "pair_id": pair_id,
+        "identity": pair_fingerprint(pair_id),
         "fit_depth": max_depth,
         "depths": depths_out,
     }

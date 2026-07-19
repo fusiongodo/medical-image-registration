@@ -7,7 +7,18 @@
 	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
 	import LnccDistributionPanel from '$lib/LnccDistributionPanel.svelte';
 	import C2fPanel from '$lib/C2fPanel.svelte';
-	import { computeLNCC } from '$lib/imageUtils';
+	import { computeLNCC, loadNormalizedGray } from '$lib/imageUtils';
+	import { liveCropUrl } from '$lib/liveCropUrl';
+	import {
+		manualDisplacement as computeManualDisplacement,
+		correctVector,
+		humanVec
+	} from '$lib/displacement';
+	import {
+		getCandidates,
+		getRegAnnotations,
+		postRegAnnotation
+	} from '$lib/c2fClient';
 
 	let {
 		data
@@ -30,16 +41,8 @@
 	interface PatchEntry { lncc2: number; lncc2_auto: number; factor_auto: number; }
 	interface TileMetrics { delta_px: number; dx: number; dy: number; by_patch: Record<string, PatchEntry>; }
 
-	function tileXY(tile: string): [number, number] {
-		const [x, y] = tile.split('_').map((n) => parseInt(n, 10));
-		return [x, y];
-	}
-
 	function cropUrl(tile: string, side: 'he' | 'ihc', dx = 0, dy = 0): string {
-		const [x, y] = tileXY(tile);
-		let u = `/api/live-crop/tile?pair=${data.pairId}&level=${data.depth}&x=${x}&y=${y}&side=${side}`;
-		if (dx !== 0 || dy !== 0) u += `&dx=${dx}&dy=${dy}`;
-		return u;
+		return liveCropUrl(data.pairId, data.depth, tile, side, dx, dy);
 	}
 
 	// Crop reference for the moving IHC base crop: recrop at the previous-level
@@ -276,17 +279,15 @@
 		autoDispRefreshKey; // re-fetch after an alignment run
 		const pair = data.pairId, depth = data.depth;
 		let stale = false;
-		fetch(`/api/c2f/candidates?pair=${pair}&depth=${depth}`)
-			.then((r) => r.json())
-			.then((d: { cached?: boolean; candidates?: (C2fCandidate & { tile_loc: string })[] }) => {
-				if (stale) return;
-				const m = new Map<string, C2fCandidate>();
-				if (d.cached && Array.isArray(d.candidates)) {
-					for (const c of d.candidates)
-						m.set(c.tile_loc, { u: c.u, v: c.v, psr: c.psr, delta_px: c.delta_px, by_patch: c.by_patch });
-				}
-				c2fCandidates = m;
-			});
+		getCandidates(pair, depth).then((d) => {
+			if (stale) return;
+			const m = new Map<string, C2fCandidate>();
+			if (d.cached && Array.isArray(d.candidates)) {
+				for (const c of d.candidates)
+					m.set(c.tile_loc, { u: c.u, v: c.v, psr: c.psr, delta_px: c.delta_px, by_patch: c.by_patch });
+			}
+			c2fCandidates = m;
+		});
 		return () => { stale = true; c2fCandidates = new Map(); };
 	});
 
@@ -311,12 +312,10 @@
 		const pair = data.pairId, depth = data.depth;
 		annotationVersion; // re-fetch after each human action
 		let stale = false;
-		fetch(`/api/c2f/annotate?pair=${pair}&level=${depth}`)
-			.then((r) => r.json())
-			.then((fetched: Record<string, RegAnnotation>) => {
-				if (stale) return;
-				regAnnotations = new Map(Object.entries(fetched));
-			});
+		getRegAnnotations(pair, depth).then((fetched) => {
+			if (stale) return;
+			regAnnotations = new Map(Object.entries(fetched));
+		});
 		return () => { stale = true; };
 	});
 
@@ -341,12 +340,10 @@
 		const pair = data.pairId, depth = data.depth;
 		if (depth <= MIN_REFINE_LEVEL) { prevRegAnnotations = new Map(); return; }
 		let stale = false;
-		fetch(`/api/c2f/annotate?pair=${pair}&level=${depth - 1}`)
-			.then((r) => r.json())
-			.then((fetched: Record<string, RegAnnotation>) => {
-				if (stale) return;
-				prevRegAnnotations = new Map(Object.entries(fetched));
-			});
+		getRegAnnotations(pair, depth - 1).then((fetched) => {
+			if (stale) return;
+			prevRegAnnotations = new Map(Object.entries(fetched));
+		});
 		return () => { stale = true; prevRegAnnotations = new Map(); };
 	});
 
@@ -411,16 +408,7 @@
 	async function postAnnotate(tile: string, action: 'approve' | 'correct' | 'exclude' | 'clear', u = 0, v = 0) {
 		busyTile = tile;
 		try {
-			const payload: Record<string, unknown> = { pair_id: data.pairId, level: data.depth, tile_loc: tile, action };
-			if (action !== 'clear') {
-				payload.u = u;
-				payload.v = v;
-			}
-			const res = await fetch('/api/c2f/annotate', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(payload)
-			});
+			const res = await postRegAnnotation(data.pairId, data.depth, tile, action, u, v);
 			if (!res.ok) {
 				const detail = await res.text().catch(() => '');
 				showFlash(`${action} failed for ${tile}${detail ? `: ${detail.slice(0, 120)}` : ''}`, 'err');
@@ -449,15 +437,12 @@
 	}
 
 	function correctTile(tile: string) {
-		const ann = annotations[tile];
-		if (!ann || ann.hePoints.length < 1 || ann.ihcPoints.length < 1) {
+		const v = correctVector(annotations[tile], tileBase(tile));
+		if (!v) {
 			showFlash(`Place a landmark on HE and its match on IHC to correct ${tile}`, 'warn');
 			return;
 		}
-		const he = ann.hePoints[ann.hePoints.length - 1];
-		const ihc = ann.ihcPoints[ann.ihcPoints.length - 1];
-		const base = tileBase(tile);
-		postAnnotate(tile, 'correct', base.dx + he.x - ihc.x, base.dy + he.y - ihc.y);
+		postAnnotate(tile, 'correct', v.dx, v.dy);
 	}
 
 	function excludeTile(tile: string) {
@@ -469,17 +454,7 @@
 	}
 
 	function manualDisplacement(tile: string): { dx: number; dy: number } | null {
-		const ann = annotations[tile];
-		if (!ann) return null;
-		const pairs = Math.min(ann.hePoints.length, ann.ihcPoints.length);
-		if (pairs === 0) return null;
-		let dx = 0, dy = 0;
-		for (let i = 0; i < pairs; i++) {
-			dx += ann.hePoints[i].x - ann.ihcPoints[i].x;
-			dy += ann.hePoints[i].y - ann.ihcPoints[i].y;
-		}
-		const base = tileBase(tile);
-		return { dx: base.dx + dx / pairs, dy: base.dy + dy / pairs };
+		return computeManualDisplacement(annotations[tile], tileBase(tile));
 	}
 
 	// ── Auto-displacement (per tile, from c2f_cache FFT candidates) ──────────
@@ -489,31 +464,6 @@
 		for (const [tile, c] of c2fCandidates) m.set(tile, { dx: c.u, dy: c.v });
 		return m;
 	});
-
-	async function loadNormalizedGray(src: string): Promise<{ data: Float32Array; w: number; h: number }> {
-		const img = new Image();
-		img.src = src;
-		await new Promise<void>((res, rej) => {
-			img.onload = () => res();
-			img.onerror = () => rej(new Error(`failed to load ${src}`));
-		});
-		const c = document.createElement('canvas');
-		c.width = img.naturalWidth;
-		c.height = img.naturalHeight;
-		const ctx = c.getContext('2d')!;
-		ctx.drawImage(img, 0, 0);
-		const raw = ctx.getImageData(0, 0, c.width, c.height).data;
-		const n = c.width * c.height;
-		const grayRaw = new Float64Array(n);
-		for (let i = 0; i < n; i++) grayRaw[i] = (raw[i * 4] + raw[i * 4 + 1] + raw[i * 4 + 2]) / 3;
-		const mean = grayRaw.reduce((a, b) => a + b, 0) / n;
-		let variance = 0;
-		for (let i = 0; i < n; i++) { const d = grayRaw[i] - mean; variance += d * d; }
-		const std = Math.sqrt(variance / n) || 1;
-		const gray = new Float32Array(n);
-		for (let i = 0; i < n; i++) gray[i] = Math.min(255, Math.max(0, ((grayRaw[i] - mean) / std) * 64 + 128));
-		return { data: gray, w: c.width, h: c.height };
-	}
 
 	// Recompute LNCC² for tiles whose displacement is human-driven, so the
 	// score columns reflect the manual correction instead of the stale FFT cache.
@@ -525,7 +475,7 @@
 		for (const t of data.tiles) {
 			const corr = regAnnotations.get(t.tile);
 			const manual = manualDisplacement(t.tile);
-			const vec = manual ?? (corr?.type === 'correct' ? { dx: corr.u, dy: corr.v } : null);
+			const vec = humanVec(manual, corr);
 			if (!vec) continue;
 			const base = tileBase(t.tile);
 			jobs.push({
@@ -826,13 +776,8 @@
 		<OverlayCanvas {heSrc} {ihcSrc} />
 		{@const manual = manualDisplacement(t.tile)}
 		{@const corrDisp = regAnnotations.get(t.tile)}
-		{@const autoVec = manual
-			? manual
-			: corrDisp?.type === 'correct'
-				? { dx: corrDisp.u, dy: corrDisp.v }
-				: tileAutoDisp !== undefined
-					? { dx: tileAutoDisp.dx, dy: tileAutoDisp.dy }
-					: null}
+		{@const autoVec = humanVec(manual, corrDisp)
+			?? (tileAutoDisp !== undefined ? { dx: tileAutoDisp.dx, dy: tileAutoDisp.dy } : null)}
 		{#if autoVec}
 			<DisplacedOverlay {heSrc} ihcSrc={cropUrl(t.tile, 'ihc', autoVec.dx, autoVec.dy)} dx={0} dy={0}
 				keypoints={tileKps} emphasis={overlayEmphasis} />
