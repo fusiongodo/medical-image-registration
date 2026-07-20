@@ -4,6 +4,7 @@
 	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
 	import DisplacementArrow from '$lib/DisplacementArrow.svelte';
 	import OverlayCanvas from '$lib/OverlayCanvas.svelte';
+	import PointCanvas from '$lib/PointCanvas.svelte';
 	import { computeLNCC, loadNormalizedGray } from '$lib/imageUtils';
 	import { liveCropUrl } from '$lib/liveCropUrl';
 	import {
@@ -22,7 +23,6 @@
 		pairId,
 		depth,
 		annotationVersion = 0,
-		seed = [],
 		tileMetrics = new Map(),
 		patchSize = 50,
 		emphasis = null,
@@ -31,6 +31,7 @@
 		onExclude,
 		onClear,
 		onMask,
+		onCorrect,
 		onReload,
 		onComputed,
 		onFlash
@@ -38,7 +39,6 @@
 		pairId: number;
 		depth: number;
 		annotationVersion?: number;
-		seed?: string[];
 		tileMetrics?: Map<string, TileMetrics>;
 		patchSize?: number;
 		emphasis?: 'he' | 'ihc' | null;
@@ -47,6 +47,7 @@
 		onExclude?: (tile: string) => void;
 		onClear?: (tile: string) => void;
 		onMask?: (tile: string, masked: boolean) => void;
+		onCorrect?: (tile: string, u: number, v: number) => void;
 		onReload?: () => void;
 		onComputed?: () => void;
 		onFlash?: (msg: string, kind?: 'ok' | 'warn' | 'err') => void;
@@ -185,6 +186,39 @@
 
 	function onSelect(tile: string | null) {
 		selectedTile = selectedTile === tile ? null : tile;
+	}
+
+	// Landmark-based correction for the inspected tile: one point on the fixed HE
+	// and its match on the prior-aligned IHC. Correction = prior + (he - ihc),
+	// same convention as the table's Correct.
+	interface Pt { x: number; y: number; }
+	let hePt = $state<Pt | null>(null);
+	let ihcPt = $state<Pt | null>(null);
+	let correcting = $state(false);
+
+	$effect(() => {
+		void previewTile;
+		hePt = null;
+		ihcPt = null;
+		correcting = false;
+	});
+
+	function cancelCorrect() {
+		hePt = null;
+		ihcPt = null;
+		correcting = false;
+	}
+
+	function commitCorrect() {
+		if (!previewResult || !hePt || !ihcPt) return;
+		// The upper-row IHC is shown at the refined displacement (ux, uy), so the
+		// clicked residual composes on top of it: total = refined + (he - ihc).
+		const u = previewResult.ux + (hePt.x - ihcPt.x);
+		const v = previewResult.uy + (hePt.y - ihcPt.y);
+		onCorrect?.(previewResult.tile_loc, u, v);
+		hePt = null;
+		ihcPt = null;
+		correcting = false;
 	}
 
 	$effect(() => {
@@ -529,15 +563,6 @@
 
 	let tileStats = $state<TileStats | null>(null);
 
-	const previewRows = $derived(
-		previewResult
-			? [
-					{ label: 'Included', dx: previewResult.ux, dy: previewResult.uy },
-					{ label: 'Excluded', dx: previewResult.prior_dx, dy: previewResult.prior_dy }
-				]
-			: []
-	);
-
 	$effect(() => {
 		if (!previewResult || !previewHeSrc || !previewIhcSrc || !previewIhcIncludedSrc) {
 			tileStats = null;
@@ -586,7 +611,7 @@
 			const target = e.target as HTMLElement | null;
 			if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
 			const key = e.key.toLowerCase();
-			if (key !== 'a' && key !== 'x' && key !== 's') return;
+			if (key !== 'a' && key !== 'e' && key !== 's' && key !== 'm') return;
 			e.preventDefault();
 
 			const tile = previewTile;
@@ -603,9 +628,13 @@
 			if (key === 'a') {
 				if (result.annotated) onFlash?.(`${tile} already voted — Shift+S to clear`, 'warn');
 				else onApprove?.(tile, result.ux, result.uy);
-			} else if (key === 'x') {
+			} else if (key === 'e') {
 				if (result.annotated) onFlash?.(`${tile} already voted — Shift+S to clear`, 'warn');
 				else onExclude?.(tile);
+			} else if (key === 'm') {
+				const masked = result.masked ?? false;
+				onMask?.(tile, masked);
+				onFlash?.(`${tile} ${masked ? 'unmasked' : 'masked'}`, 'ok');
 			} else {
 				if (result.annotated) onClear?.(tile);
 				else onFlash?.(`${tile} has no vote to clear`, 'warn');
@@ -715,7 +744,6 @@
 						{depth}
 						tiles={refit.tiles}
 						tau={refit.tau}
-						{seed}
 						selected={selectedTile}
 						onhover={(t) => hoveredTile = t}
 						onselect={onSelect}
@@ -819,18 +847,20 @@
 					</div>
 
 					</div>
-				{#if previewResult}
-					<div class="tile-row">
-						<div class="tile-row-header">
-							<span class="tile-row-title">
-								{#if selectedTile}
-									Selected {selectedTile}
-								{:else}
-									Hover {hoveredTile}
-								{/if}
-							</span>
+				<div class="tile-row">
+					<div class="tile-row-header">
+						<span class="tile-row-title">
+							{#if selectedTile}
+								Selected {selectedTile}
+							{:else if hoveredTile}
+								Hover {hoveredTile}
+							{:else}
+								No tile selected — hover or click a heatmap tile
+							{/if}
+						</span>
+						{#if previewResult}
 							<div class="tile-actions">
-								<span class="shortcut-hint">Shift+A approve · Shift+X exclude · Shift+S clear</span>
+								<span class="shortcut-hint">Shift+A approve · Shift+E exclude · Shift+S clear · Shift+M mask</span>
 								{#if previewResult.annotated}
 									<span class="ann-badge ann-badge-{previewResult.annotated}">
 										{previewResult.annotated === 'correct'
@@ -861,79 +891,181 @@
 										: 'Mask out this tile and its descendants'}
 								>{previewResult.masked ? 'Unmask tile' : 'Mask tile'}</button>
 							</div>
-						</div>
-						<div
-							class="tile-row-grid"
-							style:grid-template-columns="48px repeat(2, auto) repeat(4, 80px)"
-						>
-							<span class="col-header"></span>
-							<span class="col-header">Overlay</span>
-							<span class="col-header col-header-flex">
-								Refined overlay
-								<span class="emph-pills">
-									<button
-										class="emph-pill"
-										class:active={emphasis === 'he'}
-										onclick={() => onToggleEmphasis?.('he')}
-										title="Highlight fixed HE (Shift+Q)"
-									>HE</button>
-									<button
-										class="emph-pill"
-										class:active={emphasis === 'ihc'}
-										onclick={() => onToggleEmphasis?.('ihc')}
-										title="Highlight moving IHC (Shift+W)"
-									>IHC</button>
-								</span>
+						{/if}
+					</div>
+					<div
+						class="tile-row-grid"
+						style:grid-template-columns="48px repeat(2, auto) repeat(4, 80px) 92px"
+					>
+						<span class="col-header"></span>
+						<span class="col-header">Overlay</span>
+						<span class="col-header col-header-flex">
+							Refined overlay
+							<span class="emph-pills">
+								<button
+									class="emph-pill"
+									class:active={emphasis === 'he'}
+									onclick={() => onToggleEmphasis?.('he')}
+									title="Highlight fixed HE (Shift+Q)"
+								>HE</button>
+								<button
+									class="emph-pill"
+									class:active={emphasis === 'ihc'}
+									onclick={() => onToggleEmphasis?.('ihc')}
+									title="Highlight moving IHC (Shift+W)"
+								>IHC</button>
 							</span>
-							<span class="col-header">LNCC²</span>
-							<span class="col-header">|Δ| refined</span>
-							<span class="col-header">LNCC² refined</span>
-							<span class="col-header">Factor refined</span>
+						</span>
+						<span class="col-header">LNCC²</span>
+						<span class="col-header">|Δ| refined</span>
+						<span class="col-header">LNCC² refined</span>
+						<span class="col-header">Factor refined</span>
+						<span class="col-header">Correct</span>
 
-							{#each previewRows as row (row.label)}
-								{@const stats = tileStats?.rows.find((r) => r.label === row.label)}
-								<span class="fr-label {row.label.toLowerCase()}">{row.label}</span>
-								<div class="fr-overlay">
+						<span class="fr-label included">Included</span>
+						<div class="fr-overlay">
+							{#if previewResult}
+								{#key previewTile}
+									<OverlayCanvas heSrc={previewHeSrc} ihcSrc={previewIhcSrc} />
+								{/key}
+							{:else}
+								<div class="fr-placeholder"></div>
+							{/if}
+						</div>
+						<div class="fr-overlay">
+							{#if previewResult}
+								{#key `${previewTile}-incl`}
+									<DisplacedOverlay
+										heSrc={previewHeSrc}
+										ihcSrc={previewIhcIncludedSrc}
+										dx={0}
+										dy={0}
+										emphasis={emphasis}
+									/>
+								{/key}
+							{:else}
+								<div class="fr-placeholder"></div>
+							{/if}
+						</div>
+						{#if previewResult && tileStats}
+							{@const incl = tileStats.rows.find((r) => r.label === 'Included')}
+							<div class="fr-score" style:background={lnccColor(tileStats.lncc2)}>
+								<span class="value">{tileStats.lncc2.toFixed(3)}</span>
+							</div>
+							<div class="fr-disp"><DisplacementArrow dx={previewResult.ux} dy={previewResult.uy} /></div>
+							<div class="fr-score" style:background={lnccColor(incl?.lncc2 ?? 0)}>
+								<span class="value">{(incl?.lncc2 ?? 0).toFixed(3)}</span>
+							</div>
+							<div class="fr-factor" class:positive={(incl?.factor ?? 0) > 1}>{(incl?.factor ?? 0).toFixed(3)}</div>
+						{:else}
+							<div class="fr-score"><span class="placeholder">…</span></div>
+							<div class="fr-disp"><span class="placeholder">…</span></div>
+							<div class="fr-score"><span class="placeholder">…</span></div>
+							<div class="fr-factor"><span class="placeholder">…</span></div>
+						{/if}
+						<div class="fr-correct">
+							{#if previewResult}
+								{#if correcting}
+									<span class="fr-correct-hint">editing ↓</span>
+								{:else}
+									<button
+										class="action-btn"
+										onclick={() => (correcting = true)}
+										title="Place an HE + IHC landmark pair to correct this tile"
+									>Correct</button>
+								{/if}
+							{:else}
+								<span class="placeholder">…</span>
+							{/if}
+						</div>
+
+						<span class="fr-label excluded">Excluded</span>
+						<div class="fr-overlay">
+							{#if previewResult}
+								{#key previewTile}
+									<OverlayCanvas heSrc={previewHeSrc} ihcSrc={previewIhcSrc} />
+								{/key}
+							{:else}
+								<div class="fr-placeholder"></div>
+							{/if}
+						</div>
+						<div class="fr-overlay">
+							{#if previewResult}
+								{#key `${previewTile}-excl`}
+									<DisplacedOverlay
+										heSrc={previewHeSrc}
+										ihcSrc={liveCropSrc('ihc', previewResult.prior_dx, previewResult.prior_dy)}
+										dx={0}
+										dy={0}
+										emphasis={emphasis}
+									/>
+								{/key}
+							{:else}
+								<div class="fr-placeholder"></div>
+							{/if}
+						</div>
+						{#if previewResult && tileStats}
+							{@const excl = tileStats.rows.find((r) => r.label === 'Excluded')}
+							<div class="fr-score" style:background={lnccColor(tileStats.lncc2)}>
+								<span class="value">{tileStats.lncc2.toFixed(3)}</span>
+							</div>
+							<div class="fr-disp"><DisplacementArrow dx={previewResult.prior_dx} dy={previewResult.prior_dy} /></div>
+							<div class="fr-score" style:background={lnccColor(excl?.lncc2 ?? 0)}>
+								<span class="value">{(excl?.lncc2 ?? 0).toFixed(3)}</span>
+							</div>
+							<div class="fr-factor" class:positive={(excl?.factor ?? 0) > 1}>{(excl?.factor ?? 0).toFixed(3)}</div>
+						{:else}
+							<div class="fr-score"><span class="placeholder">…</span></div>
+							<div class="fr-disp"><span class="placeholder">…</span></div>
+							<div class="fr-score"><span class="placeholder">…</span></div>
+							<div class="fr-factor"><span class="placeholder">…</span></div>
+						{/if}
+						<div class="fr-correct"></div>
+					</div>
+
+					{#if previewResult && correcting}
+						<div class="correct-row">
+							<div class="correct-pair">
+								<div class="correct-cell">
+									<span class="correct-cap">HE</span>
 									{#key previewTile}
-										<OverlayCanvas heSrc={previewHeSrc} ihcSrc={previewIhcSrc} />
-									{/key}
-								</div>
-								<div class="fr-overlay">
-									{#key `${previewTile}-${row.label}`}
-										<DisplacedOverlay
-											heSrc={previewHeSrc}
-											ihcSrc={liveCropSrc('ihc', row.dx, row.dy)}
-											dx={0}
-											dy={0}
-											emphasis={emphasis}
+										<PointCanvas
+											src={previewHeSrc}
+											active={true}
+											points={hePt ? [hePt] : []}
+											onpoint={(x, y) => (hePt = { x, y })}
 										/>
 									{/key}
 								</div>
-								{#if stats}
-									<div class="fr-score" style:background={lnccColor(tileStats?.lncc2 ?? 0)}>
-										<span class="value">{(tileStats?.lncc2 ?? 0).toFixed(3)}</span>
-									</div>
-									<div class="fr-disp">
-										<DisplacementArrow dx={row.dx} dy={row.dy} />
-									</div>
-									<div class="fr-score" style:background={lnccColor(stats.lncc2)}>
-										<span class="value">{stats.lncc2.toFixed(3)}</span>
-									</div>
-									<div class="fr-factor" class:positive={stats.factor > 1}>
-										{stats.factor.toFixed(3)}
-									</div>
-								{:else}
-									<div class="fr-score"><span class="placeholder">…</span></div>
-									<div class="fr-disp"><span class="placeholder">…</span></div>
-									<div class="fr-score"><span class="placeholder">…</span></div>
-									<div class="fr-factor"><span class="placeholder">…</span></div>
-								{/if}
-							{/each}
+								<div class="correct-cell">
+									<span class="correct-cap">IHC (refined)</span>
+									{#key previewTile}
+										<PointCanvas
+											src={previewIhcIncludedSrc}
+											active={true}
+											points={ihcPt ? [ihcPt] : []}
+											onpoint={(x, y) => (ihcPt = { x, y })}
+										/>
+									{/key}
+								</div>
+							</div>
+							<div class="correct-controls">
+								<span class="fr-correct-hint">Click the same feature on HE, then on IHC.</span>
+								<button
+									class="action-btn"
+									disabled={!hePt || !ihcPt}
+									onclick={commitCorrect}
+								>Confirm correction</button>
+								<button
+									class="action-btn action-btn-grey"
+									disabled={!hePt && !ihcPt}
+									onclick={() => { hePt = null; ihcPt = null; }}
+								>Clear points</button>
+								<button class="action-btn action-btn-grey" onclick={cancelCorrect}>Cancel</button>
+							</div>
 						</div>
-					</div>
-				{:else}
-					<div class="tile-row-hint">Hover or click a heatmap tile to inspect it</div>
-				{/if}
+					{/if}
+				</div>
 			{/if}
 		</div>
 	{/if}
@@ -1426,11 +1558,42 @@
 		border-color: #166534;
 	}
 
-	.tile-row-hint {
-		margin-top: 14px;
-		font-size: 0.72rem;
-		color: #6b7280;
-		padding: 10px 0;
+	.fr-correct {
+		width: 92px;
+		height: 180px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+	}
+	.fr-correct-hint { font-size: 0.62rem; color: #6b7280; text-align: center; }
+
+	.correct-row {
+		margin-top: 12px;
+		padding-top: 12px;
 		border-top: 1px solid #2a2d3a;
+		display: flex;
+		align-items: flex-start;
+		gap: 18px;
+		flex-wrap: wrap;
+	}
+	.correct-pair { display: flex; gap: 12px; }
+	.correct-cell { display: flex; flex-direction: column; gap: 4px; }
+	.correct-cap { font-size: 0.68rem; color: #9ca3af; font-weight: 600; }
+	.correct-controls {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+		padding-top: 20px;
+	}
+	.correct-controls .fr-correct-hint { text-align: left; }
+	.fr-placeholder {
+		height: 180px;
+		width: 269px;
+		border: 1px dashed #2a2d3a;
+		border-radius: 4px;
+		background: #0f1117;
 	}
 </style>

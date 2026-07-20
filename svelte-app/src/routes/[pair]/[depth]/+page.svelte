@@ -185,7 +185,6 @@
 	}
 
 	const seedTiles = $derived(data.tiles.filter((t: TileMeta) => isSeed(t.tile, data.depth)));
-	const seedLocs = $derived(seedTiles.map((t: TileMeta) => t.tile));
 	const seedDone = $derived(seedTiles.filter((t: TileMeta) => regAnnotations.has(t.tile)).length);
 
 	$effect(() => {
@@ -452,6 +451,10 @@
 		postAnnotate(tile, 'approve', u, v);
 	}
 
+	function correctTileUv(tile: string, u: number, v: number) {
+		postAnnotate(tile, 'correct', u, v);
+	}
+
 	function correctTile(tile: string) {
 		const v = correctVector(annotations[tile], tileBase(tile));
 		if (!v) {
@@ -628,7 +631,7 @@
 <div class="scrollable">
 
 <LnccDistributionPanel pairId={data.pairId} depth={data.depth} {patchSize} refreshKey={autoDispRefreshKey} />
-<C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} seed={seedLocs} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} onMask={(tile, masked) => maskTile(tile, masked ? 'unmask' : 'mask')} onReload={reloadAfterFieldSet} onComputed={() => { autoDispRefreshKey++; }} onFlash={showFlash} />
+<C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} onMask={(tile, masked) => maskTile(tile, masked ? 'unmask' : 'mask')} onCorrect={correctTileUv} onReload={reloadAfterFieldSet} onComputed={() => { autoDispRefreshKey++; }} onFlash={showFlash} />
 
 {#if flash}
 	<div class="flash flash-{flash.kind}" role="status">{flash.msg}</div>

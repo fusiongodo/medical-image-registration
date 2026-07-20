@@ -15,7 +15,6 @@
 		depth,
 		tiles,
 		tau,
-		seed = [],
 		selected = null,
 		onhover,
 		onselect
@@ -23,7 +22,6 @@
 		depth: number;
 		tiles: TileResult[];
 		tau: number;
-		seed?: string[];
 		selected?: string | null;
 		onhover?: (tile_loc: string | null) => void;
 		onselect?: (tile_loc: string | null) => void;
@@ -33,7 +31,6 @@
 	let svgEl = $state<SVGSVGElement | null>(null);
 	const grid = $derived(2 ** depth);
 	const cell = $derived(SIZE / grid);
-	const seedSet = $derived(new Set(seed));
 	const tileMap = $derived(
 		tiles.reduce((m, t) => {
 			m.set(t.tile_loc, t);
@@ -127,14 +124,12 @@
 				opacity = 0.5 + 0.45 * Math.min(1, (ratio - 1) / 3);
 			}
 			const stateLabel = isExcluded ? 'excluded' : asKept ? 'kept' : 'rejected';
-			const isSeed = seedSet.has(t.tile_loc);
 			const stroke = isExcluded
 				? null
 				: t.annotated === 'correct' ? '#a5b4fc'
 				: t.annotated === 'approve' ? '#eab308'
-				: isSeed ? '#e8eaf0'
 				: null;
-			const strokeWidth = isExcluded ? 0 : t.annotated ? 2 : isSeed ? 1 : 0;
+			const strokeWidth = isExcluded ? 0 : t.annotated ? 2 : 0;
 			const strokeOpacity = t.annotated ? 1 : 0.5;
 			const isSelected = t.tile_loc === selected;
 			return {
