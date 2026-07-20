@@ -18,6 +18,11 @@ export interface PairStatus {
 
 export const MAX_DEPTH = 5;
 
+/** CNN tile dimensions (mirrors conf.CNN_INPUT_WIDTH/HEIGHT). A whole-image
+ * preview at quadtree level L is (2**L * CNN_WIDTH) x (2**L * CNN_HEIGHT). */
+export const CNN_WIDTH = 512;
+export const CNN_HEIGHT = 344;
+
 export function deriveStatus(validation: ValidationStore, pairId: number): PairStatus {
 	const pv = validation[String(pairId)];
 	if (!pv || Object.keys(pv).length === 0) {

@@ -53,6 +53,9 @@
 		onFlash?: (msg: string, kind?: 'ok' | 'warn' | 'err') => void;
 	} = $props();
 
+	// The global deskew is only meaningful at the coarsest levels (1 or 4 tiles).
+	const DESKEW_MAX_LEVEL = 1;
+
 	type Rating = 'bad' | 'ok' | 'good';
 
 	interface FieldSet {
@@ -704,6 +707,15 @@
 				>{autoCompute ? '● Auto-compute' : '○ Auto-compute'}</button>
 			</div>
 
+			{#if depth <= DESKEW_MAX_LEVEL}
+				<a class="deskew-link" href={`/deskew/${pairId}`}>
+					<span class="deskew-link-title">Deskew (global affine) ↗</span>
+					<span class="deskew-link-sub">
+						Correct strong stretch/shear on a big high-res HE↔IHC view; warps all IHC crops.
+					</span>
+				</a>
+			{/if}
+
 			{#if pendingSetId}
 				<div class="set-modal-backdrop">
 					<div class="set-modal" role="dialog" aria-modal="true">
@@ -1112,6 +1124,30 @@
 		padding-bottom: 10px;
 		margin-bottom: 10px;
 		border-bottom: 1px solid #2a2d3a;
+	}
+
+	.deskew-link {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 8px 10px;
+		margin-bottom: 10px;
+		border: 1px solid #3a3350;
+		border-radius: 6px;
+		background: #14101e;
+		text-decoration: none;
+	}
+	.deskew-link:hover {
+		border-color: #6366f1;
+	}
+	.deskew-link-title {
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: #c4b5fd;
+	}
+	.deskew-link-sub {
+		font-size: 0.66rem;
+		color: #8b8397;
 	}
 
 	.set-label {

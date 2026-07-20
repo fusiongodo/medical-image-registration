@@ -153,6 +153,35 @@ def _fit_affine(pts: np.ndarray, du: np.ndarray, dv: np.ndarray, w: np.ndarray) 
     return Field(kind="affine", affine=(tuple(map(float, cu)), tuple(map(float, cv))))
 
 
+def fit_affine_norot(
+    pts: np.ndarray, du: np.ndarray, dv: np.ndarray, w: np.ndarray
+) -> Field:
+    """
+    Weighted least-squares affine field whose linear part is symmetric (a2 == b1),
+    which structurally excludes rotation: it can only translate, stretch each axis
+    independently, and shear. Used by the global deskew.
+
+    pts: (n,2) normalised positions; du/dv: (n,) normalised displacements;
+    w:   (n,) anchor weights. Solves for [a0, a1, s, b0, b2] in
+        du = a0 + a1*x + s*y
+        dv = b0 + s*x + b2*y
+    and returns a Field(kind="affine") with affine = ((a0,a1,s), (b0,s,b2)).
+    """
+    n = len(pts)
+    x, y = pts[:, 0], pts[:, 1]
+    z, o = np.zeros(n), np.ones(n)
+    design = np.empty((2 * n, 5))
+    rhs = np.empty(2 * n)
+    design[0::2] = np.column_stack([o, x, y, z, z])
+    rhs[0::2] = du
+    design[1::2] = np.column_stack([z, z, x, o, y])
+    rhs[1::2] = dv
+    sw = np.repeat(np.sqrt(np.maximum(w, 1e-6)), 2)
+    sol, *_ = np.linalg.lstsq(design * sw[:, None], rhs * sw, rcond=None)
+    a0, a1, s, b0, b2 = (float(v) for v in sol)
+    return Field(kind="affine", affine=((a0, a1, s), (b0, s, b2)))
+
+
 def fit_field(anchors: list[Anchor], base_smoothing: float = BASE_SMOOTHING) -> Field:
     """
     Fit a weighted thin-plate-spline field from normalised-space anchors.

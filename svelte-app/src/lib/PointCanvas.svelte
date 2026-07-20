@@ -8,12 +8,18 @@
 		active = false,
 		points = [],
 		keypoints = [],
+		width = 269,
+		height = 180,
+		markerScale = 1,
 		onpoint
 	}: {
 		src: string;
 		active?: boolean;
 		points?: Point[];
 		keypoints?: number[][];
+		width?: number;
+		height?: number;
+		markerScale?: number;
 		onpoint?: (x: number, y: number) => void;
 	} = $props();
 
@@ -59,18 +65,22 @@
 
 	const COLORS = ['#60a5fa', '#f97316'];
 	const KP_R = $derived(naturalW * 0.008);
+	const DOT_R = $derived(naturalW * 0.018 * markerScale);
+	const DOT_STROKE = $derived(naturalW * 0.004 * markerScale);
+	const DOT_FONT = $derived(naturalW * 0.035 * markerScale);
+	const DOT_TEXT_DY = $derived(naturalW * 0.006 * markerScale);
 </script>
 
-<div class="wrap" class:active>
-	<canvas bind:this={canvas} onclick={handleClick}></canvas>
+<div class="wrap" class:active style="width:{width}px;height:{height}px">
+	<canvas bind:this={canvas} onclick={handleClick} style="width:{width}px;height:{height}px"></canvas>
 	{#if keypoints.length > 0 || points.length > 0}
 		<svg class="overlay" viewBox="0 0 {naturalW} {naturalH}" preserveAspectRatio="none">
 			{#each keypoints as kp}
 				<circle cx={kp[0]} cy={kp[1]} r={KP_R} fill="#facc15" fill-opacity="0.7" stroke="none" />
 			{/each}
 			{#each points as pt, i}
-				<circle cx={pt.x} cy={pt.y} r={naturalW * 0.018} fill={COLORS[i % 2]} stroke="#000" stroke-width={naturalW * 0.004} opacity="0.85" />
-				<text x={pt.x} y={pt.y + naturalW * 0.006} text-anchor="middle" dominant-baseline="middle" font-size={naturalW * 0.035} fill="#000" font-weight="bold">{i + 1}</text>
+				<circle cx={pt.x} cy={pt.y} r={DOT_R} fill={COLORS[i % 2]} stroke="#000" stroke-width={DOT_STROKE} opacity="0.85" />
+				<text x={pt.x} y={pt.y + DOT_TEXT_DY} text-anchor="middle" dominant-baseline="middle" font-size={DOT_FONT} fill="#000" font-weight="bold">{i + 1}</text>
 			{/each}
 		</svg>
 	{/if}

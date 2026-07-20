@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 import tifffile
 from PIL import Image
+from scipy import ndimage
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -44,6 +45,8 @@ CNN_H = conf.CNN_INPUT_HEIGHT
 
 PAD_FILL = 255
 
+DESKEW_DIR = conf.PROJECT_ROOT / "data" / "deskew"
+
 # Pages are cached as grid*CNN greyscale (~180 MB/side at level 5) rather than
 # the raw multi-GB RGB page, so cap the warm cache by total bytes to keep the
 # worker (and the run.py candidate subprocess) memory bounded.
@@ -54,6 +57,8 @@ _labels_mtime: float | None = None
 _page_choice_cache: dict[tuple[int, int], tuple[int, int, int] | None] = {}
 _mask_cache: dict[int, "np.ndarray | None"] = {}
 _page_cache: "OrderedDict[tuple[int, int, int], np.ndarray]" = OrderedDict()
+# pair_id -> (json mtime | None, affine coeffs | None); self-invalidates on mtime.
+_deskew_cache: dict[int, tuple[float | None, "tuple | None"]] = {}
 
 
 def _labels() -> list[dict]:
@@ -236,8 +241,69 @@ def _crop_padded(gpage: np.ndarray, x_idx: int, y_idx: int, dx: float, dy: float
     return out
 
 
+def _deskew_affine(pair_id: int) -> "tuple | None":
+    """
+    Global deskew affine for a pair as ((a0,a1,s),(b0,s,b2)) in normalised [0,1]
+    image space, or None. Read from data/deskew/{pair}.json and cached with an
+    mtime guard so edits (or clears) are picked up without a worker restart.
+    """
+    path = DESKEW_DIR / f"{pair_id}.json"
+    mtime = path.stat().st_mtime if path.exists() else None
+    cached = _deskew_cache.get(pair_id)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    affine = None
+    if mtime is not None:
+        try:
+            affine = json.loads(path.read_text()).get("affine")
+        except Exception:
+            affine = None
+    _deskew_cache[pair_id] = (mtime, affine)
+    return affine
+
+
+def _crop_warped(gpage: np.ndarray, x_idx: int, y_idx: int, dx: float, dy: float, affine) -> np.ndarray:
+    """
+    Crop one CNN-sized moving tile while resampling the whole page through the
+    global deskew affine, so a strong stretch/shear is corrected within the tile
+    (a per-tile translation cannot do this). dx/dy add the residual FFT/field
+    offset on top, exactly as _crop_padded does.
+
+    The affine d(p)=c+L·p is the normalised HE-minus-IHC displacement, so the
+    aligned moving sample for output position p is ihc(p - d(p)) = ihc((I-L)p-c).
+    In this page's pixel space (W=grid*CNN_W, H=grid*CNN_H) that is the inverse
+    map fed to ndimage.affine_transform (row=y, col=x order).
+    """
+    h, w = gpage.shape[:2]
+    (a0, a1, a2), (b0, _b1, b2) = affine
+    s = a2
+    wx0 = x_idx * CNN_W - dx
+    wy0 = y_idx * CNN_H - dy
+    m00 = 1.0 - b2
+    m01 = -s * (h / w)
+    m10 = -s * (w / h)
+    m11 = 1.0 - a1
+    matrix = np.array([[m00, m01], [m10, m11]], dtype=float)
+    off_row = m00 * wy0 + m01 * wx0 - b0 * h
+    off_col = m10 * wy0 + m11 * wx0 - a0 * w
+    out = ndimage.affine_transform(
+        gpage,
+        matrix,
+        offset=(off_row, off_col),
+        output_shape=(CNN_H, CNN_W),
+        order=1,
+        mode="constant",
+        cval=PAD_FILL,
+    )
+    return out.astype(gpage.dtype)
+
+
 def _crop_tile(pair_id: int, level: int, x: int, y: int, side: str, dx: float, dy: float) -> np.ndarray:
-    """np.uint8 (CNN_H, CNN_W) greyscale tile with a CNN-pixel offset."""
+    """np.uint8 (CNN_H, CNN_W) greyscale tile with a CNN-pixel offset.
+
+    The moving (IHC) side is resampled through the pair's global deskew affine
+    when one is stored; the fixed (HE) side is always a plain padded crop.
+    """
     he_id, ihc_id = pair_image_ids(pair_id)
     image_id = he_id if side == "he" else ihc_id
 
@@ -248,6 +314,10 @@ def _crop_tile(pair_id: int, level: int, x: int, y: int, side: str, dx: float, d
 
     grid = 2 ** level
     gpage = _compact_page(image_id, level, page_idx, grid)
+    if side != "he":
+        affine = _deskew_affine(pair_id)
+        if affine is not None:
+            return _crop_warped(gpage, x, y, dx, dy, affine)
     return _crop_padded(gpage, x, y, dx, dy)
 
 
@@ -264,3 +334,27 @@ def crop_gray(
     pair_id: int, level: int, x: int, y: int, side: str, dx: float = 0.0, dy: float = 0.0
 ) -> np.ndarray:
     return _crop_tile(pair_id, level, x, y, side, dx, dy)
+
+
+def whole_gray(pair_id: int, side: str, level: int) -> "np.ndarray | None":
+    """
+    Whole-image greyscale preview at grid*CNN resolution (raw, no deskew warp),
+    used for placing deskew correspondence landmarks. `level` selects the
+    resolution: level 0 is 512x344, level 2 is 2048x1376 (4x). Returns None when
+    no suitable pyramid page exists.
+    """
+    he_id, ihc_id = pair_image_ids(pair_id)
+    image_id = he_id if side == "he" else ihc_id
+    chosen = choose_page(pair_id, level)
+    if chosen is None:
+        return None
+    return _compact_page(image_id, level, chosen[0], 2 ** level)
+
+
+def whole_png(pair_id: int, side: str, level: int) -> "bytes | None":
+    gpage = whole_gray(pair_id, side, level)
+    if gpage is None:
+        return None
+    buffer = io.BytesIO()
+    Image.fromarray(gpage, mode="L").save(buffer, format="PNG")
+    return buffer.getvalue()

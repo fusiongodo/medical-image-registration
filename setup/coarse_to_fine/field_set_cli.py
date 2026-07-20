@@ -37,7 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 import conf
 
-from setup.coarse_to_fine import annotations, masks
+from setup.coarse_to_fine import annotations, deskew, masks
 from setup.coarse_to_fine.identity import pair_fingerprint
 
 DATA_ROOT = conf.PROJECT_ROOT / "data"
@@ -164,6 +164,13 @@ def _snapshot_into(pair_id: int, set_dir: Path) -> None:
     mask_entries = masks.load(pair_id)
     (set_dir / "masked_out.json").write_text(json.dumps(mask_entries, separators=(",", ":")))
 
+    deskew_store = deskew.load(pair_id)
+    deskew_dst = set_dir / "deskew.json"
+    if deskew_store is not None:
+        deskew_dst.write_text(json.dumps(deskew_store, separators=(",", ":")))
+    elif deskew_dst.exists():
+        deskew_dst.unlink()
+
     field_src = _field_path(pair_id)
     field_dst = set_dir / "field.json"
     if field_src.exists():
@@ -219,6 +226,9 @@ def load_set(pair_id: int, set_id: str) -> dict:
     mask_entries = json.loads(mask_path.read_text()) if mask_path.exists() else []
     masks.save(pair_id, mask_entries)
 
+    deskew_path = set_dir / "deskew.json"
+    deskew.write(pair_id, json.loads(deskew_path.read_text()) if deskew_path.exists() else None)
+
     field_src = set_dir / "field.json"
     field_dst = _field_path(pair_id)
     if field_src.exists():
@@ -242,6 +252,7 @@ def load_set(pair_id: int, set_id: str) -> dict:
 def new_set(pair_id: int, name: str) -> dict:
     annotations.save(pair_id, [])
     masks.save(pair_id, [])
+    deskew.clear(pair_id)
     field_dst = _field_path(pair_id)
     if field_dst.exists():
         field_dst.unlink()

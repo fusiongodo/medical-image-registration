@@ -8,6 +8,7 @@ per-tile crops stay fast enough for lazy per-request loading.
 Request  : {"id": int, "op": "tiles", "pair": int, "level": int}
            {"id": int, "op": "crop",  "pair": int, "level": int,
             "x": int, "y": int, "side": "he"|"ihc", "dx"?: float, "dy"?: float}
+           {"id": int, "op": "whole", "pair": int, "level": int, "side": "he"|"ihc"}
 Response : {"id": int, "ok": true,  ...}              (op-specific payload)
            {"id": int, "ok": false, "error": str}
 
@@ -38,6 +39,11 @@ def _handle(req: dict) -> dict:
             float(req.get("dx", 0.0)),
             float(req.get("dy", 0.0)),
         )
+        return {"ok": True, "png": base64.b64encode(png).decode("ascii")}
+    if op == "whole":
+        png = crop_core.whole_png(int(req["pair"]), str(req["side"]), int(req["level"]))
+        if png is None:
+            return {"ok": False, "error": "no pyramid page for whole-image preview"}
         return {"ok": True, "png": base64.b64encode(png).decode("ascii")}
     return {"ok": False, "error": f"unknown op: {op!r}"}
 

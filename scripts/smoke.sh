@@ -71,6 +71,8 @@ check_json "metrics prog p0 L3"  "$BASE/api/c2f/metrics/progress?pair=0&depth=3"
 
 check_json "masks pair0 L3"      "$BASE/api/c2f/mask?pair=0&level=3" "isinstance(d, dict)"
 
+check_json "deskew pair0"        "$BASE/api/c2f/deskew?pair=0" "isinstance(d.get('points'), list)"
+
 check_json "field pair0 L4"      "$BASE/api/field?pair=0&depth=4" "isinstance(d, dict)"
 check_json "annotations p0 L3"   "$BASE/api/annotations?pair=0&depth=3" "isinstance(d, dict)"
 check_json "field-set pair0"     "$BASE/api/c2f/field-set?pair=0" "isinstance(d.get('sets'), list)"

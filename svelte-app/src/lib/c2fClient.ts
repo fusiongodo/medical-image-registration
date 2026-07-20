@@ -200,6 +200,43 @@ export function postRegAnnotation(
 	});
 }
 
+/** A whole-image correspondence pair for the global deskew (level-0 crop pixels). */
+export interface DeskewPoint {
+	he: [number, number];
+	ihc: [number, number];
+}
+
+export interface DeskewState {
+	points: DeskewPoint[];
+	depth: number | null;
+}
+
+export async function getDeskew(pair: number): Promise<DeskewState> {
+	const r = await fetch(`/api/c2f/deskew?pair=${pair}`);
+	if (!r.ok) return { points: [], depth: null };
+	return r.json();
+}
+
+/** Fit + persist the global deskew from >=3 correspondence pairs; also writes the
+ * smooth field and discards the pair's FFT candidate caches. */
+export async function applyDeskew(pair: number, depth: number, points: DeskewPoint[]): Promise<boolean> {
+	const r = await fetch('/api/c2f/deskew', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify({ pair_id: pair, depth, points, action: 'apply' })
+	});
+	return r.ok;
+}
+
+export async function clearDeskew(pair: number): Promise<boolean> {
+	const r = await fetch('/api/c2f/deskew', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify({ pair_id: pair, action: 'clear' })
+	});
+	return r.ok;
+}
+
 /** Effective masked map for one level: { "x_y": true, ... } (masked only). */
 export async function getMasks(pair: number, level: number): Promise<Record<string, true>> {
 	const r = await fetch(`/api/c2f/mask?pair=${pair}&level=${level}`);

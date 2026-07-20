@@ -126,7 +126,11 @@ def _fit_level(
 
 def _coarse_field(pair_id: int, target_depth: int, levels: list[int], tau: float) -> Field:
     """Coarse field going into `target_depth`: replay all c2f levels below it
-    (reproducing the saved previous-level field)."""
+    (reproducing the saved previous-level field).
+
+    A global deskew, when present, is baked into the moving crops upstream
+    (crop_core), so it needs no handling here.
+    """
     entries = annotations.load(pair_id)
     mask_entries = masks.load(pair_id)
     field = fit_field(annotations.to_anchors(entries, up_to_level=min(levels) - 1))

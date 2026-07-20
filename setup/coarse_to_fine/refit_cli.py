@@ -67,7 +67,8 @@ def _compute_prior_field(
 
     Lower-level caches are used when available; missing levels are recomputed on
     the fly. Masked tiles (propagated by index) are dropped so the prior field
-    matches the saved field.
+    matches the saved field. A global deskew, when present, is baked into the
+    moving crops upstream (crop_core), so it needs no handling here.
     """
     entries = annotations.load(pair_id)
     min_level = min(levels)

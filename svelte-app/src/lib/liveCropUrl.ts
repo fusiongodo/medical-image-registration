@@ -25,3 +25,12 @@ export function liveCropUrl(
 	if (dx !== 0 || dy !== 0) u += `&dx=${dx}&dy=${dy}`;
 	return u;
 }
+
+/**
+ * URL for the whole-image greyscale preview (raw, no deskew warp) at grid*CNN
+ * resolution. `level` selects sharpness (0 = 512x344, 2 = 2048x1376 ≈ 4x). Used
+ * by the deskew landmarking page.
+ */
+export function liveWholeUrl(pair: number, side: 'he' | 'ihc', level: number): string {
+	return `/api/live-crop/whole?pair=${pair}&side=${side}&level=${level}`;
+}
