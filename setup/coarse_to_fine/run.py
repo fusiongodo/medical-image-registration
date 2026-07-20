@@ -35,7 +35,7 @@ import align  # noqa: E402  (hyphenated dir, imported via sys.path)
 import crop_core  # noqa: E402
 import tile_metrics  # noqa: E402
 
-from setup.coarse_to_fine import annotations
+from setup.coarse_to_fine import annotations, masks
 from setup.coarse_to_fine.identity import pair_fingerprint
 from setup.coarse_to_fine.field import (
     Candidate,
@@ -105,19 +105,22 @@ def _fit_level(
     entries: list[dict],
     level: int,
     tau: float,
+    masked: "set[str] | None" = None,
 ) -> tuple[Field, list[Candidate]]:
     """Fit the field at one level: honour human anchors <= level, tau-gate FFT soft points.
 
-    Tiles explicitly marked as `exclude` are removed from the candidate set so they
-    do not influence the fit.
+    Tiles explicitly marked as `exclude`, or masked out (propagated by index),
+    are removed from the candidate set so they do not influence the fit.
     """
-    excluded = {
+    dropped = {
         e["tile_loc"]
         for e in entries
         if int(e["level"]) == level and e.get("type") == "exclude"
     }
+    if masked:
+        dropped |= masked
     human_anchors = annotations.to_anchors(entries, up_to_level=level)
-    kept_candidates = [c for c in candidates if c.tile_loc not in excluded]
+    kept_candidates = [c for c in candidates if c.tile_loc not in dropped]
     return fit_gated(human_anchors, kept_candidates, tau)
 
 
@@ -125,11 +128,13 @@ def _coarse_field(pair_id: int, target_depth: int, levels: list[int], tau: float
     """Coarse field going into `target_depth`: replay all c2f levels below it
     (reproducing the saved previous-level field)."""
     entries = annotations.load(pair_id)
+    mask_entries = masks.load(pair_id)
     field = fit_field(annotations.to_anchors(entries, up_to_level=min(levels) - 1))
     for level in [lv for lv in levels if lv < target_depth]:
         cands = _level_candidates(pair_id, level, field)
         if cands:
-            field, _ = _fit_level(field, cands, entries, level, tau)
+            masked = masks.masked_at(mask_entries, level, [c.tile_loc for c in cands])
+            field, _ = _fit_level(field, cands, entries, level, tau, masked=masked)
     return field
 
 

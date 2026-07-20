@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 import conf
 
-from setup.coarse_to_fine import annotations
+from setup.coarse_to_fine import annotations, masks
 from setup.coarse_to_fine.field import (
     Candidate,
     Field,
@@ -59,13 +59,15 @@ def _compute_prior_field(
     depth: int,
     tau: float,
     levels: list[int],
+    mask_entries: list[dict],
 ) -> Field:
     """
     Replay all coarser levels (< depth) to obtain the prior field that was used
     to warp IHC before measuring the current depth's candidates.
 
     Lower-level caches are used when available; missing levels are recomputed on
-    the fly.
+    the fly. Masked tiles (propagated by index) are dropped so the prior field
+    matches the saved field.
     """
     entries = annotations.load(pair_id)
     min_level = min(levels)
@@ -77,6 +79,8 @@ def _compute_prior_field(
             cands = _level_candidates(pair_id, level, field)
         if not cands:
             continue
+        masked = masks.masked_at(mask_entries, level, [c.tile_loc for c in cands])
+        cands = [c for c in cands if c.tile_loc not in masked]
         human_anchors = annotations.to_anchors(entries, up_to_level=level)
         field, _ = fit_gated(human_anchors, cands, tau)
 
@@ -93,6 +97,8 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None =
     candidates = [candidate_from_dict(depth, d) for d in payload.get("candidates", [])]
 
     entries = annotations.load(pair_id)
+    mask_entries = masks.load(pair_id)
+    masked_locs = masks.masked_at(mask_entries, depth, [c.tile_loc for c in candidates])
     human_anchors = annotations.to_anchors(entries, up_to_level=depth)
     annotated = {e["tile_loc"]: e["type"] for e in entries if int(e["level"]) == depth}
     excluded_locs = {
@@ -108,14 +114,17 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None =
             "mean_residual": 0.0, "tiles": [],
         }
 
-    fit_candidates = [c for c in candidates if c.tile_loc not in excluded_locs]
+    fit_candidates = [
+        c for c in candidates
+        if c.tile_loc not in excluded_locs and c.tile_loc not in masked_locs
+    ]
     if keep is not None:
         # the keep-fraction is measured over auto tiles only: human-annotated
         # (approve/correct/exclude) tiles are always decided by the user
         auto_candidates = [c for c in fit_candidates if c.tile_loc not in annotated]
         tau = tau_for_keep(human_anchors, auto_candidates, keep)
 
-    prior_field = _compute_prior_field(pair_id, depth, tau, levels)
+    prior_field = _compute_prior_field(pair_id, depth, tau, levels, mask_entries)
 
     field, _ = fit_gated(human_anchors, fit_candidates, tau)
     # Judge residuals/kept against the same reference fit_gated tau-gates against
@@ -130,12 +139,14 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None =
         prior_dx, prior_dy = prior_field.predict_tile_px_at(depth, cand.tile_loc)
         ann = annotated.get(cand.tile_loc)
         is_excluded = ann == "exclude"
+        is_masked = cand.tile_loc in masked_locs
         tiles.append({
             "tile_loc": cand.tile_loc,
             "psr": cand.psr,
             "residual": dev,
-            "kept": not is_excluded and (ann is not None or dev <= tau),
+            "kept": not is_excluded and not is_masked and (ann is not None or dev <= tau),
             "excluded": is_excluded,
+            "masked": is_masked,
             "annotated": ann,
             "dx": dx,
             "dy": dy,
@@ -146,13 +157,15 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None =
         })
 
     n_kept = sum(1 for t in tiles if t["kept"])
-    n_excluded = sum(1 for t in tiles if t["excluded"])
+    n_excluded = sum(1 for t in tiles if t["excluded"] and not t["masked"])
+    n_masked = sum(1 for t in tiles if t["masked"])
     result = {
         "tau": tau,
         "keep": keep,
         "kept": n_kept,
-        "rejected": len(tiles) - n_kept - n_excluded,
+        "rejected": len(tiles) - n_kept - n_excluded - n_masked,
         "excluded": n_excluded,
+        "masked": n_masked,
         "n_human": n_human,
         "mean_residual": float(sum(devs) / len(devs)) if devs else 0.0,
         "tiles": tiles,

@@ -5,6 +5,7 @@
 		residual: number;
 		kept: boolean;
 		excluded?: boolean;
+		masked?: boolean;
 		annotated?: 'approve' | 'correct' | 'exclude' | null;
 		dx: number;
 		dy: number;
@@ -91,7 +92,27 @@
 			const [xi, yi] = t.tile_loc.split('_').map((n) => parseInt(n, 10));
 			// intensity 0..1: how strongly the cell asserts its state
 			const ratio = tau > 0 ? t.residual / tau : 0;
+			const isMasked = t.masked === true;
 			const isExcluded = t.annotated === 'exclude' || t.excluded;
+			if (isMasked) {
+				// masked out (propagated by index): neutral grey, no green/red, but
+				// still hoverable/selectable so it can be unmasked.
+				return {
+					x: xi * cell,
+					y: yi * cell,
+					cx: xi * cell + cell / 2,
+					cy: yi * cell + cell / 2,
+					fill: '#94a3b8',
+					opacity: 0.35,
+					stroke: null,
+					strokeWidth: 0,
+					strokeOpacity: 0,
+					label: 'M',
+					fontSize: Math.min(cell * 0.55, 12),
+					title: `${t.tile_loc}  masked out`,
+					isSelected: t.tile_loc === selected
+				};
+			}
 			// excluded tiles keep the residual-based green->red mapping (marked with an "E")
 			const asKept = isExcluded ? ratio <= 1 : t.kept;
 			let opacity: number;

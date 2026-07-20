@@ -30,6 +30,7 @@
 		onApprove,
 		onExclude,
 		onClear,
+		onMask,
 		onReload,
 		onComputed,
 		onFlash
@@ -45,6 +46,7 @@
 		onApprove?: (tile: string, u: number, v: number) => void;
 		onExclude?: (tile: string) => void;
 		onClear?: (tile: string) => void;
+		onMask?: (tile: string, masked: boolean) => void;
 		onReload?: () => void;
 		onComputed?: () => void;
 		onFlash?: (msg: string, kind?: 'ok' | 'warn' | 'err') => void;
@@ -80,6 +82,7 @@
 		residual: number;
 		kept: boolean;
 		excluded?: boolean;
+		masked?: boolean;
 		annotated?: 'approve' | 'correct' | 'exclude' | null;
 		dx: number;
 		dy: number;
@@ -94,6 +97,7 @@
 		kept: number;
 		rejected: number;
 		excluded?: number;
+		masked?: number;
 		n_human?: number;
 		mean_residual: number;
 		tiles: TileResult[];
@@ -137,6 +141,9 @@
 	const keepFraction = $derived(1 - excludePct / 100);
 
 	let open = $state(true);
+	// When on, candidates auto-compute on load for any uncached pair/level (one
+	// less manual click). Persisted; a page reload picks up a fresh toggle.
+	let autoCompute = $state(true);
 	let cached = $state<boolean | null>(null);
 	let refit = $state<RefitData | null>(null);
 	let refitError = $state<string | null>(null);
@@ -197,6 +204,21 @@
 
 	$effect(() => {
 		try {
+			const stored = localStorage.getItem('mvrC2fAutoCompute');
+			if (stored !== null) autoCompute = stored === '1';
+		} catch {
+			/* ignore storage errors */ }
+	});
+
+	$effect(() => {
+		try {
+			localStorage.setItem('mvrC2fAutoCompute', autoCompute ? '1' : '0');
+		} catch {
+			/* ignore storage errors */ }
+	});
+
+	$effect(() => {
+		try {
 			const m = localStorage.getItem('mvrC2fTauMode');
 			if (m === 'tau' || m === 'keep') tauMode = m;
 			const ex = localStorage.getItem('mvrC2fExclude');
@@ -225,6 +247,7 @@
 			if (p !== pairId || d !== depth) return; // navigated away mid-flight
 			cached = data.cached === true;
 			if (cached) runRefit();
+			else if (autoCompute && !job?.running) startCompute();
 		} catch (err) {
 			if (p !== pairId || d !== depth) return;
 			refitError = err instanceof Error ? err.message : 'failed to check candidates';
@@ -644,6 +667,12 @@
 					disabled={setBusy || !selectedSetId}
 					title="Pin this set as the pair's main set (its rating shows in the sidebar)"
 				>{selectedSetId && selectedSetId === mainSetId ? '★ Main' : '☆ Main'}</button>
+				<button
+					class="set-btn set-btn-ghost auto-btn"
+					class:active={autoCompute}
+					onclick={() => (autoCompute = !autoCompute)}
+					title="When on, candidates auto-compute on page load for any uncached pair/level (takes effect after a reload)"
+				>{autoCompute ? '● Auto-compute' : '○ Auto-compute'}</button>
 			</div>
 
 			{#if pendingSetId}
@@ -701,6 +730,15 @@
 						onselect={onSelect}
 					/>
 					<div class="controls">
+						<div class="actions-row">
+							<button class="compute-btn" onclick={() => startCompute()}>Recompute candidates</button>
+							{#if metricsJob?.running}
+								<span class="progress">LNCC… {metricsJob.done} / {metricsJob.total || '?'}</span>
+							{:else}
+								<button class="lncc-btn" onclick={startMetrics}>Compute LNCC</button>
+							{/if}
+							{#if metricsJob?.error}<span class="err">{metricsJob.error}</span>{/if}
+						</div>
 						<div class="mode-group">
 							<span class="mode-label">Gate by</span>
 							<div class="mode-buttons">
@@ -769,18 +807,15 @@
 						{#if refit.excluded}
 							<div class="stat"><span class="k">excluded</span><span class="v grey">{refit.excluded}</span></div>
 						{/if}
+						{#if refit.masked}
+							<div class="stat"><span class="k">masked</span><span class="v grey">{refit.masked}</span></div>
+						{/if}
 						<div class="stat"><span class="k">human</span><span class="v indigo">{refit.n_human ?? 0}</span></div>
 						<div class="stat"><span class="k">mean res</span><span class="v">{refit.mean_residual.toExponential(2)}</span></div>
 						<button class="save-btn" onclick={saveField} disabled={saving}>
 							{saving ? 'Saving…' : 'Save field'}
 						</button>
 						{#if savedAt}<span class="saved">✓ saved</span>{/if}
-						{#if metricsJob?.running}
-							<span class="progress">LNCC… {metricsJob.done} / {metricsJob.total || '?'}</span>
-						{:else}
-							<button class="lncc-btn" onclick={startMetrics}>Compute LNCC</button>
-						{/if}
-						{#if metricsJob?.error}<span class="err">{metricsJob.error}</span>{/if}
 					</div>
 
 					</div>
@@ -818,6 +853,13 @@
 										onclick={() => onExclude?.(previewResult.tile_loc)}
 									>Exclude tile</button>
 								{/if}
+								<button
+									class="action-btn action-btn-grey"
+									onclick={() => onMask?.(previewResult.tile_loc, previewResult.masked ?? false)}
+									title={previewResult.masked
+										? 'Re-include this tile in the dataset & fit'
+										: 'Mask out this tile and its descendants'}
+								>{previewResult.masked ? 'Unmask tile' : 'Mask tile'}</button>
 							</div>
 						</div>
 						<div
@@ -981,6 +1023,7 @@
 	.rating-btn.rating-good.active { background: #22c55e; border-color: #22c55e; color: #06210f; }
 
 	.main-btn.active { color: #fbbf24; border-color: #fbbf24; }
+	.auto-btn.active { color: #22c55e; border-color: #22c55e; }
 
 	.set-select {
 		all: unset;
@@ -1122,6 +1165,7 @@
 		white-space: nowrap;
 	}
 	.lncc-btn:hover { background: #475569; }
+	.actions-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 	.progress { font-size: 0.72rem; color: #f59e0b; }
 	.saved { font-size: 0.72rem; color: #22c55e; }

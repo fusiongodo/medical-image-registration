@@ -17,7 +17,9 @@
 	import {
 		getCandidates,
 		getRegAnnotations,
-		postRegAnnotation
+		postRegAnnotation,
+		getMasks,
+		postMask
 	} from '$lib/c2fClient';
 
 	let {
@@ -157,6 +159,9 @@
 
 	interface RegAnnotation { type: 'approve' | 'correct' | 'exclude'; u: number; v: number; }
 	let regAnnotations = $state<Map<string, RegAnnotation>>(new Map());
+
+	// Effective masked-out tiles at this level (masks propagate forward by index).
+	let maskedTiles = $state<Set<string>>(new Set());
 
 	// LNCC² recomputed live for tiles whose displacement is human-driven
 	// (manual correction / concordant points) rather than the cached FFT value.
@@ -319,6 +324,17 @@
 		return () => { stale = true; };
 	});
 
+	$effect(() => {
+		const pair = data.pairId, depth = data.depth;
+		annotationVersion; // re-fetch after each mask/unmask
+		let stale = false;
+		getMasks(pair, depth).then((fetched) => {
+			if (stale) return;
+			maskedTiles = new Set(Object.keys(fetched));
+		});
+		return () => { stale = true; };
+	});
+
 	// ── Previous-level state for refine gating ───────────────────────────────
 	let prevTiles = $state<TileMeta[]>([]);
 	let prevRegAnnotations = $state<Map<string, RegAnnotation>>(new Map());
@@ -451,6 +467,24 @@
 
 	function clearTile(tile: string) {
 		postAnnotate(tile, 'clear');
+	}
+
+	async function maskTile(tile: string, action: 'mask' | 'unmask') {
+		busyTile = tile;
+		try {
+			const res = await postMask(data.pairId, data.depth, tile, action);
+			if (!res.ok) {
+				const detail = await res.text().catch(() => '');
+				showFlash(`${action} failed for ${tile}${detail ? `: ${detail.slice(0, 120)}` : ''}`, 'err');
+				return;
+			}
+			annotationVersion++;
+			showFlash(`${action === 'mask' ? 'Masked' : 'Unmasked'} ${tile}`, 'ok');
+		} catch (e) {
+			showFlash(`${action} failed for ${tile}: ${(e as Error).message}`, 'err');
+		} finally {
+			busyTile = null;
+		}
 	}
 
 	function manualDisplacement(tile: string): { dx: number; dy: number } | null {
@@ -594,7 +628,7 @@
 <div class="scrollable">
 
 <LnccDistributionPanel pairId={data.pairId} depth={data.depth} {patchSize} refreshKey={autoDispRefreshKey} />
-<C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} seed={seedLocs} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} onReload={reloadAfterFieldSet} onComputed={() => { autoDispRefreshKey++; }} onFlash={showFlash} />
+<C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} seed={seedLocs} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} onMask={(tile, masked) => maskTile(tile, masked ? 'unmask' : 'mask')} onReload={reloadAfterFieldSet} onComputed={() => { autoDispRefreshKey++; }} onFlash={showFlash} />
 
 {#if flash}
 	<div class="flash flash-{flash.kind}" role="status">{flash.msg}</div>
@@ -760,14 +794,17 @@
 	{@const lncc2Auto = cm?.lncc2_auto ?? entry?.lncc2_auto}
 	{@const factorAuto = cm?.factor_auto ?? entry?.factor_auto}
 	{@const tileKps = showKeypoints ? (tileKeypoints.get(t.tile) ?? []) : []}
+	{@const isMasked = maskedTiles.has(t.tile)}
 		<span
 			class="tile-id"
 			class:tile-id-active={isActive}
+			class:tile-id-masked={isMasked}
+			title={isMasked ? 'Masked out (excluded from the dataset & fit)' : undefined}
 			onclick={() => { activeRow = isActive ? null : t.tile; }}
 			role="button"
 			tabindex="0"
 			onkeydown={(e) => e.key === 'Enter' && (activeRow = isActive ? null : t.tile)}
-		>{t.tile}</span>
+		>{#if isMasked}<span class="mask-dot">M</span>{/if}{t.tile}</span>
 		<PointCanvas src={heSrc} active={isActive || refineMode} points={ann.hePoints}
 			keypoints={tileKps}
 			onpoint={(x, y) => addPoint(t.tile, 'he', x, y)} />
@@ -881,6 +918,15 @@
 							<span class="refine-hint">click HE + IHC point</span>
 						{/if}
 					{/if}
+					<button
+						class="refine-btn mask"
+						class:active={isMasked}
+						onclick={() => maskTile(t.tile, isMasked ? 'unmask' : 'mask')}
+						disabled={busy}
+						title={isMasked
+							? 'Re-include this tile (and stop masking it) in the dataset'
+							: 'Mask out this tile and all its descendant tiles at deeper levels'}
+					>{isMasked ? 'Unmask' : 'Mask'}</button>
 				</div>
 			{/if}
 		{/each}
@@ -1312,6 +1358,17 @@
 		color: #a5b4fc;
 		font-weight: 700;
 	}
+	.tile-id-masked { color: #94a3b8; text-decoration: line-through; }
+	.mask-dot {
+		display: inline-block;
+		margin-right: 3px;
+		padding: 0 3px;
+		border-radius: 3px;
+		background: #94a3b8;
+		color: #0f1117;
+		font-weight: 700;
+		text-decoration: none;
+	}
 
 	.score-cell-pre {
 		height: 180px;
@@ -1475,6 +1532,8 @@
 	.refine-btn.correct { background: #1e2130; color: #a5b4fc; border-color: #4338ca; }
 	.refine-btn.exclude { background: #374151; color: #e5e7eb; border-color: #4b5563; }
 	.refine-btn.ghost   { background: #1e2130; color: #9ca3af; border-color: #2a2d3a; }
+	.refine-btn.mask    { background: #1e2130; color: #94a3b8; border-color: #334155; }
+	.refine-btn.mask.active { background: #475569; color: #e2e8f0; border-color: #64748b; }
 	.refine-btn:not(:disabled):hover { filter: brightness(1.15); }
 	.refine-btn:disabled { opacity: 0.4; cursor: default; }
 

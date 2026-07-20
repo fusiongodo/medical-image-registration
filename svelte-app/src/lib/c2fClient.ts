@@ -42,6 +42,7 @@ export interface TileResult {
 	residual: number;
 	kept: boolean;
 	excluded?: boolean;
+	masked?: boolean;
 	annotated?: 'approve' | 'correct' | 'exclude' | null;
 	dx: number;
 	dy: number;
@@ -56,6 +57,7 @@ export interface RefitData {
 	kept: number;
 	rejected: number;
 	excluded?: number;
+	masked?: number;
 	n_human?: number;
 	mean_residual: number;
 	tiles: TileResult[];
@@ -195,5 +197,26 @@ export function postRegAnnotation(
 		method: 'POST',
 		headers: JSON_HEADERS,
 		body: JSON.stringify(payload)
+	});
+}
+
+/** Effective masked map for one level: { "x_y": true, ... } (masked only). */
+export async function getMasks(pair: number, level: number): Promise<Record<string, true>> {
+	const r = await fetch(`/api/c2f/mask?pair=${pair}&level=${level}`);
+	return r.json();
+}
+
+/** Toggle a tile's mask-out state. Masks propagate forward to descendants;
+ * `clear` drops an override, reverting to the inherited state. */
+export function postMask(
+	pair: number,
+	level: number,
+	tile: string,
+	action: 'mask' | 'unmask' | 'clear'
+): Promise<Response> {
+	return fetch('/api/c2f/mask', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify({ pair_id: pair, level, tile_loc: tile, action })
 	});
 }

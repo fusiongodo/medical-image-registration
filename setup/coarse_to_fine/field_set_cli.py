@@ -37,7 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 import conf
 
-from setup.coarse_to_fine import annotations
+from setup.coarse_to_fine import annotations, masks
 from setup.coarse_to_fine.identity import pair_fingerprint
 
 DATA_ROOT = conf.PROJECT_ROOT / "data"
@@ -161,6 +161,9 @@ def _snapshot_into(pair_id: int, set_dir: Path) -> None:
     entries = annotations.load(pair_id)
     (set_dir / "annotations.json").write_text(json.dumps(entries, separators=(",", ":")))
 
+    mask_entries = masks.load(pair_id)
+    (set_dir / "masked_out.json").write_text(json.dumps(mask_entries, separators=(",", ":")))
+
     field_src = _field_path(pair_id)
     field_dst = set_dir / "field.json"
     if field_src.exists():
@@ -212,6 +215,10 @@ def load_set(pair_id: int, set_id: str) -> dict:
     entries = json.loads(ann_path.read_text()) if ann_path.exists() else []
     annotations.save(pair_id, entries)
 
+    mask_path = set_dir / "masked_out.json"
+    mask_entries = json.loads(mask_path.read_text()) if mask_path.exists() else []
+    masks.save(pair_id, mask_entries)
+
     field_src = set_dir / "field.json"
     field_dst = _field_path(pair_id)
     if field_src.exists():
@@ -234,6 +241,7 @@ def load_set(pair_id: int, set_id: str) -> dict:
 
 def new_set(pair_id: int, name: str) -> dict:
     annotations.save(pair_id, [])
+    masks.save(pair_id, [])
     field_dst = _field_path(pair_id)
     if field_dst.exists():
         field_dst.unlink()

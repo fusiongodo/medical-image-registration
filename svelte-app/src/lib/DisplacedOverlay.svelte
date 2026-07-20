@@ -59,7 +59,7 @@
 		const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
 		ctx.clearRect(0, 0, w, h);
 		ctx.drawImage(heNorm, 0, 0);
-		ctx.globalAlpha = emphasis === 'ihc' ? 0.85 : emphasis === 'he' ? 0.2 : 0.5;
+		ctx.globalAlpha = emphasis === 'ihc' ? 1 : emphasis === 'he' ? 0 : 0.5;
 		ctx.drawImage(ihcNorm, dx, dy);
 		ctx.globalAlpha = 1;
 	}
