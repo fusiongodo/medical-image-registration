@@ -80,7 +80,8 @@ def _level_records(
         ihc_base = crop_core.crop_gray(pair_id, level, x, y, "ihc", dx=cdx, dy=cdy)
         res = align.register_arrays(he, ihc_base)
         u, v = cdx + res["dx"], cdy + res["dy"]
-        record = {"tile_loc": tile_loc, "u": u, "v": v, "psr": res["psr"]}
+        # delta_px is cheap; the expensive LNCC by_patch is gated behind with_metrics.
+        record = {"tile_loc": tile_loc, "u": u, "v": v, "psr": res["psr"], "delta_px": (u ** 2 + v ** 2) ** 0.5}
         if with_metrics:
             ihc_auto = crop_core.crop_gray(pair_id, level, x, y, "ihc", dx=u, dy=v)
             record.update(tile_metrics.tile_metrics(he, ihc_base, ihc_auto, u, v))
@@ -120,37 +121,52 @@ def _fit_level(
     return fit_gated(human_anchors, kept_candidates, tau)
 
 
+def _coarse_field(pair_id: int, target_depth: int, levels: list[int], tau: float) -> Field:
+    """Coarse field going into `target_depth`: replay all c2f levels below it
+    (reproducing the saved previous-level field)."""
+    entries = annotations.load(pair_id)
+    field = fit_field(annotations.to_anchors(entries, up_to_level=min(levels) - 1))
+    for level in [lv for lv in levels if lv < target_depth]:
+        cands = _level_candidates(pair_id, level, field)
+        if cands:
+            field, _ = _fit_level(field, cands, entries, level, tau)
+    return field
+
+
 def compute_candidates(
     pair_id: int,
     target_depth: int,
     levels: list[int],
     tau: float,
+    with_metrics: bool = False,
     on_progress=None,
 ) -> tuple[list[dict], Field]:
     """
     Build the coarse field by replaying all c2f levels below `target_depth`
     (which reproduces the saved previous-level field), then compute (and return)
-    the target level's candidate records including per-tile LNCC metrics.
+    the target level's candidate records. LNCC metrics are only folded in when
+    `with_metrics` (see augment_metrics for the on-demand pass).
     `on_progress(done, total)` reports progress over the target level's tiles.
     """
-    entries = annotations.load(pair_id)
-    field = fit_field(annotations.to_anchors(entries, up_to_level=min(levels) - 1))
-
-    for level in [lv for lv in levels if lv < target_depth]:
-        cands = _level_candidates(pair_id, level, field)
-        if cands:
-            field, _ = _fit_level(field, cands, entries, level, tau)
-
-    records = _level_records(pair_id, target_depth, field, with_metrics=True, on_progress=on_progress)
+    field = _coarse_field(pair_id, target_depth, levels, tau)
+    records = _level_records(
+        pair_id, target_depth, field, with_metrics=with_metrics, on_progress=on_progress
+    )
     return records, field
 
 
 def cache_candidates(pair_id: int, target_depth: int, levels: list[int], tau: float) -> Path:
-    """Compute candidate records (with metrics) for one pair+depth and cache them."""
+    """Compute FFT-only candidate records for one pair+depth and cache them.
+
+    LNCC by_patch metrics are intentionally excluded here (they dominate the
+    runtime); use augment_metrics to add them on demand.
+    """
     def _progress(done: int, total: int) -> None:
         print(f"done={done} total={total}", flush=True)
 
-    records, _ = compute_candidates(pair_id, target_depth, levels, tau, on_progress=_progress)
+    records, _ = compute_candidates(
+        pair_id, target_depth, levels, tau, with_metrics=False, on_progress=_progress
+    )
     payload = {
         "pair_id": pair_id,
         "identity": pair_fingerprint(pair_id),
@@ -162,6 +178,40 @@ def cache_candidates(pair_id: int, target_depth: int, levels: list[int], tau: fl
     out_path = CACHE_DIR / f"{pair_id}_d{target_depth}.json"
     out_path.write_text(json.dumps(payload, separators=(",", ":")))
     print(f"pair {pair_id}  depth {target_depth}: cached {len(records)} candidates -> {out_path.name}")
+    return out_path
+
+
+def augment_metrics(pair_id: int, target_depth: int, levels: list[int], tau: float) -> Path:
+    """Add LNCC by_patch metrics to an already-cached candidate set.
+
+    Reuses each candidate's cached FFT (u, v) instead of recomputing it, and
+    rebuilds the coarse field so the IHC base can be recropped at the prior
+    prediction. Rewrites the cache file in place, preserving identity/levels.
+    """
+    out_path = CACHE_DIR / f"{pair_id}_d{target_depth}.json"
+    if not out_path.exists():
+        raise SystemExit(
+            f"no cached candidates for pair {pair_id} depth {target_depth}; compute candidates first"
+        )
+    payload = json.loads(out_path.read_text())
+    records = payload.get("candidates", [])
+    total = len(records)
+
+    field = _coarse_field(pair_id, target_depth, levels, tau)
+    for done, rec in enumerate(records, start=1):
+        tile_loc = rec["tile_loc"]
+        x, y = (int(p) for p in tile_loc.split("_"))
+        cdx, cdy = field.predict_tile_px_at(target_depth, tile_loc)
+        u, v = rec["u"], rec["v"]
+        he = crop_core.crop_gray(pair_id, target_depth, x, y, "he")
+        ihc_base = crop_core.crop_gray(pair_id, target_depth, x, y, "ihc", dx=cdx, dy=cdy)
+        ihc_auto = crop_core.crop_gray(pair_id, target_depth, x, y, "ihc", dx=u, dy=v)
+        rec.update(tile_metrics.tile_metrics(he, ihc_base, ihc_auto, u, v))
+        print(f"done={done} total={total}", flush=True)
+
+    payload["candidates"] = records
+    out_path.write_text(json.dumps(payload, separators=(",", ":")))
+    print(f"pair {pair_id}  depth {target_depth}: LNCC metrics for {total} candidates -> {out_path.name}")
     return out_path
 
 
@@ -216,7 +266,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Coarse-to-fine registration orchestrator")
     parser.add_argument("pair_id", type=int, nargs="?", help="single pair id")
     parser.add_argument("--pairs", type=int, help="process next N pairs without a c2f field")
-    parser.add_argument("--cache-depth", type=int, help="compute+cache candidates for one depth (UI)")
+    parser.add_argument("--cache-depth", type=int, help="compute+cache FFT candidates for one depth (UI)")
+    parser.add_argument("--metrics-depth", type=int, help="add LNCC metrics to cached candidates for one depth (UI)")
     parser.add_argument("--levels", type=int, nargs="+", default=DEFAULT_LEVELS)
     parser.add_argument("--tau", type=float, default=DEFAULT_TAU)
     parser.add_argument("--force", action="store_true")
@@ -228,6 +279,12 @@ def main() -> None:
         if args.pair_id is None:
             parser.error("--cache-depth requires a pair_id")
         cache_candidates(args.pair_id, args.cache_depth, levels, args.tau)
+        return
+
+    if args.metrics_depth is not None:
+        if args.pair_id is None:
+            parser.error("--metrics-depth requires a pair_id")
+        augment_metrics(args.pair_id, args.metrics_depth, levels, args.tau)
         return
 
     if args.pairs is not None:

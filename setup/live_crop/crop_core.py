@@ -2,13 +2,13 @@
 Live tile cropping from original WSI TIFF sources.
 
 Deterministic quadtree geometry + tissue mask only; no dependency on
-{OS}_quadtree_annotations.json. Reuses crop_tile / tile_to_gray_png_array
-(preprocess_tiles) and the polygon mask helpers (pair_mask).
+{OS}_quadtree_annotations.json. Uses the polygon mask helpers (pair_mask).
 
 Displacements (dx, dy) are given in CNN tile-pixel units (512x344 space,
-matching the smooth-field / elastix convention) and converted to WSI-page
-pixels internally, so a positive dx yields an IHC crop shifted right into
-registration (same sign convention as crop_tile / preprocess_tiles --smooth).
+matching the smooth-field / elastix convention). Each pyramid page is cached
+pre-downsampled to grid*CNN greyscale, so a tile crop is a plain CNN-sized
+slice and dx/dy are applied directly in CNN pixels (a positive dx yields an
+IHC crop shifted right into registration, same sign convention as crop_tile).
 
 pair_image_ids(pair_id)                 -> (he_id, ihc_id)
 choose_page(pair_id, level)             -> (page_idx, tile_h, tile_w) | None
@@ -19,12 +19,16 @@ crop_gray(pair_id, level, x, y, side, dx, dy) -> np.uint8 (cnn_h, cnn_w)
 
 import io
 import json
+import os
+import subprocess
 import sys
+import tempfile
 from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
 import tifffile
+from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -32,20 +36,24 @@ sys.path.insert(0, str(REPO_ROOT / "setup"))
 sys.path.insert(0, str(REPO_ROOT / "setup" / "labelme"))
 
 import conf
+
 import pair_mask
-from preprocess_tiles import tile_to_gray_png_array
+
+CNN_W = conf.CNN_INPUT_WIDTH
+CNN_H = conf.CNN_INPUT_HEIGHT
 
 PAD_FILL = 255
 
-# Decoded WSI pyramid pages can be ~1 GB each, so cap the warm cache by total
-# bytes rather than a fixed page count to keep worker memory bounded.
-MAX_CACHE_BYTES = 4 * 1024 ** 3
+# Pages are cached as grid*CNN greyscale (~180 MB/side at level 5) rather than
+# the raw multi-GB RGB page, so cap the warm cache by total bytes to keep the
+# worker (and the run.py candidate subprocess) memory bounded.
+MAX_CACHE_BYTES = 1 * 1024 ** 3
 
 _labels_cache = None
 _labels_mtime: float | None = None
 _page_choice_cache: dict[tuple[int, int], tuple[int, int, int] | None] = {}
 _mask_cache: dict[int, "np.ndarray | None"] = {}
-_page_cache: "OrderedDict[tuple[int, int], np.ndarray]" = OrderedDict()
+_page_cache: "OrderedDict[tuple[int, int, int], np.ndarray]" = OrderedDict()
 
 
 def _labels() -> list[dict]:
@@ -161,49 +169,75 @@ def _page_cache_bytes() -> int:
     return sum(p.nbytes for p in _page_cache.values())
 
 
-def _load_page(image_id: int, page_idx: int) -> np.ndarray:
-    key = (image_id, page_idx)
-    page = _page_cache.get(key)
-    if page is None:
-        with tifffile.TiffFile(_image_path(image_id)) as slide:
-            page = slide.pages[page_idx].asarray()
-        _page_cache[key] = page
-        # Evict least-recently-used pages until within the byte budget, but
-        # always keep the page just loaded (it may alone exceed the budget).
-        while len(_page_cache) > 1 and _page_cache_bytes() > MAX_CACHE_BYTES:
-            _page_cache.popitem(last=False)
-    else:
+_BUILD_SCRIPT = Path(__file__).resolve().with_name("build_page.py")
+
+
+def _compact_page(image_id: int, level: int, page_idx: int, grid: int) -> np.ndarray:
+    """
+    Greyscale pyramid page pre-downsampled to (grid*CNN_H, grid*CNN_W).
+
+    Built in a short-lived subprocess (build_page.py): the raw RGB page decode
+    is a multi-GB transient whose buffers macOS does not return to the OS after
+    free, so building it inline would permanently inflate the long-lived worker.
+    The child writes the compact array to a temp .npy and exits (handing all the
+    transient memory back); we load only that (~180 MB at level 5) into RAM and
+    delete the temp file, so nothing is persisted to disk. Cached LRU by
+    (image_id, level, page_idx) and evicted by a total-byte budget.
+    """
+    key = (image_id, level, page_idx)
+    compact = _page_cache.get(key)
+    if compact is not None:
         _page_cache.move_to_end(key)
-    return page
+        return compact
+
+    fd, tmp = tempfile.mkstemp(suffix=".npy")
+    os.close(fd)
+    try:
+        subprocess.run(
+            [sys.executable, str(_BUILD_SCRIPT), str(image_id), str(page_idx), str(grid), tmp],
+            check=True,
+        )
+        # Copy into an owned in-memory array so no memmap keeps the file open.
+        compact = np.array(np.load(tmp), dtype=np.uint8)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+    _page_cache[key] = compact
+    # Evict least-recently-used pages until within the byte budget, but always
+    # keep the page just built (it may alone exceed the budget).
+    while len(_page_cache) > 1 and _page_cache_bytes() > MAX_CACHE_BYTES:
+        _page_cache.popitem(last=False)
+    return compact
 
 
-def _crop_padded(page: np.ndarray, x_idx: int, y_idx: int, grid: int, dx_wsi: float, dy_wsi: float) -> np.ndarray:
+def _crop_padded(gpage: np.ndarray, x_idx: int, y_idx: int, dx: float, dy: float) -> np.ndarray:
     """
-    Crop one tile with out-of-page regions padded (not clamped).
+    Crop one CNN-sized tile from the compact greyscale page, padding (not
+    clamping) out-of-page regions with PAD_FILL.
 
-    A positive dx/dy shifts the moving crop into registration; at coarse levels
-    (or edge tiles) the requested window can extend past the page, which
-    clamping would collapse to a no-op. Padding preserves the true displacement
-    by filling the missing region with PAD_FILL (background glass).
+    dx/dy are CNN-pixel displacements: a positive dx shifts the moving crop into
+    registration. At coarse levels or edge tiles the window can extend past the
+    page; padding preserves the true displacement instead of collapsing it.
     """
-    h, w = page.shape[:2]
-    tile_w = w // grid
-    tile_h = h // grid
-    x0 = int(round(x_idx * tile_w - dx_wsi))
-    y0 = int(round(y_idx * tile_h - dy_wsi))
-    x1 = x0 + tile_w
-    y1 = y0 + tile_h
+    h, w = gpage.shape[:2]
+    x0 = int(round(x_idx * CNN_W - dx))
+    y0 = int(round(y_idx * CNN_H - dy))
+    x1 = x0 + CNN_W
+    y1 = y0 + CNN_H
 
-    out = np.full((tile_h, tile_w) + page.shape[2:], PAD_FILL, dtype=page.dtype)
+    out = np.full((CNN_H, CNN_W), PAD_FILL, dtype=gpage.dtype)
     sx0, sy0 = max(0, x0), max(0, y0)
     sx1, sy1 = min(w, x1), min(h, y1)
     if sx1 > sx0 and sy1 > sy0:
-        out[sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = page[sy0:sy1, sx0:sx1]
+        out[sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = gpage[sy0:sy1, sx0:sx1]
     return out
 
 
-def _crop_pil(pair_id: int, level: int, x: int, y: int, side: str, dx: float, dy: float):
-    """Return a PIL Image (mode 'L', cnn_w x cnn_h) for one tile with a tile-pixel offset."""
+def _crop_tile(pair_id: int, level: int, x: int, y: int, side: str, dx: float, dy: float) -> np.ndarray:
+    """np.uint8 (CNN_H, CNN_W) greyscale tile with a CNN-pixel offset."""
     he_id, ihc_id = pair_image_ids(pair_id)
     image_id = he_id if side == "he" else ihc_id
 
@@ -212,26 +246,21 @@ def _crop_pil(pair_id: int, level: int, x: int, y: int, side: str, dx: float, dy
         raise ValueError(f"no pyramid page for pair {pair_id} level {level}")
     page_idx = chosen[0]
 
-    page = _load_page(image_id, page_idx)
     grid = 2 ** level
-    tile_w_wsi = page.shape[1] // grid
-    tile_h_wsi = page.shape[0] // grid
-    dx_wsi = dx * tile_w_wsi / conf.CNN_INPUT_WIDTH
-    dy_wsi = dy * tile_h_wsi / conf.CNN_INPUT_HEIGHT
-
-    tile = _crop_padded(page, x, y, grid, dx_wsi, dy_wsi)
-    return tile_to_gray_png_array(tile)
+    gpage = _compact_page(image_id, level, page_idx, grid)
+    return _crop_padded(gpage, x, y, dx, dy)
 
 
 def crop_png(
     pair_id: int, level: int, x: int, y: int, side: str, dx: float = 0.0, dy: float = 0.0
 ) -> bytes:
+    tile = _crop_tile(pair_id, level, x, y, side, dx, dy)
     buffer = io.BytesIO()
-    _crop_pil(pair_id, level, x, y, side, dx, dy).save(buffer, format="PNG")
+    Image.fromarray(tile, mode="L").save(buffer, format="PNG")
     return buffer.getvalue()
 
 
 def crop_gray(
     pair_id: int, level: int, x: int, y: int, side: str, dx: float = 0.0, dy: float = 0.0
 ) -> np.ndarray:
-    return np.asarray(_crop_pil(pair_id, level, x, y, side, dx, dy), dtype=np.uint8)
+    return _crop_tile(pair_id, level, x, y, side, dx, dy)

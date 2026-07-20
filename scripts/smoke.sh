@@ -67,6 +67,8 @@ check_json "candidates pair0 L4" "$BASE/api/c2f/candidates?pair=0&depth=4" "d.ge
 
 check_json "refit pair0 L3 keep" "$BASE/api/c2f/refit?pair=0&depth=3&keep=0.95" "'tiles' in d and 'tau' in d and isinstance(d['tiles'], list)"
 
+check_json "metrics prog p0 L3"  "$BASE/api/c2f/metrics/progress?pair=0&depth=3" "d is None or isinstance(d, dict)"
+
 check_json "field pair0 L4"      "$BASE/api/field?pair=0&depth=4" "isinstance(d, dict)"
 check_json "annotations p0 L3"   "$BASE/api/annotations?pair=0&depth=3" "isinstance(d, dict)"
 check_json "field-set pair0"     "$BASE/api/c2f/field-set?pair=0" "isinstance(d.get('sets'), list)"

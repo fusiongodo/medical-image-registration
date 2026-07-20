@@ -111,6 +111,21 @@ export async function getProgress(pair: number, depth: number): Promise<JobState
 	return r.json();
 }
 
+/** Add LNCC by_patch metrics to an already-cached candidate set (slow, opt-in). */
+export async function computeMetrics(pair: number, depth: number): Promise<{ state: JobState }> {
+	const r = await fetch('/api/c2f/metrics', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify({ pair_id: pair, depth })
+	});
+	return r.json();
+}
+
+export async function getMetricsProgress(pair: number, depth: number): Promise<JobState> {
+	const r = await fetch(`/api/c2f/metrics/progress?pair=${pair}&depth=${depth}`);
+	return r.json();
+}
+
 /** Refit result plus the error text branch the panel surfaces on failure. */
 export async function getRefit(
 	pair: number,

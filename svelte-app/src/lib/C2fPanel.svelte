@@ -10,6 +10,8 @@
 		getCandidates,
 		computeCandidates,
 		getProgress,
+		computeMetrics,
+		getMetricsProgress,
 		getRefit,
 		saveFieldRequest,
 		getFieldSets,
@@ -140,6 +142,7 @@
 	let refitError = $state<string | null>(null);
 	const effectiveTau = $derived(tauMode === 'keep' ? refit?.tau ?? null : tau);
 	let job = $state<JobState | null>(null);
+	let metricsJob = $state<JobState | null>(null);
 	let saving = $state(false);
 	let savedAt = $state<number | null>(null);
 	let hoveredTile = $state<string | null>(null);
@@ -211,6 +214,7 @@
 	});
 
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let metricsPollTimer: ReturnType<typeof setInterval> | null = null;
 	let tauDebounce: ReturnType<typeof setTimeout> | null = null;
 
 	async function checkCache() {
@@ -281,6 +285,30 @@
 					cached = true;
 					runRefit();
 					onComputed?.();
+				}
+			}
+		}, 1000);
+	}
+
+	// LNCC by_patch metrics are computed separately (slow) from the FFT
+	// candidates (fast). This fills the LNCC²/factor columns on demand.
+	async function startMetrics() {
+		if (!cached) return;
+		const data = await computeMetrics(pairId, depth);
+		metricsJob = data.state;
+		if (metricsJob?.running) startMetricsPolling();
+	}
+
+	function startMetricsPolling() {
+		if (metricsPollTimer) return;
+		metricsPollTimer = setInterval(async () => {
+			metricsJob = await getMetricsProgress(pairId, depth);
+			if (!metricsJob?.running) {
+				clearInterval(metricsPollTimer!);
+				metricsPollTimer = null;
+				if (!metricsJob?.error) {
+					onComputed?.();
+					runRefit();
 				}
 			}
 		}, 1000);
@@ -427,6 +455,7 @@
 		if (open && cached === null) checkCache();
 		return () => {
 			if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+			if (metricsPollTimer) { clearInterval(metricsPollTimer); metricsPollTimer = null; }
 		};
 	});
 
@@ -437,6 +466,8 @@
 		refit = null;
 		refitError = null;
 		job = null;
+		metricsJob = null;
+		if (metricsPollTimer) { clearInterval(metricsPollTimer); metricsPollTimer = null; }
 		savedAt = null;
 		selectedTile = null;
 		loadSets();
@@ -744,6 +775,12 @@
 							{saving ? 'Saving…' : 'Save field'}
 						</button>
 						{#if savedAt}<span class="saved">✓ saved</span>{/if}
+						{#if metricsJob?.running}
+							<span class="progress">LNCC… {metricsJob.done} / {metricsJob.total || '?'}</span>
+						{:else}
+							<button class="lncc-btn" onclick={startMetrics}>Compute LNCC</button>
+						{/if}
+						{#if metricsJob?.error}<span class="err">{metricsJob.error}</span>{/if}
 					</div>
 
 					</div>
@@ -1071,6 +1108,20 @@
 	}
 	.compute-btn:hover, .save-btn:hover { background: #4f51c8; }
 	.save-btn[disabled] { opacity: 0.6; cursor: default; }
+
+	.lncc-btn {
+		all: unset;
+		cursor: pointer;
+		background: #334155;
+		color: #cbd5e1;
+		font-size: 0.72rem;
+		font-weight: 600;
+		padding: 6px 12px;
+		border-radius: 4px;
+		text-align: center;
+		white-space: nowrap;
+	}
+	.lncc-btn:hover { background: #475569; }
 
 	.progress { font-size: 0.72rem; color: #f59e0b; }
 	.saved { font-size: 0.72rem; color: #22c55e; }

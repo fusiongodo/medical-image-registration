@@ -8,6 +8,6 @@ export interface JobState {
 
 export const jobs = new Map<string, JobState>();
 
-export function jobKey(pair: number, depth: number): string {
-	return `${pair}:${depth}`;
+export function jobKey(pair: number, depth: number, kind: 'candidates' | 'metrics' = 'candidates'): string {
+	return kind === 'candidates' ? `${pair}:${depth}` : `${pair}:${depth}:${kind}`;
 }
