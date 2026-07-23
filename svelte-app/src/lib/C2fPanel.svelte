@@ -15,6 +15,7 @@
 		getMetricsProgress,
 		getRefit,
 		saveFieldRequest,
+		resolveExcluded,
 		getFieldSets,
 		postFieldSet
 	} from '$lib/c2fClient';
@@ -155,6 +156,8 @@
 	let job = $state<JobState | null>(null);
 	let metricsJob = $state<JobState | null>(null);
 	let saving = $state(false);
+	let resolving = $state(false);
+	let resolveMsg = $state<string | null>(null);
 	let savedAt = $state<number | null>(null);
 	let hoveredTile = $state<string | null>(null);
 	let selectedTile = $state<string | null>(null);
@@ -324,6 +327,11 @@
 
 	function setTauMode(mode: TauMode) {
 		if (tauMode === mode) return;
+		// Adopt the fraction-derived tau into the absolute slider so switching
+		// modes keeps the currently displayed gate instead of the stale slider.
+		if (mode === 'tau' && tauMode === 'keep' && refit?.tau) {
+			tauExp = Math.min(EXP_MAX, Math.max(EXP_MIN, Math.log10(refit.tau)));
+		}
 		tauMode = mode;
 		runRefit();
 	}
@@ -372,6 +380,29 @@
 				}
 			}
 		}, 1000);
+	}
+
+	// Refinement-aware FFT recompute: for every red tile at this level, recrop the
+	// IHC at the current field's prediction and pick the highest-PSR peak within
+	// tau. Resolved tiles' candidates are rewritten, so we reload + refit after.
+	async function resolveRed() {
+		if (!cached || resolving) return;
+		resolving = true;
+		resolveMsg = null;
+		try {
+			const gate = tauMode === 'keep' ? { keep: keepFraction } : { tau };
+			const res = await resolveExcluded(pairId, depth, gate);
+			if (!res) {
+				resolveMsg = 'recompute failed';
+				return;
+			}
+			resolveMsg = `resolved ${res.resolved} / ${res.tried} red tiles (${res.approved} approved)`;
+			onComputed?.();
+			onReload?.();
+			await runRefit();
+		} finally {
+			resolving = false;
+		}
 	}
 
 	async function saveField() {
@@ -778,6 +809,15 @@
 								<button class="lncc-btn" onclick={startMetrics}>Compute LNCC</button>
 							{/if}
 							{#if metricsJob?.error}<span class="err">{metricsJob.error}</span>{/if}
+						</div>
+						<div class="actions-row">
+							<button
+								class="resolve-btn"
+								onclick={resolveRed}
+								disabled={resolving}
+								title="Recompute FFT for red tiles, field-aware peak selection"
+							>{resolving ? 'Recomputing…' : 'Recompute excluded (red)'}</button>
+							{#if resolveMsg}<span class="resolve-msg">{resolveMsg}</span>{/if}
 						</div>
 						<div class="mode-group">
 							<span class="mode-label">Gate by</span>
@@ -1333,6 +1373,21 @@
 		white-space: nowrap;
 	}
 	.lncc-btn:hover { background: #475569; }
+	.resolve-btn {
+		all: unset;
+		cursor: pointer;
+		background: #7c2d12;
+		color: #fed7aa;
+		font-size: 0.72rem;
+		font-weight: 600;
+		padding: 6px 12px;
+		border-radius: 4px;
+		text-align: center;
+		white-space: nowrap;
+	}
+	.resolve-btn:hover { background: #9a3412; }
+	.resolve-btn:disabled { opacity: 0.6; cursor: default; }
+	.resolve-msg { font-size: 0.72rem; color: #fdba74; }
 	.actions-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 	.progress { font-size: 0.72rem; color: #f59e0b; }

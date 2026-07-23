@@ -1,0 +1,57 @@
+import { json, error } from '@sveltejs/kit';
+import { spawn } from 'child_process';
+import { resolve } from 'path';
+import type { RequestHandler } from './$types';
+
+const REPO_ROOT = resolve('..');
+const PYTHON    = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
+const SCRIPT    = resolve(REPO_ROOT, 'setup', 'coarse_to_fine', 'resolve_cli.py');
+
+function runResolve(args: string[]): Promise<unknown> {
+	return new Promise((resolveP, rejectP) => {
+		const child = spawn(PYTHON, [SCRIPT, ...args], { cwd: REPO_ROOT });
+		let stdout = '';
+		let stderr = '';
+		child.stdout.on('data', (c: Buffer) => (stdout += c.toString()));
+		child.stderr.on('data', (c: Buffer) => (stderr += c.toString()));
+		child.on('error', (err) => rejectP(err));
+		child.on('close', (code) => {
+			if (code !== 0) return rejectP(new Error(stderr || `exited ${code}`));
+			try {
+				resolveP(JSON.parse(stdout.trim().split('\n').pop() ?? '{}'));
+			} catch (e) {
+				rejectP(new Error(`bad resolve output: ${(e as Error).message}`));
+			}
+		});
+	});
+}
+
+export const POST: RequestHandler = async ({ request }) => {
+	const body = await request.json().catch(() => null);
+	const hasKeep = body && typeof body.keep === 'number';
+	if (
+		!body ||
+		typeof body.pair_id !== 'number' ||
+		typeof body.depth !== 'number' ||
+		(typeof body.tau !== 'number' && !hasKeep)
+	) {
+		error(400, 'Expected { pair_id: number, depth: number, tau?: number, keep?: number }');
+	}
+
+	const { pair_id, depth, tau, keep } = body as {
+		pair_id: number;
+		depth: number;
+		tau?: number;
+		keep?: number;
+	};
+
+	const args = [String(pair_id), String(depth), String(tau ?? 0)];
+	if (hasKeep) args.push('--keep', String(keep));
+
+	try {
+		const result = await runResolve(args);
+		return json(result);
+	} catch (e) {
+		error(500, `resolve failed: ${(e as Error).message}`);
+	}
+};

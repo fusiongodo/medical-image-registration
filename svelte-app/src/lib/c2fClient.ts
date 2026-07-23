@@ -150,6 +150,36 @@ export async function saveFieldRequest(pair: number, depth: number, gate: Gate):
 	return r.ok;
 }
 
+/** Result of the refinement-aware FFT recompute over the current level's red tiles. */
+export interface ResolveResult {
+	ok: boolean;
+	tau: number;
+	tried: number;
+	resolved: number;
+	approved: number;
+}
+
+/**
+ * Recompute FFT for all red (above-tau / excluded) tiles at pair+depth, choosing
+ * the highest-PSR peak that aligns with the current refinement field. Overwrites
+ * the resolved tiles' cached candidates; callers should refit afterwards.
+ */
+export async function resolveExcluded(
+	pair: number,
+	depth: number,
+	gate: Gate
+): Promise<ResolveResult | null> {
+	const body =
+		'keep' in gate ? { pair_id: pair, depth, keep: gate.keep } : { pair_id: pair, depth, tau: gate.tau };
+	const r = await fetch('/api/c2f/resolve', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify(body)
+	});
+	if (!r.ok) return null;
+	return r.json();
+}
+
 export async function getFieldSets(pair: number): Promise<FieldSetList> {
 	const r = await fetch(`/api/c2f/field-set?pair=${pair}`);
 	if (!r.ok) throw new Error(`field-set list failed (${r.status})`);

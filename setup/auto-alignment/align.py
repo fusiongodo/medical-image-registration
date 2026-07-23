@@ -68,12 +68,8 @@ def _peak_to_sidelobe(r: np.ndarray, py: int, px: int, exclude: int = 3) -> floa
     return (peak - float(side.mean())) / std
 
 
-def phase_correlation(f1: np.ndarray, f2: np.ndarray) -> tuple[float, float, float]:
-    """
-    Returns (dx, dy, psr): translation IHC must be shifted by to align with HE,
-    plus the peak-to-sidelobe ratio of the correlation surface as a confidence.
-    Normalised cross-power spectrum in FFT domain; sub-pixel via parabolic fit.
-    """
+def _correlation_surface(f1: np.ndarray, f2: np.ndarray) -> np.ndarray:
+    """fftshift-ed normalised cross-power correlation surface of f1 (fixed) vs f2 (moving)."""
     h, w = f1.shape
     win = np.outer(np.hanning(h), np.hanning(w)).astype(np.float32)
     F1 = np.fft.fft2(f1 * win)
@@ -81,22 +77,59 @@ def phase_correlation(f1: np.ndarray, f2: np.ndarray) -> tuple[float, float, flo
     R = F1 * np.conj(F2)
     R /= np.abs(R) + 1e-10
     r = np.real(np.fft.ifft2(R))
-    r = np.fft.fftshift(r)
+    return np.fft.fftshift(r)
 
-    py, px = np.unravel_index(np.argmax(r), r.shape)
 
-    def parabolic(arr: np.ndarray, p: int, size: int) -> float:
-        if p <= 0 or p >= size - 1:
-            return float(p - size // 2)
-        pm1, p0, pp1 = arr[p - 1], arr[p], arr[p + 1]
-        denom = 2 * p0 - pm1 - pp1
-        offset = (pp1 - pm1) / (2 * denom) if abs(denom) > 1e-10 else 0.0
-        return float(p - size // 2 + offset)
+def _parabolic(arr: np.ndarray, p: int, size: int) -> float:
+    if p <= 0 or p >= size - 1:
+        return float(p - size // 2)
+    pm1, p0, pp1 = arr[p - 1], arr[p], arr[p + 1]
+    denom = 2 * p0 - pm1 - pp1
+    offset = (pp1 - pm1) / (2 * denom) if abs(denom) > 1e-10 else 0.0
+    return float(p - size // 2 + offset)
 
-    dx = parabolic(r[py, :], px, w)
-    dy = parabolic(r[:, px], py, h)
+
+def _peak_disp(r: np.ndarray, py: int, px: int) -> tuple[float, float, float]:
+    h, w = r.shape
+    dx = _parabolic(r[py, :], px, w)
+    dy = _parabolic(r[:, px], py, h)
     psr = _peak_to_sidelobe(r, int(py), int(px))
     return dx, dy, psr
+
+
+def phase_correlation(f1: np.ndarray, f2: np.ndarray) -> tuple[float, float, float]:
+    """
+    Returns (dx, dy, psr): translation IHC must be shifted by to align with HE,
+    plus the peak-to-sidelobe ratio of the correlation surface as a confidence.
+    Normalised cross-power spectrum in FFT domain; sub-pixel via parabolic fit.
+    """
+    r = _correlation_surface(f1, f2)
+    py, px = np.unravel_index(np.argmax(r), r.shape)
+    return _peak_disp(r, int(py), int(px))
+
+
+def phase_correlation_multi(
+    f1: np.ndarray, f2: np.ndarray, n_peaks: int = 5, exclude: int = 3
+) -> list[tuple[float, float, float]]:
+    """
+    Non-maximum-suppressed top-N peaks of the correlation surface.
+    Returns a list of (dx, dy, psr) ordered by descending correlation, at most n_peaks.
+    Sub-pixel offsets and PSR are read from the original (un-suppressed) surface.
+    """
+    r = _correlation_surface(f1, f2)
+    h, w = r.shape
+    work = r.copy()
+    out: list[tuple[float, float, float]] = []
+    for _ in range(max(1, n_peaks)):
+        py, px = np.unravel_index(np.argmax(work), work.shape)
+        py, px = int(py), int(px)
+        if not np.isfinite(work[py, px]):
+            break
+        out.append(_peak_disp(r, py, px))
+        y0, y1 = max(0, py - exclude), min(h, py + exclude + 1)
+        x0, x1 = max(0, px - exclude), min(w, px + exclude + 1)
+        work[y0:y1, x0:x1] = -np.inf
+    return out
 
 
 def register_arrays(he_gray: np.ndarray, ihc_gray: np.ndarray) -> dict[str, float]:
@@ -108,6 +141,22 @@ def register_arrays(he_gray: np.ndarray, ihc_gray: np.ndarray) -> dict[str, floa
     moving = sobel_edge(ihc_gray.astype(np.float64))
     dx, dy, psr = phase_correlation(fixed, moving)
     return {"dx": dx, "dy": dy, "psr": psr}
+
+
+def register_arrays_multi(
+    he_gray: np.ndarray, ihc_gray: np.ndarray, n_peaks: int = 5
+) -> list[dict[str, float]]:
+    """
+    Multi-peak in-memory registration. Returns up to n_peaks {dx, dy, psr} dicts
+    ordered by descending correlation, used by the refinement-aware FFT recompute
+    to choose an alternative peak that aligns with the current refinement field.
+    """
+    fixed = sobel_edge(he_gray.astype(np.float64))
+    moving = sobel_edge(ihc_gray.astype(np.float64))
+    return [
+        {"dx": dx, "dy": dy, "psr": psr}
+        for dx, dy, psr in phase_correlation_multi(fixed, moving, n_peaks=n_peaks)
+    ]
 
 
 # ── Level-3 from-scratch pass (raw crops -> c2f_cache) ────────────────────────
