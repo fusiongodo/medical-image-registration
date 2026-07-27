@@ -10,6 +10,11 @@ pre-cropped PNGs. A persistent Python worker keeps decoded pyramid pages warm.
 - **`api/live-crop/tile`** — `?pair&level&x&y&side&dx&dy` → PNG. `dx/dy` (optional) are
   **tile-pixel** displacements (512×344 CNN space); the moving IHC is recropped at that
   offset for near-full intersection instead of being canvas-shifted.
+- **`api/c2f/fft-map`** — `?pair&depth&tile&dx&dy[&mx&my]` → PNG of the FFT
+  phase-correlation surface at the prior base (worker `fft-map` op, `fft_map.py`).
+  Red crosshair = chosen peak, grey cross = zero shift, blue circle = `mx/my`
+  (the panel passes the current included pick). Shown on hover in the C2F tile row
+  via `FftMap.svelte` / `fftMapUrl()`.
 - **`api/tiles/[pair]/[depth]`** and the page `+page.server.ts` discover tiles via the
   same worker `tiles` op and return `[{ tile }]` (URLs are built client-side).
 
