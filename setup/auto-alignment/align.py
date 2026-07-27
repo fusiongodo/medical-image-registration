@@ -108,15 +108,12 @@ def phase_correlation(f1: np.ndarray, f2: np.ndarray) -> tuple[float, float, flo
     return _peak_disp(r, int(py), int(px))
 
 
-def phase_correlation_multi(
-    f1: np.ndarray, f2: np.ndarray, n_peaks: int = 5, exclude: int = 3
-) -> list[tuple[float, float, float]]:
+def _nms_peaks(r: np.ndarray, n_peaks: int = 5, exclude: int = 3) -> list[tuple[float, float, float]]:
     """
-    Non-maximum-suppressed top-N peaks of the correlation surface.
+    Non-maximum-suppressed top-N peaks of a precomputed correlation surface.
     Returns a list of (dx, dy, psr) ordered by descending correlation, at most n_peaks.
     Sub-pixel offsets and PSR are read from the original (un-suppressed) surface.
     """
-    r = _correlation_surface(f1, f2)
     h, w = r.shape
     work = r.copy()
     out: list[tuple[float, float, float]] = []
@@ -130,6 +127,18 @@ def phase_correlation_multi(
         x0, x1 = max(0, px - exclude), min(w, px + exclude + 1)
         work[y0:y1, x0:x1] = -np.inf
     return out
+
+
+def phase_correlation_multi(
+    f1: np.ndarray, f2: np.ndarray, n_peaks: int = 5, exclude: int = 3
+) -> list[tuple[float, float, float]]:
+    """
+    Non-maximum-suppressed top-N peaks of the correlation surface.
+    Returns a list of (dx, dy, psr) ordered by descending correlation, at most n_peaks.
+    Sub-pixel offsets and PSR are read from the original (un-suppressed) surface.
+    """
+    r = _correlation_surface(f1, f2)
+    return _nms_peaks(r, n_peaks=n_peaks, exclude=exclude)
 
 
 def register_arrays(he_gray: np.ndarray, ihc_gray: np.ndarray) -> dict[str, float]:
@@ -157,6 +166,25 @@ def register_arrays_multi(
         {"dx": dx, "dy": dy, "psr": psr}
         for dx, dy, psr in phase_correlation_multi(fixed, moving, n_peaks=n_peaks)
     ]
+
+
+def surface_and_peaks(
+    he_gray: np.ndarray, ihc_gray: np.ndarray, n_peaks: int = 5
+) -> tuple[np.ndarray, list[dict[str, float]]]:
+    """
+    fftshift-ed correlation surface (H, W) float array plus its NMS top-N peaks.
+    Peaks are {dx, dy, psr} ordered by descending correlation. The surface is
+    computed once and reused, so this avoids the double FFT of calling the
+    surface and the multi-peak helpers separately (used by the FFT map preview).
+    """
+    fixed = sobel_edge(he_gray.astype(np.float64))
+    moving = sobel_edge(ihc_gray.astype(np.float64))
+    r = _correlation_surface(fixed, moving)
+    peaks = [
+        {"dx": dx, "dy": dy, "psr": psr}
+        for dx, dy, psr in _nms_peaks(r, n_peaks=n_peaks)
+    ]
+    return r, peaks
 
 
 # ── Level-3 from-scratch pass (raw crops -> c2f_cache) ────────────────────────

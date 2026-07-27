@@ -34,3 +34,32 @@ export function liveCropUrl(
 export function liveWholeUrl(pair: number, side: 'he' | 'ihc', level: number): string {
 	return `/api/live-crop/whole?pair=${pair}&side=${side}&level=${level}`;
 }
+
+/**
+ * URL for the per-tile FFT phase-correlation map PNG.
+ *
+ * The surface is computed on HE (fixed) vs IHC recropped at the prior base
+ * (dx, dy), so the argmax reproduces the FFT residual. mx/my (optional) mark the
+ * chosen peak — the residual that produced the current refinement vector
+ * (ux - prior_dx, uy - prior_dy).
+ *
+ * pair, depth: quadtree pair index + depth
+ * tile: "x_y" grid location
+ * dx, dy: prior base offset baked into the moving IHC crop
+ * mx, my: chosen-peak residual to highlight
+ * returns: request URL string
+ */
+export function fftMapUrl(
+	pair: number,
+	depth: number,
+	tile: string,
+	dx = 0,
+	dy = 0,
+	mx?: number,
+	my?: number
+): string {
+	let u = `/api/c2f/fft-map?pair=${pair}&depth=${depth}&tile=${tile}`;
+	if (dx !== 0 || dy !== 0) u += `&dx=${dx}&dy=${dy}`;
+	if (mx !== undefined && my !== undefined) u += `&mx=${mx}&my=${my}`;
+	return u;
+}

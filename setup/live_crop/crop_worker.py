@@ -9,6 +9,8 @@ Request  : {"id": int, "op": "tiles", "pair": int, "level": int}
            {"id": int, "op": "crop",  "pair": int, "level": int,
             "x": int, "y": int, "side": "he"|"ihc", "dx"?: float, "dy"?: float}
            {"id": int, "op": "whole", "pair": int, "level": int, "side": "he"|"ihc"}
+           {"id": int, "op": "fft-map", "pair": int, "level": int, "tile": "x_y",
+            "dx"?: float, "dy"?: float, "mx"?: float, "my"?: float}
 Response : {"id": int, "ok": true,  ...}              (op-specific payload)
            {"id": int, "ok": false, "error": str}
 
@@ -22,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import crop_core
+import fft_map
 
 
 def _handle(req: dict) -> dict:
@@ -45,6 +48,19 @@ def _handle(req: dict) -> dict:
         if png is None:
             return {"ok": False, "error": "no pyramid page for whole-image preview"}
         return {"ok": True, "png": base64.b64encode(png).decode("ascii")}
+    if op == "fft-map":
+        mx = req.get("mx")
+        my = req.get("my")
+        png, meta = fft_map.fft_map_data(
+            int(req["pair"]),
+            int(req["level"]),
+            str(req["tile"]),
+            float(req.get("dx", 0.0)),
+            float(req.get("dy", 0.0)),
+            None if mx is None else float(mx),
+            None if my is None else float(my),
+        )
+        return {"ok": True, "png": base64.b64encode(png).decode("ascii"), **meta}
     return {"ok": False, "error": f"unknown op: {op!r}"}
 
 

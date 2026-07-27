@@ -10,11 +10,17 @@ pre-cropped PNGs. A persistent Python worker keeps decoded pyramid pages warm.
 - **`api/live-crop/tile`** — `?pair&level&x&y&side&dx&dy` → PNG. `dx/dy` (optional) are
   **tile-pixel** displacements (512×344 CNN space); the moving IHC is recropped at that
   offset for near-full intersection instead of being canvas-shifted.
-- **`api/c2f/fft-map`** — `?pair&depth&tile&dx&dy[&mx&my]` → PNG of the FFT
-  phase-correlation surface at the prior base (worker `fft-map` op, `fft_map.py`).
-  Red crosshair = chosen peak, grey cross = zero shift, blue circle = `mx/my`
-  (the panel passes the current included pick). Shown on hover in the C2F tile row
-  via `FftMap.svelte` / `fftMapUrl()`.
+- **`api/c2f/fft-map`** — `?pair&depth&tile&dx&dy[&mx&my]` → JSON
+  `{image (data-URL PNG), w, h, cx, cy, peaks:[{dx,dy,psr,px,py}], chosen}` for
+  the FFT phase-correlation surface at the prior base (worker `fft-map` op,
+  `fft_map.py` → `align.surface_and_peaks`). The PNG is the bare colormapped
+  surface rendered once at full tile resolution; `FftMap.svelte` is a pan/zoom
+  viewer (scroll=zoom, drag=pan, dbl-click=reset) that overlays **fixed-size,
+  toggle-able** SVG markers so they never obscure the maxima: grey plus = zero
+  shift (`cx,cy`), rank-labelled circles = NMS top-N peaks (rank 0 red = global
+  argmax), blue circle = `chosen` (residual behind the current refinement
+  vector, `ux - prior_dx`). URL built via `fftMapUrl()`; shown for the
+  hovered/selected tile in the C2F tile row.
 - **`api/tiles/[pair]/[depth]`** and the page `+page.server.ts` discover tiles via the
   same worker `tiles` op and return `[{ tile }]` (URLs are built client-side).
 

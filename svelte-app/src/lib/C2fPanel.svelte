@@ -3,10 +3,11 @@
 	import C2fVectorField from '$lib/C2fVectorField.svelte';
 	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
 	import DisplacementArrow from '$lib/DisplacementArrow.svelte';
+	import FftMap from '$lib/FftMap.svelte';
 	import OverlayCanvas from '$lib/OverlayCanvas.svelte';
 	import PointCanvas from '$lib/PointCanvas.svelte';
 	import { computeLNCC, loadNormalizedGray } from '$lib/imageUtils';
-	import { liveCropUrl } from '$lib/liveCropUrl';
+	import { liveCropUrl, fftMapUrl } from '$lib/liveCropUrl';
 	import {
 		getCandidates,
 		computeCandidates,
@@ -188,6 +189,22 @@
 	// Included IHC recropped at the full refined displacement (total).
 	const previewIhcIncludedSrc = $derived(
 		previewTile && previewResult ? liveCropSrc('ihc', previewResult.ux, previewResult.uy) : ''
+	);
+
+	// FFT surface at the prior base; chosen-peak marker = the residual that
+	// produced the current refinement vector (total - prior).
+	const previewFftSrc = $derived(
+		previewTile && previewResult
+			? fftMapUrl(
+					pairId,
+					depth,
+					previewTile,
+					previewResult.prior_dx,
+					previewResult.prior_dy,
+					previewResult.ux - previewResult.prior_dx,
+					previewResult.uy - previewResult.prior_dy
+				)
+			: ''
 	);
 
 	function onSelect(tile: string | null) {
@@ -898,6 +915,17 @@
 						{#if savedAt}<span class="saved">✓ saved</span>{/if}
 					</div>
 
+					<div class="fft-side">
+						<span class="fft-side-label">FFT surface{#if previewTile} · {previewTile}{/if}</span>
+						{#if previewResult}
+							{#key previewFftSrc}
+								<FftMap src={previewFftSrc} />
+							{/key}
+						{:else}
+							<div class="fft-side-empty">hover / select a tile</div>
+						{/if}
+					</div>
+
 					</div>
 				<div class="tile-row">
 					<div class="tile-row-header">
@@ -1428,6 +1456,36 @@
 		align-items: center;
 		gap: 12px;
 	}
+
+	.fft-side {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		flex: 0 0 auto;
+	}
+
+	.fft-side-label {
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #6b7280;
+	}
+
+	.fft-side-empty {
+		width: 132px;
+		height: 88px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: 1px dashed #2a2d3a;
+		border-radius: 4px;
+		background: #0f1117;
+		font-size: 0.62rem;
+		color: #4b5563;
+		text-align: center;
+	}
+
 
 	.tile-actions {
 		display: flex;
