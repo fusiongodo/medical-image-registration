@@ -287,16 +287,12 @@ def descriptor_loss(descriptors, other_descriptors, config, valid_mask=None):
     dot_product_desc = F.normalize(dot_product_desc, p=2, dim=1)
     dot_product_desc = dot_product_desc.view(batch_size, Hc, Wc, Hc, Wc)
 
-    grid_sigma = config.get('desc_patch_size', 1.0)
-    centricity = config.get('desc_centricity', 1.0)
-    gy, gx = torch.meshgrid(torch.arange(Hc, device=device, dtype=torch.float32),
-                            torch.arange(Wc, device=device, dtype=torch.float32),
-                            indexing='ij')
-    dy = gy.unsqueeze(2).unsqueeze(3) - gy.unsqueeze(0).unsqueeze(1)
-    dx = gx.unsqueeze(2).unsqueeze(3) - gx.unsqueeze(0).unsqueeze(1)
-    dist_sq = dx**2 + dy**2
-    s = torch.exp(-centricity * dist_sq / (2 * grid_sigma**2))
-    s = s * (dist_sq <= 2).float()
+    # Original SuperPoint correspondence mask s under an identity warp (the
+    # tiles are pre-aligned, no homographies): positive iff same cell.
+    r = torch.arange(Hc, device=device)
+    c = torch.arange(Wc, device=device)
+    s = ((r.view(Hc, 1, 1, 1) == r.view(1, 1, Hc, 1))
+         & (c.view(1, Wc, 1, 1) == c.view(1, 1, 1, Wc))).float()
 
     positive_dist = torch.clamp(config['positive_margin'] - dot_product_desc, min=0.0)
     negative_dist = torch.clamp(dot_product_desc - config['negative_margin'], min=0.0)

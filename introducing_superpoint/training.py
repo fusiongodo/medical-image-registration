@@ -86,8 +86,6 @@ def _match_kwargs(config):
 def _desc_config(superpoint_config, training_config):
     return {
         **superpoint_config,
-        "desc_patch_size": training_config.desc_patch_size,
-        "desc_centricity": training_config.desc_centricity,
         "lambda_d": training_config.desc_lambda,
         "positive_margin": training_config.desc_positive_margin,
         "negative_margin": training_config.desc_negative_margin,

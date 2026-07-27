@@ -43,8 +43,6 @@ class TrainingConfig:
     kp_radius: int = 12
     match_mode: str = "conf_distance"
     match_epsilon: float = 1.0
-    desc_patch_size: float = 3.0
-    desc_centricity: float = 1.0
     desc_lambda: float = default_config["lambda_d"]
     desc_positive_margin: float = default_config["positive_margin"]
     desc_negative_margin: float = default_config["negative_margin"]
@@ -162,8 +160,6 @@ class ModelInstance:
             kp_radius=config_dict.get("kp_radius", 12),
             match_mode=config_dict.get("match_mode", "conf_distance"),
             match_epsilon=config_dict.get("match_epsilon", 1.0),
-            desc_patch_size=config_dict.get("desc_patch_size", 3.0),
-            desc_centricity=config_dict.get("desc_centricity", 1.0),
             desc_lambda=config_dict.get("desc_lambda", default_config["lambda_d"]),
             desc_positive_margin=config_dict.get("desc_positive_margin", default_config["positive_margin"]),
             desc_negative_margin=config_dict.get("desc_negative_margin", default_config["negative_margin"]),
