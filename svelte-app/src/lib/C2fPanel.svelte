@@ -94,6 +94,8 @@
 		dy: number;
 		ux: number;
 		uy: number;
+		ann_u?: number | null;
+		ann_v?: number | null;
 		prior_dx: number;
 		prior_dy: number;
 	}
@@ -186,9 +188,19 @@
 			? liveCropSrc('ihc', previewResult.prior_dx, previewResult.prior_dy)
 			: ''
 	);
-	// Included IHC recropped at the full refined displacement (total).
+	// The displacement this tile is actually set to: a human correction/approval
+	// (ann_u/ann_v) when present, otherwise the raw FFT candidate (ux/uy). This is
+	// what the "Included" row visualises so human input is reflected here.
+	const includedVec = $derived(
+		previewResult
+			? previewResult.ann_u != null && previewResult.ann_v != null
+				? { dx: previewResult.ann_u, dy: previewResult.ann_v }
+				: { dx: previewResult.ux, dy: previewResult.uy }
+			: null
+	);
+	// Included IHC recropped at the tile's effective (human-aware) displacement.
 	const previewIhcIncludedSrc = $derived(
-		previewTile && previewResult ? liveCropSrc('ihc', previewResult.ux, previewResult.uy) : ''
+		previewTile && includedVec ? liveCropSrc('ihc', includedVec.dx, includedVec.dy) : ''
 	);
 
 	// FFT surface at the prior base; chosen-peak marker = the residual that
@@ -233,11 +245,11 @@
 	}
 
 	function commitCorrect() {
-		if (!previewResult || !hePt || !ihcPt) return;
-		// The upper-row IHC is shown at the refined displacement (ux, uy), so the
-		// clicked residual composes on top of it: total = refined + (he - ihc).
-		const u = previewResult.ux + (hePt.x - ihcPt.x);
-		const v = previewResult.uy + (hePt.y - ihcPt.y);
+		if (!previewResult || !includedVec || !hePt || !ihcPt) return;
+		// The upper-row IHC is shown at the tile's effective displacement, so the
+		// clicked residual composes on top of it: total = effective + (he - ihc).
+		const u = includedVec.dx + (hePt.x - ihcPt.x);
+		const v = includedVec.dy + (hePt.y - ihcPt.y);
 		onCorrect?.(previewResult.tile_loc, u, v);
 		hePt = null;
 		ihcPt = null;
@@ -623,8 +635,8 @@
 		const priorSrc = previewIhcSrc;
 		const includedSrc = previewIhcIncludedSrc;
 		const ps = patchSize;
-		const ux = previewResult.ux;
-		const uy = previewResult.uy;
+		const ux = includedVec ? includedVec.dx : previewResult.ux;
+		const uy = includedVec ? includedVec.dy : previewResult.uy;
 		const pdx = previewResult.prior_dx;
 		const pdy = previewResult.prior_dy;
 		let cancelled = false;
@@ -1032,7 +1044,7 @@
 							<div class="fr-score" style:background={lnccColor(tileStats.lncc2)}>
 								<span class="value">{tileStats.lncc2.toFixed(3)}</span>
 							</div>
-							<div class="fr-disp"><DisplacementArrow dx={previewResult.ux} dy={previewResult.uy} /></div>
+							<div class="fr-disp"><DisplacementArrow dx={includedVec?.dx ?? previewResult.ux} dy={includedVec?.dy ?? previewResult.uy} /></div>
 							<div class="fr-score" style:background={lnccColor(incl?.lncc2 ?? 0)}>
 								<span class="value">{(incl?.lncc2 ?? 0).toFixed(3)}</span>
 							</div>

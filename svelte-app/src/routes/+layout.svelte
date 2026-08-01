@@ -84,6 +84,7 @@
 		</div>
 		<nav class="tools">
 			<a href="/live" class:active={$page.url.pathname === '/live'}>Live crop</a>
+			<a href="/regwsi" class:active={$page.url.pathname.startsWith('/regwsi')}>regWSI</a>
 		</nav>
 		<h2>Pairs</h2>
 		<ul>
@@ -188,6 +189,9 @@
 	.tools {
 		padding: 8px 14px 4px;
 		flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
 	}
 
 	.tools a {

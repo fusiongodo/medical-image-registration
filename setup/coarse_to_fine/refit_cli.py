@@ -102,6 +102,14 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None =
     masked_locs = masks.masked_at(mask_entries, depth, [c.tile_loc for c in candidates])
     human_anchors = annotations.to_anchors(entries, up_to_level=depth)
     annotated = {e["tile_loc"]: e["type"] for e in entries if int(e["level"]) == depth}
+    # Human-set displacement (approve keeps the FFT pick, correct overrides it) in
+    # this level's tile-pixel units, so the UI can show the actually-chosen vector
+    # for annotated tiles instead of the stale FFT candidate.
+    human_uv = {
+        e["tile_loc"]: (float(e["disp"]["u"]), float(e["disp"]["v"]))
+        for e in entries
+        if int(e["level"]) == depth and e.get("type") in ("approve", "correct")
+    }
     excluded_locs = {
         e["tile_loc"]
         for e in entries
@@ -141,6 +149,7 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None =
         ann = annotated.get(cand.tile_loc)
         is_excluded = ann == "exclude"
         is_masked = cand.tile_loc in masked_locs
+        ann_u, ann_v = human_uv.get(cand.tile_loc, (None, None))
         tiles.append({
             "tile_loc": cand.tile_loc,
             "psr": cand.psr,
@@ -153,6 +162,8 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None =
             "dy": dy,
             "ux": cand.u,
             "uy": cand.v,
+            "ann_u": ann_u,
+            "ann_v": ann_v,
             "prior_dx": prior_dx,
             "prior_dy": prior_dy,
         })
