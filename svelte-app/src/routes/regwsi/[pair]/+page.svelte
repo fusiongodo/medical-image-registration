@@ -160,7 +160,11 @@
 			</p>
 		</div>
 		<nav class="nav">
-			<a href={`/regwsi/${pairId}/annotate`}>Annotate landmarks</a>
+			<a href={`/regwsi/${pairId}/annotate`}>
+				Annotate landmarks{#if data.landmarkCount > 0}
+					<span class="lm-count"> · {data.landmarkCount}</span>
+				{/if}
+			</a>
 			<a href="/regwsi">All pairs</a>
 		</nav>
 	</header>

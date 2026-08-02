@@ -124,4 +124,4 @@ def is_full_ready(pair_id: int) -> bool:
 
 
 def is_registered(pair_id: int) -> bool:
-    return displacement_field(pair_id).is_file() and preview_he(pair_id).is_file() and preview_ihc_warped(pair_id).is_file()
+    return displacement_field(pair_id).is_file()

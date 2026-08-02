@@ -1,23 +1,30 @@
-import { error } from '@sveltejs/kit';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
-import type { PageServerLoad } from './$types';
 import { pairCount } from '$lib/server/pairs';
 
 const REPO_ROOT = resolve('..');
-const LAYERS = ['he', 'ihc', 'ihc_warped'] as const;
+const LAYERS = ['he', 'ihc'] as const;
 
-export const load: PageServerLoad = ({ params }) => {
+export type AnnotatePageData = {
+	pairId: number;
+	numPairs: number;
+	fullReady: boolean;
+	fullMeta: { w: number; h: number; qw: number; qh: number; nq?: number; scale?: number } | null;
+	ready: boolean;
+	mainSetId: string | null;
+	mainSetName: string | null;
+};
+
+export function loadAnnotatePair(pairParam: string): AnnotatePageData | 'out_of_range' {
 	const numPairs = pairCount();
-	const pairId = Number(params.pair);
+	const pairId = Number(pairParam);
 	if (!Number.isInteger(pairId) || pairId < 0 || pairId >= numPairs) {
-		error(404, `pair ${params.pair} out of range`);
+		return 'out_of_range';
 	}
 	const dir = resolve(REPO_ROOT, 'data', 'regwsi', String(pairId));
 	const fullDir = resolve(dir, 'full');
 	const metaPath = resolve(fullDir, 'meta.json');
-	let fullMeta: { w: number; h: number; qw: number; qh: number; nq?: number; scale?: number } | null =
-		null;
+	let fullMeta: AnnotatePageData['fullMeta'] = null;
 	if (existsSync(metaPath)) {
 		try {
 			fullMeta = JSON.parse(readFileSync(metaPath, 'utf-8'));
@@ -66,17 +73,5 @@ export const load: PageServerLoad = ({ params }) => {
 	}
 
 	const ready = existsSync(resolve(dir, 'out', 'displacement_field.mha'));
-
-	let landmarkCount = 0;
-	const lmPath = resolve(dir, 'landmarks.json');
-	if (existsSync(lmPath)) {
-		try {
-			const data = JSON.parse(readFileSync(lmPath, 'utf-8'));
-			landmarkCount = Array.isArray(data.points) ? data.points.length : 0;
-		} catch {
-			landmarkCount = 0;
-		}
-	}
-
-	return { pairId, numPairs, fullReady, fullMeta, ready, mainSetId, mainSetName, landmarkCount };
-};
+	return { pairId, numPairs, fullReady, fullMeta, ready, mainSetId, mainSetName };
+}
