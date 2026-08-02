@@ -5,7 +5,22 @@ import type { PageServerLoad } from './$types';
 import { pairCount } from '$lib/server/pairs';
 
 const REPO_ROOT = resolve('..');
-const LAYERS = ['he', 'ihc', 'ihc_warped'] as const;
+const BASE_LAYERS = ['he', 'ihc'] as const;
+
+function layersReady(
+	fullDir: string,
+	nq: number,
+	layers: readonly string[]
+): boolean {
+	return layers.every((layer) => {
+		for (let qy = 0; qy < nq; qy++) {
+			for (let qx = 0; qx < nq; qx++) {
+				if (!existsSync(resolve(fullDir, `${layer}_y${qy}_x${qx}.jpg`))) return false;
+			}
+		}
+		return true;
+	});
+}
 
 export const load: PageServerLoad = ({ params }) => {
 	const numPairs = pairCount();
@@ -26,16 +41,8 @@ export const load: PageServerLoad = ({ params }) => {
 		}
 	}
 	const nq = fullMeta?.nq ?? 2;
-	const fullReady =
-		!!fullMeta &&
-		LAYERS.every((layer) => {
-			for (let qy = 0; qy < nq; qy++) {
-				for (let qx = 0; qx < nq; qx++) {
-					if (!existsSync(resolve(fullDir, `${layer}_y${qy}_x${qx}.jpg`))) return false;
-				}
-			}
-			return true;
-		});
+	const fullReady = !!fullMeta && layersReady(fullDir, nq, BASE_LAYERS);
+	const warpedReady = fullReady && layersReady(fullDir, nq, ['ihc_warped']);
 
 	let mainSetId: string | null = null;
 	let mainSetName: string | null = null;
@@ -78,5 +85,15 @@ export const load: PageServerLoad = ({ params }) => {
 		}
 	}
 
-	return { pairId, numPairs, fullReady, fullMeta, ready, mainSetId, mainSetName, landmarkCount };
+	return {
+		pairId,
+		numPairs,
+		fullReady,
+		warpedReady,
+		fullMeta,
+		ready,
+		mainSetId,
+		mainSetName,
+		landmarkCount
+	};
 };

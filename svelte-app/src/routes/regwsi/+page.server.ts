@@ -16,13 +16,51 @@ function landmarkCount(dir: string): number {
 	}
 }
 
+function mainSetMeta(pairId: number): { mainSetId: string | null; mainSetName: string | null } {
+	let mainSetId: string | null = null;
+	let mainSetName: string | null = null;
+	const activePath = resolve(REPO_ROOT, 'data', 'field_sets', String(pairId), 'active.json');
+	if (!existsSync(activePath)) return { mainSetId, mainSetName };
+	try {
+		const active = JSON.parse(readFileSync(activePath, 'utf-8'));
+		mainSetId = active.main_set_id ?? active.set_id ?? null;
+		if (mainSetId) {
+			const manifestPath = resolve(
+				REPO_ROOT,
+				'data',
+				'field_sets',
+				String(pairId),
+				mainSetId,
+				'manifest.json'
+			);
+			if (existsSync(manifestPath)) {
+				const m = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+				mainSetName = m.name ?? mainSetId;
+			} else {
+				mainSetName = mainSetId;
+			}
+		}
+	} catch {
+		mainSetId = null;
+		mainSetName = null;
+	}
+	return { mainSetId, mainSetName };
+}
+
 export const load: PageServerLoad = () => {
 	const n = pairCount();
 	const pairs = [];
 	for (let i = 0; i < n; i++) {
 		const dir = resolve(REPO_ROOT, 'data', 'regwsi', String(i));
 		const ready = existsSync(resolve(dir, 'out', 'displacement_field.mha'));
-		pairs.push({ pairId: i, ready, landmarkCount: landmarkCount(dir) });
+		const { mainSetId, mainSetName } = mainSetMeta(i);
+		pairs.push({
+			pairId: i,
+			ready,
+			landmarkCount: landmarkCount(dir),
+			mainSetId,
+			mainSetName
+		});
 	}
 	return { pairs };
 };

@@ -34,7 +34,7 @@ export function readStoredSession(pairId: number): AnnotateSession | null {
 		if (!Array.isArray(data.landmarks)) return null;
 		return {
 			phase: data.phase,
-			pendingHe: data.pendingHe ?? null,
+			pendingHe: Array.isArray(data.pendingHe) ? data.pendingHe : null,
 			landmarks: data.landmarks,
 			rev: typeof data.rev === 'number' ? data.rev : 0
 		};
@@ -46,6 +46,10 @@ export function readStoredSession(pairId: number): AnnotateSession | null {
 export function writeStoredSession(pairId: number, session: AnnotateSession) {
 	if (typeof localStorage === 'undefined') return;
 	localStorage.setItem(storageKey(pairId), JSON.stringify(session));
+}
+
+export function isNewer(remote: AnnotateSession, local: AnnotateSession) {
+	return remote.rev > local.rev;
 }
 
 export type SessionHandle = {
@@ -63,22 +67,28 @@ export function connectSession(
 	const ch =
 		typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(channelName(pairId)) : null;
 
-	const onMessage = (ev: MessageEvent<AnnotateSession>) => {
-		if (!ev.data || typeof ev.data.rev !== 'number') return;
-		onRemote(ev.data);
+	const deliver = (data: AnnotateSession) => {
+		if (typeof data.rev !== 'number') return;
+		onRemote(data);
 	};
+
+	const onMessage = (ev: MessageEvent<AnnotateSession>) => deliver(ev.data);
 	ch?.addEventListener('message', onMessage);
 
 	const onStorage = (ev: StorageEvent) => {
 		if (ev.key !== storageKey(pairId) || !ev.newValue) return;
 		try {
-			const data = JSON.parse(ev.newValue) as AnnotateSession;
-			if (typeof data.rev === 'number') onRemote(data);
+			deliver(JSON.parse(ev.newValue) as AnnotateSession);
 		} catch {
 			/* ignore */
 		}
 	};
 	if (typeof window !== 'undefined') window.addEventListener('storage', onStorage);
+
+	const poll = window.setInterval(() => {
+		const stored = readStoredSession(pairId);
+		if (stored) deliver(stored);
+	}, 250);
 
 	return {
 		publish(current, update) {
@@ -93,9 +103,25 @@ export function connectSession(
 			return session;
 		},
 		close() {
+			window.clearInterval(poll);
 			ch?.removeEventListener('message', onMessage);
 			ch?.close();
 			if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
 		}
 	};
+}
+
+export function bootstrapSession(pairId: number, serverLandmarks: Landmark[]): AnnotateSession {
+	const stored = readStoredSession(pairId);
+	if (stored && stored.rev > 0) {
+		return {
+			phase: stored.phase,
+			pendingHe: stored.pendingHe,
+			landmarks: serverLandmarks,
+			rev: stored.rev
+		};
+	}
+	const fresh = emptySession(serverLandmarks);
+	writeStoredSession(pairId, fresh);
+	return fresh;
 }

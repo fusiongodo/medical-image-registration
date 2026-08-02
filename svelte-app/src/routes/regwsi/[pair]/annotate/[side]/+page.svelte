@@ -1,9 +1,10 @@
 <script lang="ts">
 	import AnnotateMosaic from '$lib/regwsi/AnnotateMosaic.svelte';
 	import {
+		bootstrapSession,
 		connectSession,
 		emptySession,
-		readStoredSession,
+		isNewer,
 		type AnnotateSession,
 		type AnnotateSide,
 		type Landmark
@@ -16,36 +17,27 @@
 	let session = $state<AnnotateSession>(emptySession());
 	let saveBusy = $state(false);
 	let handle: ReturnType<typeof connectSession> | null = null;
+	let loadGen = 0;
 
 	const active = $derived(session.phase === side);
 	const pairNum = $derived(session.landmarks.length + 1);
 
 	function applyRemote(remote: AnnotateSession) {
-		if (remote.rev > session.rev) session = remote;
+		if (isNewer(remote, session)) session = remote;
 	}
 
 	async function loadFromServer() {
+		const gen = ++loadGen;
 		const r = await fetch(`/api/regwsi/landmarks?pair=${pairId}`);
-		if (!r.ok) return;
+		if (!r.ok || gen !== loadGen) return;
 		const d = await r.json();
+		if (gen !== loadGen) return;
 		const landmarks = (d.points ?? []) as Landmark[];
-		const stored = readStoredSession(pairId);
-		if (stored && stored.rev > 0) {
-			session = {
-				phase: stored.phase,
-				pendingHe: stored.pendingHe,
-				landmarks,
-				rev: stored.rev
-			};
-			return;
-		}
-		session = emptySession(landmarks);
-		if (handle) {
-			session = handle.publish(emptySession(landmarks), {
-				landmarks,
-				pendingHe: null,
-				phase: 'he'
-			});
+		const boot = bootstrapSession(pairId, landmarks);
+		if (isNewer(boot, session) || session.rev === 0) {
+			session = boot;
+		} else if (session.landmarks.length !== landmarks.length) {
+			session = { ...session, landmarks };
 		}
 	}
 
@@ -68,7 +60,8 @@
 	}
 
 	async function onAnnotate(pt: [number, number]) {
-		if (saveBusy || !handle || !active) return;
+		if (saveBusy || !handle) return;
+		if (session.phase !== side) return;
 		if (side === 'he') {
 			session = handle.publish(session, { pendingHe: pt, phase: 'ihc' });
 			return;
@@ -109,6 +102,7 @@
 
 	$effect(() => {
 		void pairId;
+		loadGen += 1;
 		handle?.close();
 		handle = connectSession(pairId, applyRemote);
 		void loadFromServer();
@@ -142,17 +136,15 @@
 			<code>python regWSI/make_full.py {pairId} --layers he ihc</code>
 		</div>
 	{:else}
-		<div
-			class="banner"
-			class:go={active}
-			class:wait={!active}
-		>
+		<div class="banner" class:go={active} class:wait={!active}>
 			{#if active}
 				CLICK NOW · pair {pairNum} on {side.toUpperCase()}
 			{:else}
 				WAIT · next click is on {side === 'he' ? 'IHC' : 'HE'}
 			{/if}
-			<span class="meta">· {session.landmarks.length} saved{#if session.pendingHe} · HE pending{/if}</span>
+			<span class="meta"
+				>· {session.landmarks.length} saved{#if session.pendingHe} · HE pending{/if}</span
+			>
 		</div>
 		<div class="toolbar">
 			<button class="btn" onclick={undoLast} disabled={saveBusy}>Undo</button>

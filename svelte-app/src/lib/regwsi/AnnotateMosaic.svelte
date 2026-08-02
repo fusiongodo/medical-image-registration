@@ -207,31 +207,36 @@
 					{@const pt = side === 'he' ? lm.he : lm.ihc}
 					{@const x = pt[0] * imgW}
 					{@const y = pt[1] * imgH}
-					<circle class="mk" class:he={side === 'he'} class:ihc={side === 'ihc'} cx={x} cy={y} r={6 / scale} />
+					<circle class="mk fill" class:he={side === 'he'} class:ihc={side === 'ihc'} cx={x} cy={y} r={5 / scale} />
+					<circle class="mk" class:he={side === 'he'} class:ihc={side === 'ihc'} cx={x} cy={y} r={10 / scale} />
 					<text
 						class="mk-label"
 						class:he={side === 'he'}
 						class:ihc={side === 'ihc'}
-						x={x + 8 / scale}
-						y={y - 8 / scale}
-						style:font-size={`${12 / scale}px`}>{i + 1}</text
+						x={x + 12 / scale}
+						y={y - 12 / scale}
+						style:font-size={`${14 / scale}px`}>{i + 1}</text
 					>
 				{/each}
 				{#if side === 'he' && pendingHe}
-					<circle
-						class="mk he pending"
-						cx={pendingHe[0] * imgW}
-						cy={pendingHe[1] * imgH}
-						r={7 / scale}
-					/>
+					{@const px = pendingHe[0] * imgW}
+					{@const py = pendingHe[1] * imgH}
+					{@const arm = 18 / scale}
+					<line class="pending-cross" x1={px - arm} y1={py} x2={px + arm} y2={py} />
+					<line class="pending-cross" x1={px} y1={py - arm} x2={px} y2={py + arm} />
+					<circle class="mk fill pending" cx={px} cy={py} r={6 / scale} />
+					<circle class="mk pending" cx={px} cy={py} r={14 / scale} />
+					<text
+						class="mk-label he"
+						x={px + 16 / scale}
+						y={py - 16 / scale}
+						style:font-size={`${14 / scale}px`}>●</text
+					>
 				{/if}
 			</svg>
 		</div>
 		{#if !allLoaded}
 			<span class="loading">loading {loaded}/{totalImgs}…</span>
-		{/if}
-		{#if !active}
-			<span class="wait-overlay">WAIT · click on {side === 'he' ? 'IHC' : 'HE'}</span>
 		{/if}
 	</div>
 </div>
@@ -289,10 +294,13 @@
 	}
 	.frame.active {
 		cursor: crosshair;
-		border-color: #6366f1;
+		border-color: #22c55e;
+		box-shadow: inset 0 0 0 2px rgba(34, 197, 94, 0.45);
 	}
 	.frame.waiting {
 		cursor: not-allowed;
+		border-color: #f59e0b;
+		box-shadow: inset 0 0 0 2px rgba(245, 158, 11, 0.35);
 	}
 	.frame:active {
 		cursor: grabbing;
@@ -332,29 +340,50 @@
 	}
 	.mk {
 		fill: none;
-		stroke-width: 2;
+		stroke-width: 2.5;
 		vector-effect: non-scaling-stroke;
 	}
+	.mk.fill {
+		stroke: none;
+	}
 	.mk.he {
-		stroke: #60a5fa;
+		stroke: #2563eb;
+	}
+	.mk.fill.he {
+		fill: #3b82f6;
 	}
 	.mk.ihc {
-		stroke: #fbbf24;
+		stroke: #d97706;
+	}
+	.mk.fill.ihc {
+		fill: #f59e0b;
 	}
 	.mk.pending {
-		stroke-dasharray: 4 3;
+		stroke: #ef4444;
+		stroke-dasharray: 5 4;
+	}
+	.mk.fill.pending {
+		fill: #ef4444;
+		stroke: none;
+	}
+	.pending-cross {
+		stroke: #ef4444;
+		stroke-width: 2.5;
+		vector-effect: non-scaling-stroke;
 	}
 	.mk-label {
 		font-weight: 700;
+		paint-order: stroke fill;
+		stroke: #0a0b0f;
+		stroke-width: 3px;
 	}
 	.mk-label.he {
-		fill: #60a5fa;
+		fill: #93c5fd;
 	}
 	.mk-label.ihc {
-		fill: #fbbf24;
+		fill: #fcd34d;
 	}
-	.loading,
-	.wait-overlay {
+	.loading {
 		position: absolute;
 		inset: 0;
 		display: grid;
@@ -362,15 +391,6 @@
 		pointer-events: none;
 		font-size: 0.9rem;
 		font-weight: 600;
-		letter-spacing: 0.04em;
-	}
-	.loading {
 		color: #9ca3af;
-	}
-	.wait-overlay {
-		background: rgba(10, 11, 15, 0.35);
-		color: #fbbf24;
-		align-content: end;
-		padding-bottom: 1.25rem;
 	}
 </style>

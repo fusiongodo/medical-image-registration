@@ -29,12 +29,14 @@
 	let showWarped = $state(false);
 	let loaded = $state(0);
 
+	const warpedReady = $derived(!!data.warpedReady);
 	const heOpacity = $derived(emphasis === 'ihc' ? 0 : 1);
 	const ihcOpacity = $derived(emphasis === 'he' ? 0 : emphasis === 'ihc' ? 1 : 0.5);
 	const quads = $derived(
 		Array.from({ length: nq * nq }, (_, i) => ({ qy: Math.floor(i / nq), qx: i % nq }))
 	);
-	const totalImgs = $derived(nq * nq * (showWarped ? 3 : 2));
+	const useWarped = $derived(showWarped && warpedReady);
+	const totalImgs = $derived(nq * nq * (useWarped ? 3 : 2));
 	const allLoaded = $derived(loaded >= totalImgs);
 
 	const cellW = $derived(imgW > 0 ? imgW / GRID : CNN_WIDTH);
@@ -83,8 +85,12 @@
 	});
 
 	$effect(() => {
-		void showWarped;
+		void useWarped;
 		loaded = 0;
+	});
+
+	$effect(() => {
+		if (!warpedReady && showWarped) showWarped = false;
 	});
 
 	$effect(() => {
@@ -155,8 +161,8 @@
 		<div>
 			<h1>regWSI · pair {pairId}</h1>
 			<p class="sub">
-				HE / IHC overlay. Toggle warped IHC to preview the regWSI field. Shift+Q/W solo HE / IHC.
-				Use Annotate for TRE landmarks.
+				HE / raw IHC overlay. Warped IHC when available. Shift+Q/W solo HE / IHC. Use Annotate for
+				TRE landmarks.
 			</p>
 		</div>
 		<nav class="nav">
@@ -171,8 +177,8 @@
 
 	{#if !data.fullReady || !data.fullMeta}
 		<div class="empty">
-			No full-res mosaic for this pair yet. Run:
-			<code>python regWSI/make_full.py {pairId}</code>
+			No HE + IHC mosaic for this pair yet. Run:
+			<code>python regWSI/make_full.py {pairId} --layers he ihc</code>
 			{#if data.ready}
 				<span class="hint">(registration exists; mosaic only)</span>
 			{/if}
@@ -197,8 +203,8 @@
 				<input type="checkbox" bind:checked={showGrid} />
 				L5 grid
 			</label>
-			<label class="chk">
-				<input type="checkbox" bind:checked={showWarped} />
+			<label class="chk" class:disabled={!warpedReady} title={warpedReady ? 'Toggle warped IHC' : 'No warped IHC mosaic (lean sync)'}>
+				<input type="checkbox" bind:checked={showWarped} disabled={!warpedReady} />
 				warped IHC
 			</label>
 			<button class="reset" onclick={fit} disabled={!allLoaded}>Reset view</button>
@@ -220,7 +226,7 @@
 				style:width={`${imgW}px`}
 				style:height={`${imgH}px`}
 			>
-				{#key `${pairId}-${nq}-${showWarped}`}
+				{#key `${pairId}-${nq}-${useWarped}`}
 					{#each quads as q (`${q.qy}_${q.qx}`)}
 						{@const left = q.qx === 0 ? 0 : q.qx * qw}
 						{@const top = q.qy === 0 ? 0 : q.qy * qh}
@@ -247,10 +253,10 @@
 								alt=""
 								draggable="false"
 								onload={onImgLoad}
-								style:opacity={showWarped ? 0 : ihcOpacity}
-								style:visibility={showWarped ? 'hidden' : 'visible'}
+								style:opacity={useWarped ? 0 : ihcOpacity}
+								style:visibility={useWarped ? 'hidden' : 'visible'}
 							/>
-							{#if showWarped}
+							{#if useWarped}
 								<img
 									class="layer ihc"
 									src={quadSrc('ihc_warped', q.qy, q.qx)}
@@ -374,6 +380,10 @@
 		cursor: pointer;
 		color: #555;
 		font-size: 0.8rem;
+	}
+	.chk.disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
 	}
 	.reset {
 		margin-left: auto;

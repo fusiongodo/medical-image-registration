@@ -1,30 +1,16 @@
 <script lang="ts">
 	import {
+		bootstrapSession,
 		connectSession,
 		emptySession,
-		readStoredSession,
+		isNewer,
 		type AnnotateSession,
 		type Landmark
 	} from '$lib/regwsi/annotateSession';
+	import TrePanel, { type TreResult } from '$lib/regwsi/TrePanel.svelte';
 
 	let { data } = $props();
 	const pairId = $derived(data.pairId);
-
-	interface TreStats {
-		mean: number | null;
-		median: number | null;
-		max: number | null;
-		p95: number | null;
-		per_point: number[];
-		error?: string;
-	}
-	interface TreResult {
-		n: number;
-		field_set_id: string | null;
-		none: TreStats;
-		regwsi: TreStats;
-		ours: TreStats;
-	}
 
 	let session = $state<AnnotateSession>(emptySession());
 	let saveBusy = $state(false);
@@ -32,36 +18,26 @@
 	let treBusy = $state(false);
 	let treErr = $state<string | null>(null);
 	let handle: ReturnType<typeof connectSession> | null = null;
+	let loadGen = 0;
 
 	function applyRemote(remote: AnnotateSession) {
-		if (remote.rev > session.rev) {
-			session = remote;
-			void refreshTre();
-		}
+		if (!isNewer(remote, session)) return;
+		session = remote;
+		void refreshTre();
 	}
 
 	async function loadFromServer() {
+		const gen = ++loadGen;
 		const r = await fetch(`/api/regwsi/landmarks?pair=${pairId}`);
-		if (!r.ok) return;
+		if (!r.ok || gen !== loadGen) return;
 		const d = await r.json();
+		if (gen !== loadGen) return;
 		const landmarks = (d.points ?? []) as Landmark[];
-		const stored = readStoredSession(pairId);
-		if (stored && stored.rev > 0) {
-			session = {
-				phase: stored.phase,
-				pendingHe: stored.pendingHe,
-				landmarks,
-				rev: stored.rev
-			};
+		const boot = bootstrapSession(pairId, landmarks);
+		if (isNewer(boot, session) || session.rev === 0) {
+			session = boot;
 		} else {
-			session = emptySession(landmarks);
-			if (handle) {
-				session = handle.publish(emptySession(landmarks), {
-					landmarks,
-					pendingHe: null,
-					phase: 'he'
-				});
-			}
+			session = { ...session, landmarks };
 		}
 		if (landmarks.length > 0) await refreshTre();
 		else {
@@ -134,12 +110,9 @@
 		window.open(`/regwsi/${pairId}/annotate/${side}`, `regwsi-annotate-${pairId}-${side}`);
 	}
 
-	function fmt(v: number | null | undefined) {
-		return v == null ? '—' : v.toFixed(2);
-	}
-
 	$effect(() => {
 		void pairId;
+		loadGen += 1;
 		handle?.close();
 		handle = connectSession(pairId, applyRemote);
 		void loadFromServer();
@@ -198,72 +171,15 @@
 			>
 		</div>
 
-		<aside class="tre-panel">
-			<h2>TRE</h2>
-			<p class="tre-sub">
-				L5 px · vs {data.mainSetName ?? '—'}
-				{#if data.mainSetId}<span class="muted">({data.mainSetId})</span>{/if}
-			</p>
-			{#if treBusy}
-				<p class="muted">Computing…</p>
-			{:else if session.landmarks.length === 0}
-				<p class="muted">Add correspondences in the HE / IHC windows</p>
-			{:else if treErr}
-				<p class="err">{treErr}</p>
-			{:else if tre}
-				<table>
-					<thead>
-						<tr>
-							<th></th>
-							<th>none</th>
-							<th>regWSI</th>
-							<th>ours</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr>
-							<td>mean L5 px</td>
-							<td>{fmt(tre.none.mean)}</td>
-							<td>{fmt(tre.regwsi.mean)}</td>
-							<td>{fmt(tre.ours.mean)}</td>
-						</tr>
-						<tr>
-							<td>median</td>
-							<td>{fmt(tre.none.median)}</td>
-							<td>{fmt(tre.regwsi.median)}</td>
-							<td>{fmt(tre.ours.median)}</td>
-						</tr>
-						<tr>
-							<td>max</td>
-							<td>{fmt(tre.none.max)}</td>
-							<td>{fmt(tre.regwsi.max)}</td>
-							<td>{fmt(tre.ours.max)}</td>
-						</tr>
-						<tr>
-							<td>p95</td>
-							<td>{fmt(tre.none.p95)}</td>
-							<td>{fmt(tre.regwsi.p95)}</td>
-							<td>{fmt(tre.ours.p95)}</td>
-						</tr>
-					</tbody>
-				</table>
-				{#if tre.ours.error}
-					<p class="err">{tre.ours.error}</p>
-				{/if}
-				{#if tre.none.per_point?.length}
-					<ul class="per">
-						{#each tre.none.per_point as e, i}
-							<li>
-								#{i + 1}
-								<span>n {e.toFixed(1)}</span>
-								<span>r {(tre.regwsi.per_point[i] ?? NaN).toFixed(1)}</span>
-								<span>o {(tre.ours.per_point[i] ?? NaN).toFixed(1)}</span>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			{/if}
-		</aside>
+		<TrePanel
+			{tre}
+			{treBusy}
+			{treErr}
+			landmarkCount={session.landmarks.length}
+			mainSetName={data.mainSetName}
+			mainSetId={data.mainSetId}
+			emptyHint="Add correspondences in the HE / IHC windows"
+		/>
 	{/if}
 </div>
 
@@ -387,62 +303,5 @@
 	.btn:disabled {
 		opacity: 0.5;
 		cursor: default;
-	}
-	.tre-panel {
-		border: 1px solid #2a2d3a;
-		border-radius: 4px;
-		padding: 0.85rem;
-		background: #181b23;
-		font-size: 0.8rem;
-	}
-	.tre-panel h2 {
-		margin: 0 0 0.25rem;
-		font-size: 0.95rem;
-	}
-	.tre-sub {
-		margin: 0 0 0.75rem;
-		color: #9ca3af;
-		font-size: 0.75rem;
-		line-height: 1.3;
-	}
-	.muted {
-		color: #6b7280;
-	}
-	.tre-panel table {
-		width: 100%;
-		border-collapse: collapse;
-		margin-top: 0.5rem;
-	}
-	.tre-panel th,
-	.tre-panel td {
-		text-align: right;
-		padding: 0.2rem 0.25rem;
-		border-bottom: 1px solid #2a2d3a;
-	}
-	.tre-panel th:first-child,
-	.tre-panel td:first-child {
-		text-align: left;
-		color: #9ca3af;
-	}
-	.err {
-		color: #f87171;
-		font-size: 0.75rem;
-		margin: 0.5rem 0 0;
-	}
-	.per {
-		list-style: none;
-		margin: 0.75rem 0 0;
-		padding: 0;
-		max-height: 14rem;
-		overflow: auto;
-	}
-	.per li {
-		display: flex;
-		gap: 0.5rem;
-		justify-content: space-between;
-		padding: 0.15rem 0;
-		border-bottom: 1px solid #2a2d3a;
-		font-variant-numeric: tabular-nums;
-		color: #c4c9d4;
 	}
 </style>
