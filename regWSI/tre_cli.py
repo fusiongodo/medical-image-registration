@@ -26,7 +26,7 @@ from setup.coarse_to_fine.identity import pair_fingerprint, fingerprint_matches
 
 from regWSI import paths
 
-SETS_ROOT = conf.PROJECT_ROOT / "data" / "field_sets"
+SETS_ROOT = conf.PROJECT_ROOT / "data" / "curated_field_sets" / "fft" / "tps"
 LEVEL = 5
 GRID = 2 ** LEVEL
 

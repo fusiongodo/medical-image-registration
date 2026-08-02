@@ -5,8 +5,9 @@
 	import OverlayCanvas from '$lib/OverlayCanvas.svelte';
 	import PointCanvas from '$lib/PointCanvas.svelte';
 	import DisplacedOverlay from '$lib/DisplacedOverlay.svelte';
-	import LnccDistributionPanel from '$lib/LnccDistributionPanel.svelte';
+	import RegistrationConfigPanel from '$lib/RegistrationConfigPanel.svelte';
 	import C2fPanel from '$lib/C2fPanel.svelte';
+	import { DEFAULT_REG_CONFIG, type RegConfig } from '$lib/regConfig';
 	import { computeLNCC, loadNormalizedGray } from '$lib/imageUtils';
 	import { liveCropUrl } from '$lib/liveCropUrl';
 	import {
@@ -35,6 +36,7 @@
 
 	let submitting = $state(false);
 	let autoDispRefreshKey = $state(0);
+	let regConfig = $state<RegConfig>({ ...DEFAULT_REG_CONFIG });
 	const PATCH_SIZES = [5, 10, 20, 30, 40, 50] as const;
 	let patchSize = $state<5 | 10 | 20 | 30 | 40 | 50>(50);
 	let sortMode = $state<'off' | 'lncc' | 'factor'>('off');
@@ -630,8 +632,8 @@
 
 <div class="scrollable">
 
-<LnccDistributionPanel pairId={data.pairId} depth={data.depth} {patchSize} refreshKey={autoDispRefreshKey} />
-<C2fPanel pairId={data.pairId} depth={data.depth} {annotationVersion} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} onMask={(tile, masked) => maskTile(tile, masked ? 'unmask' : 'mask')} onCorrect={correctTileUv} onReload={reloadAfterFieldSet} onComputed={() => { autoDispRefreshKey++; }} onFlash={showFlash} />
+<RegistrationConfigPanel pairId={data.pairId} bind:config={regConfig} />
+<C2fPanel pairId={data.pairId} depth={data.depth} {regConfig} {annotationVersion} {tileMetrics} {patchSize} emphasis={overlayEmphasis} onToggleEmphasis={toggleEmphasis} onApprove={approveTileUv} onExclude={excludeTile} onClear={clearTile} onMask={(tile, masked) => maskTile(tile, masked ? 'unmask' : 'mask')} onCorrect={correctTileUv} onReload={reloadAfterFieldSet} onComputed={() => { autoDispRefreshKey++; }} onFlash={showFlash} />
 
 {#if flash}
 	<div class="flash flash-{flash.kind}" role="status">{flash.msg}</div>

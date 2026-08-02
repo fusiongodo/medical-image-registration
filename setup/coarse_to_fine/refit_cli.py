@@ -60,6 +60,7 @@ def _compute_prior_field(
     tau: float,
     levels: list[int],
     mask_entries: list[dict],
+    field_estimator: str | None = None,
 ) -> Field:
     """
     Replay all coarser levels (< depth) to obtain the prior field that was used
@@ -72,7 +73,10 @@ def _compute_prior_field(
     """
     entries = annotations.load(pair_id)
     min_level = min(levels)
-    field = fit_field(annotations.to_anchors(entries, up_to_level=min_level - 1))
+    field = fit_field(
+        annotations.to_anchors(entries, up_to_level=min_level - 1),
+        field_estimator=field_estimator,
+    )
 
     for level in sorted(lv for lv in levels if lv < depth):
         cands = _load_level_cache(pair_id, level)
@@ -83,12 +87,19 @@ def _compute_prior_field(
         masked = masks.masked_at(mask_entries, level, [c.tile_loc for c in cands])
         cands = [c for c in cands if c.tile_loc not in masked]
         human_anchors = annotations.to_anchors(entries, up_to_level=level)
-        field, _ = fit_gated(human_anchors, cands, tau)
+        field, _ = fit_gated(human_anchors, cands, tau, field_estimator=field_estimator)
 
     return field
 
 
-def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None = None) -> dict:
+def refit(
+    pair_id: int,
+    depth: int,
+    tau: float,
+    save: bool,
+    keep: float | None = None,
+    field_estimator: str | None = None,
+) -> dict:
     cache_path = CACHE_DIR / f"{pair_id}_d{depth}.json"
     if not cache_path.exists():
         return {"error": f"no cached candidates for pair {pair_id} depth {depth}"}
@@ -131,15 +142,19 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None =
         # the keep-fraction is measured over auto tiles only: human-annotated
         # (approve/correct/exclude) tiles are always decided by the user
         auto_candidates = [c for c in fit_candidates if c.tile_loc not in annotated]
-        tau = tau_for_keep(human_anchors, auto_candidates, keep)
+        tau = tau_for_keep(human_anchors, auto_candidates, keep, field_estimator=field_estimator)
 
-    prior_field = _compute_prior_field(pair_id, depth, tau, levels, mask_entries)
+    prior_field = _compute_prior_field(
+        pair_id, depth, tau, levels, mask_entries, field_estimator=field_estimator
+    )
 
-    field, _ = fit_gated(human_anchors, fit_candidates, tau)
+    field, _ = fit_gated(human_anchors, fit_candidates, tau, field_estimator=field_estimator)
     # Judge residuals/kept against the same reference fit_gated tau-gates against
     # (human-only field when anchors exist), so the reported kept set matches the
     # tiles that actually shape the spline and the keep-fraction is exact.
-    gate_field = fit_field(human_anchors) if human_anchors else field
+    gate_field = (
+        fit_field(human_anchors, field_estimator=field_estimator) if human_anchors else field
+    )
     devs = residuals(candidates, gate_field)
 
     tiles = []
@@ -192,10 +207,12 @@ def refit(pair_id: int, depth: int, tau: float, save: bool, keep: float | None =
             "n_kept": n_kept,
             "n_seen": len(tiles),
             "n_human": n_human,
+            "field_estimator": field.estimator,
         }
         write_field_json(pair_id, field, meta=meta)
         result["saved"] = True
 
+    result["field_estimator"] = field.estimator
     return result
 
 
@@ -210,10 +227,24 @@ def main() -> None:
         keep = float(argv[i + 1])
         argv = argv[:i] + argv[i + 2:]
 
+    field_estimator: str | None = None
+    if "--field-estimator" in argv:
+        i = argv.index("--field-estimator")
+        field_estimator = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
+
     if len(argv) < 3:
-        sys.exit("Usage: refit_cli.py <pair_id> <depth> <tau> [--keep <fraction>] [--save]")
+        sys.exit(
+            "Usage: refit_cli.py <pair_id> <depth> <tau> "
+            "[--keep <fraction>] [--field-estimator tps|wendland] [--save]"
+        )
     pair_id, depth, tau = int(argv[0]), int(argv[1]), float(argv[2])
-    print(json.dumps(refit(pair_id, depth, tau, save, keep), separators=(",", ":")))
+    print(
+        json.dumps(
+            refit(pair_id, depth, tau, save, keep, field_estimator=field_estimator),
+            separators=(",", ":"),
+        )
+    )
 
 
 if __name__ == "__main__":

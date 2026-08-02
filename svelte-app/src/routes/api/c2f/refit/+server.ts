@@ -32,6 +32,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	const depth = url.searchParams.get('depth');
 	const tau   = url.searchParams.get('tau');
 	const keep  = url.searchParams.get('keep');
+	const fieldEstimator = url.searchParams.get('field_estimator') ?? 'tps';
 	if (!pair || !depth || (!tau && !keep)) error(400, 'Missing pair / depth / (tau or keep)');
 
 	const pairId = parseInt(pair, 10);
@@ -39,7 +40,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		error(400, `Pair ${pair} does not exist (valid range 0..${pairCount() - 1})`);
 	}
 
-	const args = [pair, depth, tau ?? '0'];
+	const args = [pair, depth, tau ?? '0', '--field-estimator', fieldEstimator];
 	if (keep) args.push('--keep', keep);
 
 	try {

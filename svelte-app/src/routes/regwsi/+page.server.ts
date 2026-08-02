@@ -19,7 +19,15 @@ function landmarkCount(dir: string): number {
 function mainSetMeta(pairId: number): { mainSetId: string | null; mainSetName: string | null } {
 	let mainSetId: string | null = null;
 	let mainSetName: string | null = null;
-	const activePath = resolve(REPO_ROOT, 'data', 'field_sets', String(pairId), 'active.json');
+	const activePath = resolve(
+		REPO_ROOT,
+		'data',
+		'curated_field_sets',
+		'fft',
+		'tps',
+		String(pairId),
+		'active.json'
+	);
 	if (!existsSync(activePath)) return { mainSetId, mainSetName };
 	try {
 		const active = JSON.parse(readFileSync(activePath, 'utf-8'));
@@ -28,7 +36,9 @@ function mainSetMeta(pairId: number): { mainSetId: string | null; mainSetName: s
 			const manifestPath = resolve(
 				REPO_ROOT,
 				'data',
-				'field_sets',
+				'curated_field_sets',
+				'fft',
+				'tps',
 				String(pairId),
 				mainSetId,
 				'manifest.json'

@@ -26,6 +26,7 @@ import json
 import sys
 from dataclasses import dataclass, field as dc_field
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from numpy.linalg import LinAlgError
@@ -37,6 +38,7 @@ import conf
 
 from setup.coarse_to_fine.annotations import Anchor
 from setup.coarse_to_fine.identity import pair_fingerprint
+from setup.coarse_to_fine.reg_branches import DEFAULT_FIELD_ESTIMATOR, FIELD_ESTIMATORS
 
 CNN_W = conf.CNN_INPUT_WIDTH
 CNN_H = conf.CNN_INPUT_HEIGHT
@@ -45,6 +47,62 @@ SMOOTH_C2F_DIR = conf.PROJECT_ROOT / "data" / "smooth_c2f"
 
 BASE_SMOOTHING = 1e-3
 PSR_CONF_K = 5.0
+WENDLAND_EPS = 0.35
+
+FieldEstimator = Literal["tps", "wendland"]
+
+
+def normalize_estimator(field_estimator: str | None) -> FieldEstimator:
+    v = (field_estimator or DEFAULT_FIELD_ESTIMATOR).strip().lower()
+    if v not in FIELD_ESTIMATORS:
+        raise ValueError(f"field_estimator must be one of {FIELD_ESTIMATORS}, got {field_estimator!r}")
+    return v  # type: ignore[return-value]
+
+
+def _wendland_c2(r: np.ndarray) -> np.ndarray:
+    t = np.maximum(1.0 - r, 0.0)
+    return t**4 * (4.0 * r + 1.0)
+
+
+@dataclass
+class _WendlandEval:
+    pts: np.ndarray
+    coef: np.ndarray
+    epsilon: float
+
+    def __call__(self, query) -> np.ndarray:
+        query = np.asarray(query, dtype=float).reshape(-1, 2)
+        d = np.linalg.norm(query[:, None, :] - self.pts[None, :, :], axis=2) / self.epsilon
+        phi = _wendland_c2(d)
+        n = len(self.pts)
+        w = self.coef[:n]
+        c0, c1, c2 = self.coef[n:]
+        return phi @ w + c0 + c1 * query[:, 0] + c2 * query[:, 1]
+
+
+def _fit_wendland(
+    pts: np.ndarray,
+    values: np.ndarray,
+    weights: np.ndarray,
+    base_smoothing: float,
+    epsilon: float = WENDLAND_EPS,
+) -> _WendlandEval:
+    n = len(pts)
+    dists = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=2) / epsilon
+    phi = _wendland_c2(dists)
+    phi = phi + np.diag(base_smoothing / weights)
+    p = np.column_stack([np.ones(n), pts[:, 0], pts[:, 1]])
+    a = np.zeros((n + 3, n + 3), dtype=float)
+    a[:n, :n] = phi
+    a[:n, n:] = p
+    a[n:, :n] = p.T
+    rhs = np.zeros(n + 3, dtype=float)
+    rhs[:n] = values
+    try:
+        coef = np.linalg.solve(a, rhs)
+    except LinAlgError:
+        coef, *_ = np.linalg.lstsq(a, rhs, rcond=None)
+    return _WendlandEval(pts=pts, coef=coef, epsilon=epsilon)
 
 
 @dataclass(frozen=True)
@@ -90,6 +148,7 @@ def candidate_from_dict(level: int, d: dict) -> Candidate:
 class Field:
     """A fitted (or degenerate) translation field over normalised [0,1]^2 space."""
     kind: str = "identity"                       # "identity" | "constant" | "affine" | "rbf"
+    estimator: str = "tps"
     const: tuple[float, float] = (0.0, 0.0)      # normalised (du, dv) for "constant"
     # per-component coefficients (a0, a1, a2) so that d = a0 + a1*x + a2*y (for "affine")
     affine: tuple[tuple[float, float, float], tuple[float, float, float]] | None = dc_field(default=None)
@@ -182,16 +241,21 @@ def fit_affine_norot(
     return Field(kind="affine", affine=((a0, a1, s), (b0, s, b2)))
 
 
-def fit_field(anchors: list[Anchor], base_smoothing: float = BASE_SMOOTHING) -> Field:
+def fit_field(
+    anchors: list[Anchor],
+    base_smoothing: float = BASE_SMOOTHING,
+    field_estimator: str | None = None,
+) -> Field:
     """
-    Fit a weighted thin-plate-spline field from normalised-space anchors.
+    Fit a weighted RBF field from normalised-space anchors.
       0 anchors            -> identity field (zero displacement)
       1-2 anchors          -> constant field (weighted-mean displacement)
-      >=3 collinear anchors -> affine field (TPS is singular for rank-deficient points)
-      >=3 anchors          -> thin-plate-spline RBF (per-point smoothing = base / weight)
+      >=3 collinear anchors -> affine field (RBF singular for rank-deficient points)
+      >=3 anchors          -> TPS or Wendland C2 (per-point smoothing = base / weight)
     """
+    estimator = normalize_estimator(field_estimator)
     if not anchors:
-        return Field(kind="identity")
+        return Field(kind="identity", estimator=estimator)
 
     pts = np.array([[a.px, a.py] for a in anchors], dtype=float)
     du = np.array([a.du for a in anchors], dtype=float)
@@ -201,20 +265,26 @@ def fit_field(anchors: list[Anchor], base_smoothing: float = BASE_SMOOTHING) -> 
     if len(anchors) < 3:
         cu = float(np.average(du, weights=w))
         cv = float(np.average(dv, weights=w))
-        return Field(kind="constant", const=(cu, cv))
+        return Field(kind="constant", estimator=estimator, const=(cu, cv))
 
-    # The thin-plate spline needs the [1, x, y] monomial matrix at full rank;
-    # collinear/coincident anchors make it singular, so fall back to an affine fit.
     if np.linalg.matrix_rank(pts - pts.mean(axis=0)) < 2:
-        return _fit_affine(pts, du, dv, w)
+        f = _fit_affine(pts, du, dv, w)
+        f.estimator = estimator
+        return f
 
     smoothing = base_smoothing / w
     try:
-        rbf_dx = RBFInterpolator(pts, du, kernel="thin_plate_spline", smoothing=smoothing)
-        rbf_dy = RBFInterpolator(pts, dv, kernel="thin_plate_spline", smoothing=smoothing)
+        if estimator == "wendland":
+            rbf_dx = _fit_wendland(pts, du, w, base_smoothing)
+            rbf_dy = _fit_wendland(pts, dv, w, base_smoothing)
+        else:
+            rbf_dx = RBFInterpolator(pts, du, kernel="thin_plate_spline", smoothing=smoothing)
+            rbf_dy = RBFInterpolator(pts, dv, kernel="thin_plate_spline", smoothing=smoothing)
     except LinAlgError:
-        return _fit_affine(pts, du, dv, w)
-    return Field(kind="rbf", rbf_dx=rbf_dx, rbf_dy=rbf_dy)
+        f = _fit_affine(pts, du, dv, w)
+        f.estimator = estimator
+        return f
+    return Field(kind="rbf", estimator=estimator, rbf_dx=rbf_dx, rbf_dy=rbf_dy)
 
 
 def residuals(candidates: list[Candidate], field: Field) -> list[float]:
@@ -233,7 +303,12 @@ def residuals(candidates: list[Candidate], field: Field) -> list[float]:
     return out
 
 
-def tau_for_keep(human_anchors: list[Anchor], candidates: list[Candidate], keep: float) -> float:
+def tau_for_keep(
+    human_anchors: list[Anchor],
+    candidates: list[Candidate],
+    keep: float,
+    field_estimator: str | None = None,
+) -> float:
     """
     Derive tau as the `keep`-quantile (0..1) of the candidate residuals, so that
     roughly a `keep` fraction of the auto candidates fall at or below tau and are
@@ -249,9 +324,9 @@ def tau_for_keep(human_anchors: list[Anchor], candidates: list[Candidate], keep:
         return 0.0
     keep = min(1.0, max(0.0, keep))
     reference = (
-        fit_field(human_anchors)
+        fit_field(human_anchors, field_estimator=field_estimator)
         if human_anchors
-        else fit_field([c.anchor() for c in candidates])
+        else fit_field([c.anchor() for c in candidates], field_estimator=field_estimator)
     )
     resid = residuals(candidates, reference)
     if not resid:
@@ -279,6 +354,7 @@ def fit_gated(
     candidates: list[Candidate],
     tau: float,
     base_smoothing: float = BASE_SMOOTHING,
+    field_estimator: str | None = None,
 ) -> tuple[Field, list[Candidate]]:
     """
     Fit the field for one level, honouring human anchors and tau-gating FFT soft points.
@@ -288,11 +364,15 @@ def fit_gated(
     Returns (field, kept_candidates).
     """
     if human_anchors:
-        hfield = fit_field(human_anchors, base_smoothing)
+        hfield = fit_field(human_anchors, base_smoothing, field_estimator=field_estimator)
         kept, _ = tau_gate(candidates, hfield, tau)
-        field = fit_field(human_anchors + [c.anchor() for c in kept], base_smoothing)
+        field = fit_field(
+            human_anchors + [c.anchor() for c in kept],
+            base_smoothing,
+            field_estimator=field_estimator,
+        )
         return field, kept
-    return robust_fit(candidates, tau, base_smoothing)
+    return robust_fit(candidates, tau, base_smoothing, field_estimator=field_estimator)
 
 
 def robust_fit(
@@ -300,6 +380,7 @@ def robust_fit(
     tau: float,
     base_smoothing: float = BASE_SMOOTHING,
     max_iter: int = 5,
+    field_estimator: str | None = None,
 ) -> tuple[Field, list[Candidate]]:
     """
     Headless bootstrap when no human anchors exist: fit all candidates, drop those
@@ -307,17 +388,21 @@ def robust_fit(
     Returns (field, kept_candidates).
     """
     kept = list(candidates)
-    field = fit_field([c.anchor() for c in kept], base_smoothing)
+    field = fit_field([c.anchor() for c in kept], base_smoothing, field_estimator=field_estimator)
     for _ in range(max_iter):
         inliers, _ = tau_gate(kept, field, tau)
         if len(inliers) == len(kept):
             break
         if len(inliers) < 3:
             kept = inliers
-            field = fit_field([c.anchor() for c in kept], base_smoothing)
+            field = fit_field(
+                [c.anchor() for c in kept], base_smoothing, field_estimator=field_estimator
+            )
             break
         kept = inliers
-        field = fit_field([c.anchor() for c in kept], base_smoothing)
+        field = fit_field(
+            [c.anchor() for c in kept], base_smoothing, field_estimator=field_estimator
+        )
     return field, kept
 
 

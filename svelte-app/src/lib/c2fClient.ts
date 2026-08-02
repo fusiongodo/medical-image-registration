@@ -6,7 +6,17 @@
  * (pair/depth may change mid-flight) since only they know the current context.
  */
 
+import type { FieldEstimator, Lam, RegConfig } from '$lib/regConfig';
+import { branchQuery, DEFAULT_REG_CONFIG } from '$lib/regConfig';
+
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+function cfg(config?: Partial<RegConfig>): RegConfig {
+	return {
+		lam: config?.lam ?? DEFAULT_REG_CONFIG.lam,
+		fieldEstimator: config?.fieldEstimator ?? DEFAULT_REG_CONFIG.fieldEstimator
+	};
+}
 
 export interface PatchEntry {
 	lncc2: number;
@@ -132,16 +142,28 @@ export async function getMetricsProgress(pair: number, depth: number): Promise<J
 export async function getRefit(
 	pair: number,
 	depth: number,
-	gate: Gate
+	gate: Gate,
+	regConfig?: Partial<RegConfig>
 ): Promise<{ ok: boolean; data?: RefitData; error?: string }> {
-	const r = await fetch(`/api/c2f/refit?pair=${pair}&depth=${depth}&${gateQuery(gate)}`);
+	const c = cfg(regConfig);
+	const r = await fetch(
+		`/api/c2f/refit?pair=${pair}&depth=${depth}&${gateQuery(gate)}&field_estimator=${c.fieldEstimator}`
+	);
 	if (r.ok) return { ok: true, data: await r.json() };
 	return { ok: false, error: (await r.text().catch(() => '')) || `refit failed (${r.status})` };
 }
 
-export async function saveFieldRequest(pair: number, depth: number, gate: Gate): Promise<boolean> {
+export async function saveFieldRequest(
+	pair: number,
+	depth: number,
+	gate: Gate,
+	regConfig?: Partial<RegConfig>
+): Promise<boolean> {
+	const c = cfg(regConfig);
 	const body =
-		'keep' in gate ? { pair_id: pair, depth, keep: gate.keep } : { pair_id: pair, depth, tau: gate.tau };
+		'keep' in gate
+			? { pair_id: pair, depth, keep: gate.keep, field_estimator: c.fieldEstimator }
+			: { pair_id: pair, depth, tau: gate.tau, field_estimator: c.fieldEstimator };
 	const r = await fetch('/api/c2f/save-field', {
 		method: 'POST',
 		headers: JSON_HEADERS,
@@ -167,10 +189,14 @@ export interface ResolveResult {
 export async function resolveExcluded(
 	pair: number,
 	depth: number,
-	gate: Gate
+	gate: Gate,
+	regConfig?: Partial<RegConfig>
 ): Promise<ResolveResult | null> {
+	const c = cfg(regConfig);
 	const body =
-		'keep' in gate ? { pair_id: pair, depth, keep: gate.keep } : { pair_id: pair, depth, tau: gate.tau };
+		'keep' in gate
+			? { pair_id: pair, depth, keep: gate.keep, field_estimator: c.fieldEstimator }
+			: { pair_id: pair, depth, tau: gate.tau, field_estimator: c.fieldEstimator };
 	const r = await fetch('/api/c2f/resolve', {
 		method: 'POST',
 		headers: JSON_HEADERS,
@@ -180,21 +206,31 @@ export async function resolveExcluded(
 	return r.json();
 }
 
-export async function getFieldSets(pair: number): Promise<FieldSetList> {
-	const r = await fetch(`/api/c2f/field-set?pair=${pair}`);
+export async function getFieldSets(
+	pair: number,
+	regConfig?: Partial<RegConfig>
+): Promise<FieldSetList> {
+	const r = await fetch(`/api/c2f/field-set?pair=${pair}&${branchQuery(cfg(regConfig))}`);
 	if (!r.ok) throw new Error(`field-set list failed (${r.status})`);
 	return r.json();
 }
 
 export async function postFieldSet(
 	pair: number,
-	body: Record<string, unknown>
+	body: Record<string, unknown>,
+	regConfig?: Partial<RegConfig>
 ): Promise<{ ok?: boolean } | null> {
+	const c = cfg(regConfig);
 	try {
 		const r = await fetch('/api/c2f/field-set', {
 			method: 'POST',
 			headers: JSON_HEADERS,
-			body: JSON.stringify({ pair_id: pair, ...body })
+			body: JSON.stringify({
+				pair_id: pair,
+				lam: c.lam,
+				field_estimator: c.fieldEstimator,
+				...body
+			})
 		});
 		if (!r.ok) return null;
 		return await r.json();
@@ -202,6 +238,8 @@ export async function postFieldSet(
 		return null;
 	}
 }
+
+export type { Lam, FieldEstimator, RegConfig };
 
 export async function getRegAnnotations(pair: number, level: number): Promise<Record<string, RegAnnotation>> {
 	const r = await fetch(`/api/c2f/annotate?pair=${pair}&level=${level}`);

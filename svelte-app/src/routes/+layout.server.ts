@@ -9,7 +9,7 @@ const DATA_ROOT       = resolve('..', 'data');
 const VALIDATION_PATH = join(DATA_ROOT, 'quadtree_level_validation.json');
 const SMOOTH_DIR      = join(DATA_ROOT, 'smooth_c2f');
 const CACHE_DIR       = join(DATA_ROOT, 'c2f_cache');
-const FIELD_SETS_DIR  = join(DATA_ROOT, 'field_sets');
+const FIELD_SETS_DIR  = join(DATA_ROOT, 'curated_field_sets', 'fft', 'tps');
 
 type Rating = 'bad' | 'ok' | 'good';
 

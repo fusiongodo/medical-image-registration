@@ -20,10 +20,12 @@
 		getFieldSets,
 		postFieldSet
 	} from '$lib/c2fClient';
+	import { DEFAULT_REG_CONFIG, type RegConfig } from '$lib/regConfig';
 
 	let {
 		pairId,
 		depth,
+		regConfig = DEFAULT_REG_CONFIG,
 		annotationVersion = 0,
 		tileMetrics = new Map(),
 		patchSize = 50,
@@ -40,6 +42,7 @@
 	}: {
 		pairId: number;
 		depth: number;
+		regConfig?: RegConfig;
 		annotationVersion?: number;
 		tileMetrics?: Map<string, TileMetrics>;
 		patchSize?: number;
@@ -54,6 +57,8 @@
 		onComputed?: () => void;
 		onFlash?: (msg: string, kind?: 'ok' | 'warn' | 'err') => void;
 	} = $props();
+
+	const lamReady = $derived(regConfig.lam === 'fft');
 
 	// The global deskew is only meaningful at the coarsest levels (1 or 4 tiles).
 	const DESKEW_MAX_LEVEL = 1;
@@ -310,10 +315,18 @@
 
 	async function checkCache() {
 		const p = pairId, d = depth;
+		const branch = `${regConfig.lam}/${regConfig.fieldEstimator}`;
 		refitError = null;
+		if (!lamReady) {
+			cached = false;
+			refit = null;
+			refitError = 'SuperPoint + LightGlue is not implemented yet';
+			return;
+		}
 		try {
 			const data = await getCandidates(p, d);
 			if (p !== pairId || d !== depth) return; // navigated away mid-flight
+			if (`${regConfig.lam}/${regConfig.fieldEstimator}` !== branch) return;
 			cached = data.cached === true;
 			if (cached) runRefit();
 			else if (autoCompute && !job?.running) startCompute();
@@ -324,13 +337,15 @@
 	}
 
 	async function runRefit() {
-		if (!cached) return;
+		if (!cached || !lamReady) return;
 		const p = pairId, d = depth;
+		const branch = `${regConfig.lam}/${regConfig.fieldEstimator}`;
 		refitError = null;
 		const gate = tauMode === 'keep' ? { keep: keepFraction } : { tau };
 		try {
-			const res = await getRefit(p, d, gate);
+			const res = await getRefit(p, d, gate, regConfig);
 			if (p !== pairId || d !== depth) return; // stale response for a prior pair/depth
+			if (`${regConfig.lam}/${regConfig.fieldEstimator}` !== branch) return;
 			if (res.ok) {
 				refit = res.data ?? null;
 			} else {
@@ -366,6 +381,10 @@
 	}
 
 	async function startCompute() {
+		if (!lamReady) {
+			onFlash?.('SuperPoint + LightGlue is not implemented yet', 'warn');
+			return;
+		}
 		const data = await computeCandidates(pairId, depth);
 		job = data.state;
 		if (job?.running) startPolling();
@@ -420,7 +439,7 @@
 		resolveMsg = null;
 		try {
 			const gate = tauMode === 'keep' ? { keep: keepFraction } : { tau };
-			const res = await resolveExcluded(pairId, depth, gate);
+			const res = await resolveExcluded(pairId, depth, gate, regConfig);
 			if (!res) {
 				resolveMsg = 'recompute failed';
 				return;
@@ -438,7 +457,7 @@
 		saving = true;
 		try {
 			const gate = tauMode === 'keep' ? { keep: keepFraction } : { tau };
-			if (await saveFieldRequest(pairId, depth, gate)) savedAt = Date.now();
+			if (await saveFieldRequest(pairId, depth, gate, regConfig)) savedAt = Date.now();
 		} finally {
 			saving = false;
 		}
@@ -446,13 +465,15 @@
 
 	async function loadSets() {
 		try {
-			const data = await getFieldSets(pairId);
+			const data = await getFieldSets(pairId, regConfig);
 			sets = data.sets ?? [];
 			activeSetId = data.active ?? null;
 			mainSetId = data.main ?? null;
 			selectedSetId = activeSetId ?? (sets[0]?.id ?? '');
+			return data;
 		} catch {
-			/* ignore */ }
+			return null;
+		}
 	}
 
 	async function rateSet(rating: Rating) {
@@ -470,7 +491,7 @@
 	async function postSet(bodyExtra: Record<string, unknown>): Promise<{ ok?: boolean } | null> {
 		setBusy = true;
 		try {
-			return await postFieldSet(pairId, bodyExtra);
+			return await postFieldSet(pairId, bodyExtra, regConfig);
 		} finally {
 			setBusy = false;
 		}
@@ -581,17 +602,48 @@
 
 	// reset on pair/depth change
 	$effect(() => {
-		void pairId; void depth;
+		void pairId;
+		void depth;
 		cached = null;
 		refit = null;
 		refitError = null;
 		job = null;
 		metricsJob = null;
-		if (metricsPollTimer) { clearInterval(metricsPollTimer); metricsPollTimer = null; }
+		if (metricsPollTimer) {
+			clearInterval(metricsPollTimer);
+			metricsPollTimer = null;
+		}
 		savedAt = null;
 		selectedTile = null;
-		loadSets();
+		void loadSets();
 		if (open) checkCache();
+	});
+
+	// switching (LAM × estimator) swaps the field-set branch and restores that branch's active set
+	let lastBranch = '';
+	$effect(() => {
+		const branch = `${pairId}:${regConfig.lam}/${regConfig.fieldEstimator}`;
+		if (branch === lastBranch) return;
+		const prev = lastBranch;
+		lastBranch = branch;
+		void (async () => {
+			const data = await loadSets();
+			if (!prev) {
+				if (open) checkCache();
+				return;
+			}
+			const active = data?.active;
+			if (active) {
+				await postFieldSet(pairId, { action: 'load', set_id: active }, regConfig);
+				onReload?.();
+			}
+			cached = null;
+			refit = null;
+			refitError = null;
+			savedAt = null;
+			selectedTile = null;
+			if (open) checkCache();
+		})();
 	});
 
 	// re-fit whenever a human action lands (approve / correct / clear)
@@ -791,7 +843,11 @@
 					</div>
 				</div>
 			{/if}
-			{#if cached === null}
+			{#if !lamReady}
+				<div class="controls-row">
+					<span class="err">SuperPoint + LightGlue is not implemented yet</span>
+				</div>
+			{:else if cached === null}
 				<span class="loading">loading…</span>
 			{:else if !cached}
 				<div class="controls-row">

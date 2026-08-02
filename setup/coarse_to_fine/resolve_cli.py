@@ -78,8 +78,14 @@ def _best_in_tau_peak(
     return best
 
 
-def resolve(pair_id: int, depth: int, tau: float, keep: "float | None" = None,
-            n_peaks: int = N_PEAKS) -> dict:
+def resolve(
+    pair_id: int,
+    depth: int,
+    tau: float,
+    keep: "float | None" = None,
+    n_peaks: int = N_PEAKS,
+    field_estimator: str | None = None,
+) -> dict:
     cache_path = CACHE_DIR / f"{pair_id}_d{depth}.json"
     if not cache_path.exists():
         return {"error": f"no cached candidates for pair {pair_id} depth {depth}"}
@@ -101,10 +107,12 @@ def resolve(pair_id: int, depth: int, tau: float, keep: "float | None" = None,
     ]
     if keep is not None:
         auto_candidates = [c for c in fit_candidates if c.tile_loc not in annotated]
-        tau = tau_for_keep(human_anchors, auto_candidates, keep)
+        tau = tau_for_keep(human_anchors, auto_candidates, keep, field_estimator=field_estimator)
 
-    field, _ = fit_gated(human_anchors, fit_candidates, tau)
-    gate_field = fit_field(human_anchors) if human_anchors else field
+    field, _ = fit_gated(human_anchors, fit_candidates, tau, field_estimator=field_estimator)
+    gate_field = (
+        fit_field(human_anchors, field_estimator=field_estimator) if human_anchors else field
+    )
     devs = residuals(candidates, gate_field)
 
     tiles_out: list[dict] = []
@@ -176,10 +184,24 @@ def main() -> None:
         n_peaks = int(argv[i + 1])
         argv = argv[:i] + argv[i + 2:]
 
+    field_estimator: str | None = None
+    if "--field-estimator" in argv:
+        i = argv.index("--field-estimator")
+        field_estimator = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
+
     if len(argv) < 3:
-        sys.exit("Usage: resolve_cli.py <pair_id> <depth> <tau> [--keep <fraction>] [--n <peaks>]")
+        sys.exit(
+            "Usage: resolve_cli.py <pair_id> <depth> <tau> "
+            "[--keep <fraction>] [--n <peaks>] [--field-estimator tps|wendland]"
+        )
     pair_id, depth, tau = int(argv[0]), int(argv[1]), float(argv[2])
-    print(json.dumps(resolve(pair_id, depth, tau, keep, n_peaks), separators=(",", ":")))
+    print(
+        json.dumps(
+            resolve(pair_id, depth, tau, keep, n_peaks, field_estimator=field_estimator),
+            separators=(",", ":"),
+        )
+    )
 
 
 if __name__ == "__main__":

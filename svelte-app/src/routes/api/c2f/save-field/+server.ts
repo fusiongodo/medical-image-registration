@@ -38,14 +38,22 @@ export const POST: RequestHandler = async ({ request }) => {
 		error(400, 'Expected { pair_id: number, depth: number, tau?: number, keep?: number }');
 	}
 
-	const { pair_id, depth, tau, keep } = body as {
+	const { pair_id, depth, tau, keep, field_estimator } = body as {
 		pair_id: number;
 		depth: number;
 		tau?: number;
 		keep?: number;
+		field_estimator?: string;
 	};
 
-	const args = [String(pair_id), String(depth), String(tau ?? 0), '--save'];
+	const args = [
+		String(pair_id),
+		String(depth),
+		String(tau ?? 0),
+		'--save',
+		'--field-estimator',
+		field_estimator === 'wendland' ? 'wendland' : 'tps'
+	];
 	if (hasKeep) args.push('--keep', String(keep));
 
 	try {

@@ -3,7 +3,8 @@ Field-set manager for coarse-to-fine registration.
 
 A "field set" is a named, restorable snapshot of one image pair's registration
 work: its human annotations (all levels), the fitted smooth field, and the FFT
-candidate caches.  Sets live under data/field_sets/{pair}/{set_id}/ and are
+candidate caches.  Sets live under
+data/curated_field_sets/{lam}/{field_estimator}/{pair}/{set_id}/ and are
 plain snapshot / restore copies of the global active-workspace files:
 
     data/registration_annotations.json      (this pair's slice only)
@@ -39,15 +40,35 @@ import conf
 
 from setup.coarse_to_fine import annotations, deskew, masks
 from setup.coarse_to_fine.identity import pair_fingerprint
+from setup.coarse_to_fine.reg_branches import (
+    DEFAULT_FIELD_ESTIMATOR,
+    DEFAULT_LAM,
+    FIELD_ESTIMATORS,
+    LAMS,
+    branch_root,
+    normalize_estimator,
+    normalize_lam,
+)
 
 DATA_ROOT = conf.PROJECT_ROOT / "data"
-SETS_ROOT = DATA_ROOT / "field_sets"
 SMOOTH_DIR = DATA_ROOT / "smooth_c2f"
 CACHE_DIR = DATA_ROOT / "c2f_cache"
 MAX_DEPTH = conf.MAX_CROP_DEPTH
 
+_BRANCH_LAM = DEFAULT_LAM
+_BRANCH_ESTIMATOR = DEFAULT_FIELD_ESTIMATOR
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def configure_branch(lam: str | None = None, field_estimator: str | None = None) -> None:
+    global _BRANCH_LAM, _BRANCH_ESTIMATOR
+    _BRANCH_LAM = normalize_lam(lam)
+    _BRANCH_ESTIMATOR = normalize_estimator(field_estimator)
+
+
+def _sets_root() -> Path:
+    return branch_root(_BRANCH_LAM, _BRANCH_ESTIMATOR)
 
 
 def _slugify(name: str) -> str:
@@ -58,7 +79,7 @@ def _slugify(name: str) -> str:
 
 
 def _pair_dir(pair_id: int) -> Path:
-    return SETS_ROOT / str(pair_id)
+    return _sets_root() / str(pair_id)
 
 
 def _set_dir(pair_id: int, set_id: str) -> Path:
@@ -152,7 +173,14 @@ def list_sets(pair_id: int) -> dict:
             if manifest is not None:
                 sets.append(manifest)
     sets.sort(key=lambda m: m.get("updated", 0), reverse=True)
-    return {"pair_id": pair_id, "active": active, "main": main, "sets": sets}
+    return {
+        "pair_id": pair_id,
+        "lam": _BRANCH_LAM,
+        "field_estimator": _BRANCH_ESTIMATOR,
+        "active": active,
+        "main": main,
+        "sets": sets,
+    }
 
 
 def _snapshot_into(pair_id: int, set_dir: Path) -> None:
@@ -201,6 +229,8 @@ def save_set(pair_id: int, name: str, set_id: str | None = None) -> dict:
         "id": slug,
         "name": name,
         "pair_id": pair_id,
+        "lam": _BRANCH_LAM,
+        "field_estimator": _BRANCH_ESTIMATOR,
         "identity": pair_fingerprint(pair_id),
         "created": created,
         "updated": now,
@@ -322,45 +352,64 @@ def set_main(pair_id: int, set_id: str) -> dict:
     return {"ok": True, "main": set_id}
 
 
+def _add_branch_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--lam", default=DEFAULT_LAM, choices=LAMS)
+    p.add_argument(
+        "--field-estimator",
+        dest="field_estimator",
+        default=DEFAULT_FIELD_ESTIMATOR,
+        choices=FIELD_ESTIMATORS,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="field_set_cli.py")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_list = sub.add_parser("list")
     p_list.add_argument("pair", type=int)
+    _add_branch_args(p_list)
 
     p_save = sub.add_parser("save")
     p_save.add_argument("pair", type=int)
     p_save.add_argument("--name", required=True)
     p_save.add_argument("--id", dest="set_id", default=None)
+    _add_branch_args(p_save)
 
     p_load = sub.add_parser("load")
     p_load.add_argument("pair", type=int)
     p_load.add_argument("--id", dest="set_id", required=True)
+    _add_branch_args(p_load)
 
     p_new = sub.add_parser("new")
     p_new.add_argument("pair", type=int)
     p_new.add_argument("--name", required=True)
+    _add_branch_args(p_new)
 
     p_del = sub.add_parser("delete")
     p_del.add_argument("pair", type=int)
     p_del.add_argument("--id", dest="set_id", required=True)
+    _add_branch_args(p_del)
 
     p_ren = sub.add_parser("rename")
     p_ren.add_argument("pair", type=int)
     p_ren.add_argument("--id", dest="set_id", required=True)
     p_ren.add_argument("--name", required=True)
+    _add_branch_args(p_ren)
 
     p_rate = sub.add_parser("rate")
     p_rate.add_argument("pair", type=int)
     p_rate.add_argument("--id", dest="set_id", required=True)
     p_rate.add_argument("--rating", required=True, choices=sorted(_RATINGS))
+    _add_branch_args(p_rate)
 
     p_main = sub.add_parser("main")
     p_main.add_argument("pair", type=int)
     p_main.add_argument("--id", dest="set_id", required=True)
+    _add_branch_args(p_main)
 
     args = parser.parse_args()
+    configure_branch(args.lam, args.field_estimator)
 
     if args.command == "list":
         result = list_sets(args.pair)
