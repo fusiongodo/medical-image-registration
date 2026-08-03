@@ -46,8 +46,10 @@
 	}
 
 	let sidebarOpen = $state(true);
+	const overlayMode = $derived(/\/regwsi\/\d+\/overlay\//.test($page.url.pathname));
 
 	$effect(() => {
+		if (overlayMode) return;
 		try {
 			const stored = localStorage.getItem('mvrSidebarOpen');
 			if (stored !== null) sidebarOpen = stored === '1';
@@ -56,6 +58,7 @@
 	});
 
 	$effect(() => {
+		if (overlayMode) return;
 		try {
 			localStorage.setItem('mvrSidebarOpen', sidebarOpen ? '1' : '0');
 		} catch {
@@ -64,6 +67,7 @@
 
 	$effect(() => {
 		function onKeyDown(e: KeyboardEvent) {
+			if (overlayMode) return;
 			if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
 			const target = e.target as HTMLElement | null;
 			if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
@@ -77,34 +81,36 @@
 	});
 </script>
 
-<div class="shell">
-	<aside class:collapsed={!sidebarOpen} aria-hidden={!sidebarOpen}>
-		<div class="aside-head">
-			<button class="collapse-btn" onclick={() => (sidebarOpen = false)} title="Collapse sidebar (Shift+B)">«</button>
-		</div>
-		<nav class="tools">
-			<a href="/live" class:active={$page.url.pathname === '/live'}>Live crop</a>
-			<a href="/regwsi" class:active={$page.url.pathname.startsWith('/regwsi')}>regWSI</a>
-		</nav>
-		<h2>Pairs</h2>
-		<ul>
-			{#each pairs as pairId}
-				<li class:active={isActive(pairId)}>
-					<a href={pairHref(pairId)}>
-						<span class="label">Pair {pairId}</span>
-						{#if pairRating(pairId)}
-							<span class="rating-dot {pairRating(pairId)}" title={`Main field set rated ${pairRating(pairId)}`}></span>
-						{:else}
-							<span class="icon {statusClass(pairId)}">{statusIcon(pairId)}</span>
-						{/if}
-					</a>
-				</li>
-			{/each}
-		</ul>
-	</aside>
+<div class="shell" class:overlay={overlayMode}>
+	{#if !overlayMode}
+		<aside class:collapsed={!sidebarOpen} aria-hidden={!sidebarOpen}>
+			<div class="aside-head">
+				<button class="collapse-btn" onclick={() => (sidebarOpen = false)} title="Collapse sidebar (Shift+B)">«</button>
+			</div>
+			<nav class="tools">
+				<a href="/live" class:active={$page.url.pathname === '/live'}>Live crop</a>
+				<a href="/regwsi" class:active={$page.url.pathname.startsWith('/regwsi')}>regWSI</a>
+			</nav>
+			<h2>Pairs</h2>
+			<ul>
+				{#each pairs as pairId}
+					<li class:active={isActive(pairId)}>
+						<a href={pairHref(pairId)}>
+							<span class="label">Pair {pairId}</span>
+							{#if pairRating(pairId)}
+								<span class="rating-dot {pairRating(pairId)}" title={`Main field set rated ${pairRating(pairId)}`}></span>
+							{:else}
+								<span class="icon {statusClass(pairId)}">{statusIcon(pairId)}</span>
+							{/if}
+						</a>
+					</li>
+				{/each}
+			</ul>
+		</aside>
 
-	{#if !sidebarOpen}
-		<button class="hamburger" onclick={() => (sidebarOpen = true)} title="Open sidebar (Shift+B)">☰</button>
+		{#if !sidebarOpen}
+			<button class="hamburger" onclick={() => (sidebarOpen = true)} title="Open sidebar (Shift+B)">☰</button>
+		{/if}
 	{/if}
 
 	<main>
@@ -288,5 +294,9 @@
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;
+	}
+
+	.shell.overlay main {
+		width: 100%;
 	}
 </style>

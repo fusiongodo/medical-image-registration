@@ -305,6 +305,195 @@ export async function clearDeskew(pair: number): Promise<boolean> {
 	return r.ok;
 }
 
+export interface RigidHyperparams {
+	sp_conf_thresh: number;
+	sp_nms_dist: number;
+	sp_max_keypoints: number;
+	lg_depth_confidence: number;
+	lg_width_confidence: number;
+	rigid_inlier_px: number;
+}
+
+export interface RigidStats {
+	rotation_deg: number;
+	final_rotation_deg?: number;
+	tx: number;
+	ty: number;
+	tx_px?: number;
+	ty_px?: number;
+	rmse_px: number;
+	n_inliers: number;
+}
+
+export interface RigidResult {
+	pair_id: number;
+	version: string;
+	preview_level: number;
+	pre_rotation_deg: number;
+	hyperparams: RigidHyperparams;
+	n_matches: number;
+	n_inliers: number;
+	rigid: number[][];
+	rigid_prerot?: number[][];
+	stats: RigidStats & { width?: number; height?: number };
+	saved_at?: number;
+	ran_at?: number;
+}
+
+export interface RigidMatchPoint {
+	he: [number, number];
+	ihc: [number, number];
+	score: number;
+	inlier: boolean;
+}
+
+export interface RigidMatches {
+	pair_id: number;
+	preview_level: number;
+	width: number;
+	height: number;
+	pre_rotation_deg?: number;
+	rigid?: number[][];
+	rigid_prerot?: number[][];
+	points: RigidMatchPoint[];
+	n_matches: number;
+	n_inliers: number;
+}
+
+export interface RigidState {
+	saved: RigidResult | null;
+	has_run: boolean;
+	run: RigidResult | null;
+	matches: RigidMatches | null;
+	has_matches: boolean;
+}
+
+export interface RigidJobState extends JobState {
+	stage?: string | null;
+}
+
+export interface FieldOverlayCorr {
+	he: [number, number];
+	rigid: [number, number];
+	field: [number, number];
+	inlier: boolean;
+}
+
+export interface FieldFitResult {
+	pair_id: number;
+	mode?: string;
+	field_estimator: string;
+	wendland_epsilon?: number | null;
+	bspline_grid?: number | null;
+	bspline_reg?: number | null;
+	n_anchors: number;
+	rmse_norm: number;
+	kind: string;
+	width?: number;
+	height?: number;
+	overlay_corrs?: FieldOverlayCorr[];
+	ran_at: number;
+	error?: string;
+}
+
+export async function getRigid(pair: number): Promise<RigidState> {
+	const r = await fetch(`/api/c2f/rigid/light_v1?pair=${pair}`);
+	if (!r.ok) return { saved: null, has_run: false, run: null, matches: null, has_matches: false };
+	return r.json();
+}
+
+export async function startRigidRun(
+	pair: number,
+	preview_level: number,
+	pre_rotation_deg: number,
+	hyperparams: RigidHyperparams
+): Promise<{ started: boolean; state: RigidJobState }> {
+	const r = await fetch('/api/c2f/rigid/light_v1', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify({
+			pair_id: pair,
+			action: 'run',
+			preview_level,
+			pre_rotation_deg,
+			hyperparams
+		})
+	});
+	if (!r.ok) throw new Error(await r.text());
+	return r.json();
+}
+
+export async function getRigidProgress(pair: number): Promise<RigidJobState> {
+	const r = await fetch(`/api/c2f/rigid/light_v1/progress?pair=${pair}`);
+	if (!r.ok) return { running: false, done: 0, total: 0, error: null, finishedAt: null, stage: null };
+	return r.json();
+}
+
+export async function saveRigid(
+	pair: number
+): Promise<{ ok?: boolean; error?: string; matches?: RigidMatches }> {
+	const r = await fetch('/api/c2f/rigid/light_v1', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify({ pair_id: pair, action: 'save' })
+	});
+	return r.json();
+}
+
+export async function fitRigidField(
+	pair: number,
+	opts: {
+		field_estimator: 'tps' | 'wendland' | 'bspline';
+		wendland_epsilon?: number;
+		bspline_grid?: number;
+		bspline_reg?: number;
+	}
+): Promise<FieldFitResult> {
+	const r = await fetch('/api/c2f/rigid/light_v1', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify({ pair_id: pair, action: 'field-fit', ...opts })
+	});
+	const data = await r.json();
+	if (!r.ok) throw new Error(data?.message || data?.error || (await r.text()));
+	return data;
+}
+
+export async function reclassifyRigidInliers(
+	pair: number,
+	inlier_px: number
+): Promise<{
+	ok?: boolean;
+	error?: string;
+	n_matches?: number;
+	n_inliers?: number;
+	run?: RigidResult;
+	matches?: RigidMatches | null;
+}> {
+	const r = await fetch('/api/c2f/rigid/light_v1', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify({ pair_id: pair, action: 'reclassify', inlier_px })
+	});
+	const data = await r.json();
+	if (!r.ok) throw new Error(data?.message || data?.error || 'reclassify failed');
+	return data;
+}
+
+export async function clearRigid(pair: number, clearRun = false): Promise<boolean> {
+	const r = await fetch('/api/c2f/rigid/light_v1', {
+		method: 'POST',
+		headers: JSON_HEADERS,
+		body: JSON.stringify({ pair_id: pair, action: 'clear', clear_run: clearRun })
+	});
+	return r.ok;
+}
+
+export function rigidAssetUrl(pair: number, name: string, bust?: number): string {
+	const q = bust != null ? `&t=${bust}` : '';
+	return `/api/c2f/rigid/light_v1/asset?pair=${pair}&name=${encodeURIComponent(name)}${q}`;
+}
+
 /** Effective masked map for one level: { "x_y": true, ... } (masked only). */
 export async function getMasks(pair: number, level: number): Promise<Record<string, true>> {
 	const r = await fetch(`/api/c2f/mask?pair=${pair}&level=${level}`);

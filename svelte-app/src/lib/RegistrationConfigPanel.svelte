@@ -48,7 +48,7 @@
 		Registration config
 		<span class="summary">
 			· {config.lam === 'fft' ? 'FFT' : 'SuperPoint+LightGlue'}
-			· {config.fieldEstimator === 'tps' ? 'TPS' : 'Wendland'}
+			· {config.fieldEstimator === 'tps' ? 'TPS' : config.fieldEstimator === 'wendland' ? 'Wendland' : 'B-spline'}
 		</span>
 	</button>
 
@@ -92,6 +92,10 @@
 				Field sets ·
 				<code>curated_field_sets/{config.lam}/{config.fieldEstimator}/</code>
 			</p>
+			<a class="lab-link" href={`/rigid/light_v1/${pairId}`}>
+				<span class="lab-title">Rigid lab (SuperPoint + LightGlue) ↗</span>
+				<span class="lab-sub">Tune matchers, pre-rotate IHC, preview correspondences, Save rigid init</span>
+			</a>
 		</div>
 	{/if}
 </div>
@@ -190,5 +194,29 @@
 	.branch code {
 		color: #9ca3af;
 		font-size: 0.7rem;
+	}
+	.lab-link {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 0.5rem 0.55rem;
+		border: 1px solid #2a2d3a;
+		border-radius: 4px;
+		text-decoration: none;
+		background: #12151c;
+	}
+	.lab-link:hover {
+		border-color: #5b8def;
+		background: #1a2233;
+	}
+	.lab-title {
+		font-size: 0.82rem;
+		color: #93c5fd;
+		font-weight: 500;
+	}
+	.lab-sub {
+		font-size: 0.72rem;
+		color: #6b7280;
+		line-height: 1.3;
 	}
 </style>

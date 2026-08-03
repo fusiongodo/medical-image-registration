@@ -1,5 +1,5 @@
 """
-Compute TRE for regWSI displacement field vs the pair's main field set.
+Compute TRE for regWSI displacement field vs FFT field-set branches (TPS + Wendland).
 
 Landmarks in data/regwsi/{pair}/landmarks.json use normalised [0,1] HE/IHC coords.
 Prints one JSON object to stdout.
@@ -23,12 +23,13 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import conf
 from setup.coarse_to_fine.identity import pair_fingerprint, fingerprint_matches
+from setup.coarse_to_fine.reg_branches import CURATED_ROOT, FIELD_ESTIMATORS
 
 from regWSI import paths
 
-SETS_ROOT = conf.PROJECT_ROOT / "data" / "curated_field_sets" / "fft" / "tps"
 LEVEL = 5
 GRID = 2 ** LEVEL
+LAM = "fft"
 
 
 def _stats(errs: np.ndarray) -> dict:
@@ -43,6 +44,17 @@ def _stats(errs: np.ndarray) -> dict:
     }
 
 
+def _empty_err(msg: str) -> dict:
+    return {
+        "mean": None,
+        "median": None,
+        "max": None,
+        "p95": None,
+        "per_point": [],
+        "error": msg,
+    }
+
+
 def _load_landmarks(pair_id: int) -> list[dict]:
     path = paths.landmarks_json(pair_id)
     if not path.is_file():
@@ -53,18 +65,71 @@ def _load_landmarks(pair_id: int) -> list[dict]:
     return list(data.get("points") or [])
 
 
-def _main_set_dir(pair_id: int) -> tuple[str | None, Path | None]:
-    active_path = SETS_ROOT / str(pair_id) / "active.json"
-    if not active_path.is_file():
-        return None, None
-    active = json.loads(active_path.read_text())
-    set_id = active.get("main_set_id") or active.get("set_id")
-    if not set_id:
-        return None, None
-    d = SETS_ROOT / str(pair_id) / set_id
-    if not d.is_dir():
-        return set_id, None
-    return set_id, d
+def _branch_root(pair_id: int, field_estimator: str) -> Path:
+    return CURATED_ROOT / LAM / field_estimator / str(pair_id)
+
+
+def _resolve_set_dir(pair_id: int, field_estimator: str) -> tuple[str | None, Path | None, str | None]:
+    """
+    Pick a set with field.json on this branch.
+    Prefer main_set_id, then active set_id, then newest sibling with field.json.
+    Returns (set_id, set_dir, set_name).
+    """
+    root = _branch_root(pair_id, field_estimator)
+    if not root.is_dir():
+        return None, None, None
+
+    active_path = root / "active.json"
+    state: dict = {}
+    if active_path.is_file():
+        try:
+            state = json.loads(active_path.read_text())
+        except Exception:
+            state = {}
+
+    ordered: list[str] = []
+    for key in (state.get("main_set_id"), state.get("set_id")):
+        if isinstance(key, str) and key and key not in ordered:
+            ordered.append(key)
+
+    def with_field(set_id: str) -> Path | None:
+        d = root / set_id
+        if d.is_dir() and (d / "field.json").is_file():
+            return d
+        return None
+
+    for set_id in ordered:
+        d = with_field(set_id)
+        if d is not None:
+            name = _set_name(d, set_id)
+            return set_id, d, name
+
+    fallback: list[tuple[float, str, Path]] = []
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        if not (child / "field.json").is_file():
+            continue
+        mtime = (child / "field.json").stat().st_mtime
+        fallback.append((mtime, child.name, child))
+    if fallback:
+        fallback.sort(reverse=True)
+        _, set_id, d = fallback[0]
+        return set_id, d, _set_name(d, set_id)
+
+    if ordered:
+        return ordered[0], None, None
+    return None, None, None
+
+
+def _set_name(set_dir: Path, set_id: str) -> str:
+    man = set_dir / "manifest.json"
+    if man.is_file():
+        try:
+            return json.loads(man.read_text()).get("name") or set_id
+        except Exception:
+            pass
+    return set_id
 
 
 def _deskew_disp_norm(affine, xn: np.ndarray, yn: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -81,8 +146,6 @@ def _field_disp_canvas(field_depth5: dict, xn: np.ndarray, yn: np.ndarray, scale
     xn, yn in [0,1]; returns (dx, dy) in canvas pixels.
     """
     g = GRID
-    # Map normalised coords to continuous tile index in [0, g-1] at tile centres.
-    # Tile i centre at (i+0.5)/g → continuous index fx = xn*g - 0.5
     fx = xn * g - 0.5
     fy = yn * g - 0.5
     x0 = np.floor(fx).astype(int)
@@ -141,7 +204,6 @@ def _tre_ours(points: list[dict], set_dir: Path, w: int, h: int, scale: float) -
         du_n, dv_n = _deskew_disp_norm(deskew_aff, xn, yn)
 
     fdx, fdy = _field_disp_canvas(depth5, xn, yn, scale)
-    # Total d in canvas px; T(q) = q + d(q)
     dx = du_n * w + fdx
     dy = dv_n * h + fdy
     pred = ihc_xy + np.stack([dx, dy], axis=1)
@@ -163,7 +225,6 @@ def _tre_regwsi(points: list[dict], pair_id: int, w: int, h: int) -> np.ndarray:
     if not df_path.is_file():
         raise FileNotFoundError(f"missing {df_path}")
     arr = sitk.GetArrayFromImage(sitk.ReadImage(str(df_path))).astype(np.float32)
-    # DeeperHistReg / sitk: typically (2, H, W) or (H, W, 2)
     if arr.ndim == 3 and arr.shape[0] == 2:
         df = arr
     elif arr.ndim == 3 and arr.shape[-1] == 2:
@@ -175,22 +236,45 @@ def _tre_regwsi(points: list[dict], pair_id: int, w: int, h: int) -> np.ndarray:
     he = np.array([p["he"] for p in points], dtype=float)
     ihc = np.array([p["ihc"] for p in points], dtype=float)
     he_xy = np.stack([he[:, 0] * w, he[:, 1] * h], axis=1)
-    # Sample DF in its native index space, then scale displacement to canvas px.
     lx = ihc[:, 0] * (df_w - 1)
     ly = ihc[:, 1] * (df_h - 1)
     ux = map_coordinates(df[0], [ly, lx], order=1, mode="nearest")
     uy = map_coordinates(df[1], [ly, lx], order=1, mode="nearest")
-    # SITK/DeeperHistReg: warped(p) = source(p + u(p)) ⇒ IHC→HE is he ≈ ihc − u.
     sx, sy = w / df_w, h / df_h
     ihc_xy = np.stack([ihc[:, 0] * w, ihc[:, 1] * h], axis=1)
     pred = ihc_xy - np.stack([ux * sx, uy * sy], axis=1)
     return np.linalg.norm(pred - he_xy, axis=1)
 
 
+def _branch_tre(
+    points: list[dict],
+    pair_id: int,
+    field_estimator: str,
+    w: int,
+    h: int,
+    scale: float,
+) -> dict:
+    set_id, set_dir, set_name = _resolve_set_dir(pair_id, field_estimator)
+    meta = {
+        "field_set_id": set_id,
+        "field_set_name": set_name,
+        "field_estimator": field_estimator,
+    }
+    if set_dir is None:
+        out = _empty_err(
+            f"no field.json on fft/{field_estimator}"
+            + (f" (main/active={set_id})" if set_id else "")
+        )
+        out.update(meta)
+        return out
+    st = _stats(_tre_ours(points, set_dir, w, h, scale))
+    st.update(meta)
+    return st
+
+
 def compute_tre(pair_id: int) -> dict:
     points = _load_landmarks(pair_id)
     w, h = paths.CANVAS_W, paths.CANVAS_H
-    # Prefer meta/full meta if present (actual exported size).
     if paths.full_meta_json(pair_id).is_file():
         meta = json.loads(paths.full_meta_json(pair_id).read_text())
         w, h = int(meta["w"]), int(meta["h"])
@@ -201,7 +285,6 @@ def compute_tre(pair_id: int) -> dict:
             w, h = int(canvas[0]), int(canvas[1])
 
     scale = w / (GRID * conf.CNN_INPUT_WIDTH)
-    set_id, set_dir = _main_set_dir(pair_id)
 
     result: dict = {
         "pair_id": pair_id,
@@ -209,7 +292,6 @@ def compute_tre(pair_id: int) -> dict:
         "n": len(points),
         "canvas": [w, h],
         "scale": scale,
-        "field_set_id": set_id,
         "tile_w": conf.CNN_INPUT_WIDTH,
         "tile_h": conf.CNN_INPUT_HEIGHT,
     }
@@ -218,25 +300,32 @@ def compute_tre(pair_id: int) -> dict:
         empty = _stats(np.array([]))
         result["none"] = empty
         result["regwsi"] = empty
+        result["tps"] = empty
+        result["wendland"] = empty
         result["ours"] = empty
+        result["field_set_id"] = None
         return result
 
     result["none"] = _stats(_tre_none(points, w, h))
     result["regwsi"] = _stats(_tre_regwsi(points, pair_id, w, h))
 
-    if set_dir is not None and (set_dir / "field.json").is_file():
-        result["ours"] = _stats(_tre_ours(points, set_dir, w, h, scale))
-    else:
-        result["ours"] = {
-            "mean": None,
-            "median": None,
-            "max": None,
-            "p95": None,
-            "per_point": [],
-            "error": "no main field set",
-        }
+    for est in FIELD_ESTIMATORS:
+        result[est] = _branch_tre(points, pair_id, est, w, h, scale)
 
-    for key in ("none", "regwsi", "ours"):
+    # Back-compat: "ours" prefers TPS if present, else Wendland.
+    if result["tps"].get("mean") is not None:
+        result["ours"] = {**result["tps"]}
+        result["field_set_id"] = result["tps"].get("field_set_id")
+    elif result["wendland"].get("mean") is not None:
+        result["ours"] = {**result["wendland"]}
+        result["field_set_id"] = result["wendland"].get("field_set_id")
+    else:
+        result["ours"] = _empty_err(
+            result["tps"].get("error") or result["wendland"].get("error") or "no main field set"
+        )
+        result["field_set_id"] = None
+
+    for key in ("none", "regwsi", "tps", "wendland", "ours"):
         st = result[key]
         if st.get("mean") is not None:
             st["mean_tile_x"] = st["mean"] / (conf.CNN_INPUT_WIDTH * scale)

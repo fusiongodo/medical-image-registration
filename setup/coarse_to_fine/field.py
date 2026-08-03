@@ -38,7 +38,13 @@ import conf
 
 from setup.coarse_to_fine.annotations import Anchor
 from setup.coarse_to_fine.identity import pair_fingerprint
-from setup.coarse_to_fine.reg_branches import DEFAULT_FIELD_ESTIMATOR, FIELD_ESTIMATORS
+from setup.coarse_to_fine.reg_branches import (
+    DEFAULT_BSPLINE_GRID,
+    DEFAULT_BSPLINE_REG,
+    DEFAULT_FIELD_ESTIMATOR,
+    DEFAULT_WENDLAND_EPS,
+    FIELD_ESTIMATORS,
+)
 
 CNN_W = conf.CNN_INPUT_WIDTH
 CNN_H = conf.CNN_INPUT_HEIGHT
@@ -47,9 +53,11 @@ SMOOTH_C2F_DIR = conf.PROJECT_ROOT / "data" / "smooth_c2f"
 
 BASE_SMOOTHING = 1e-3
 PSR_CONF_K = 5.0
-WENDLAND_EPS = 0.35
+WENDLAND_EPS = DEFAULT_WENDLAND_EPS
+BSPLINE_GRID = DEFAULT_BSPLINE_GRID
+BSPLINE_REG = DEFAULT_BSPLINE_REG
 
-FieldEstimator = Literal["tps", "wendland"]
+FieldEstimator = Literal["tps", "wendland", "bspline"]
 
 
 def normalize_estimator(field_estimator: str | None) -> FieldEstimator:
@@ -78,6 +86,68 @@ class _WendlandEval:
         w = self.coef[:n]
         c0, c1, c2 = self.coef[n:]
         return phi @ w + c0 + c1 * query[:, 0] + c2 * query[:, 1]
+
+
+def _cubic_bspline_weight(t: np.ndarray) -> np.ndarray:
+    """Cubic B-spline basis for |t| in control-spacing units (support |t|<2)."""
+    at = np.abs(t)
+    out = np.zeros_like(at, dtype=float)
+    m1 = at < 1.0
+    m2 = (at >= 1.0) & (at < 2.0)
+    out[m1] = (2.0 / 3.0) - at[m1] ** 2 + 0.5 * at[m1] ** 3
+    out[m2] = (1.0 / 6.0) * (2.0 - at[m2]) ** 3
+    return out
+
+
+@dataclass
+class _BSplineEval:
+    coef: np.ndarray
+    grid: int
+    spacing: float
+
+    def __call__(self, query) -> np.ndarray:
+        query = np.asarray(query, dtype=float).reshape(-1, 2)
+        n = self.grid
+        h = self.spacing
+        design = _bspline_design(query, n, h)
+        return design @ self.coef
+
+
+def _bspline_design(pts: np.ndarray, grid: int, spacing: float) -> np.ndarray:
+    """(n_pts, grid*grid) design matrix for separable cubic B-spline FFD."""
+    n_pts = len(pts)
+    n_ctrl = grid * grid
+    design = np.zeros((n_pts, n_ctrl), dtype=float)
+    for i in range(grid):
+        cx = i * spacing
+        wx = _cubic_bspline_weight((pts[:, 0] - cx) / spacing)
+        for j in range(grid):
+            cy = j * spacing
+            wy = _cubic_bspline_weight((pts[:, 1] - cy) / spacing)
+            design[:, i * grid + j] = wx * wy
+    return design
+
+
+def _fit_bspline(
+    pts: np.ndarray,
+    values: np.ndarray,
+    weights: np.ndarray,
+    grid: int = BSPLINE_GRID,
+    reg: float = BSPLINE_REG,
+) -> _BSplineEval:
+    grid = max(4, int(grid))
+    spacing = 1.0 / (grid - 1)
+    design = _bspline_design(pts, grid, spacing)
+    sw = np.sqrt(np.maximum(weights, 1e-6))
+    a = design * sw[:, None]
+    b = values * sw
+    ata = a.T @ a
+    ata.flat[:: ata.shape[0] + 1] += float(reg)
+    try:
+        coef = np.linalg.solve(ata, a.T @ b)
+    except LinAlgError:
+        coef, *_ = np.linalg.lstsq(ata, a.T @ b, rcond=None)
+    return _BSplineEval(coef=coef, grid=grid, spacing=spacing)
 
 
 def _fit_wendland(
@@ -245,13 +315,16 @@ def fit_field(
     anchors: list[Anchor],
     base_smoothing: float = BASE_SMOOTHING,
     field_estimator: str | None = None,
+    wendland_epsilon: float | None = None,
+    bspline_grid: int | None = None,
+    bspline_reg: float | None = None,
 ) -> Field:
     """
-    Fit a weighted RBF field from normalised-space anchors.
+    Fit a weighted displacement field from normalised-space anchors.
       0 anchors            -> identity field (zero displacement)
       1-2 anchors          -> constant field (weighted-mean displacement)
       >=3 collinear anchors -> affine field (RBF singular for rank-deficient points)
-      >=3 anchors          -> TPS or Wendland C2 (per-point smoothing = base / weight)
+      >=3 anchors          -> TPS / Wendland C2 / cubic B-spline FFD
     """
     estimator = normalize_estimator(field_estimator)
     if not anchors:
@@ -272,11 +345,17 @@ def fit_field(
         f.estimator = estimator
         return f
 
+    eps = float(wendland_epsilon) if wendland_epsilon is not None else WENDLAND_EPS
+    grid = int(bspline_grid) if bspline_grid is not None else BSPLINE_GRID
+    reg = float(bspline_reg) if bspline_reg is not None else BSPLINE_REG
     smoothing = base_smoothing / w
     try:
         if estimator == "wendland":
-            rbf_dx = _fit_wendland(pts, du, w, base_smoothing)
-            rbf_dy = _fit_wendland(pts, dv, w, base_smoothing)
+            rbf_dx = _fit_wendland(pts, du, w, base_smoothing, epsilon=eps)
+            rbf_dy = _fit_wendland(pts, dv, w, base_smoothing, epsilon=eps)
+        elif estimator == "bspline":
+            rbf_dx = _fit_bspline(pts, du, w, grid=grid, reg=reg)
+            rbf_dy = _fit_bspline(pts, dv, w, grid=grid, reg=reg)
         else:
             rbf_dx = RBFInterpolator(pts, du, kernel="thin_plate_spline", smoothing=smoothing)
             rbf_dy = RBFInterpolator(pts, dv, kernel="thin_plate_spline", smoothing=smoothing)

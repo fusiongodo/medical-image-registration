@@ -46,6 +46,7 @@ CNN_H = conf.CNN_INPUT_HEIGHT
 PAD_FILL = 255
 
 DESKEW_DIR = conf.PROJECT_ROOT / "data" / "deskew"
+RIGID_DIR = conf.PROJECT_ROOT / "data" / "rigid" / "light_v1"
 
 # Pages are cached as grid*CNN greyscale (~180 MB/side at level 5) rather than
 # the raw multi-GB RGB page, so cap the warm cache by total bytes to keep the
@@ -59,6 +60,7 @@ _mask_cache: dict[int, "np.ndarray | None"] = {}
 _page_cache: "OrderedDict[tuple[int, int, int], np.ndarray]" = OrderedDict()
 # pair_id -> (json mtime | None, affine coeffs | None); self-invalidates on mtime.
 _deskew_cache: dict[int, tuple[float | None, "tuple | None"]] = {}
+_rigid_cache: dict[int, tuple[float | None, "tuple | None"]] = {}
 
 
 def _labels() -> list[dict]:
@@ -243,9 +245,10 @@ def _crop_padded(gpage: np.ndarray, x_idx: int, y_idx: int, dx: float, dy: float
 
 def _deskew_affine(pair_id: int) -> "tuple | None":
     """
-    Global deskew affine for a pair as ((a0,a1,s),(b0,s,b2)) in normalised [0,1]
-    image space, or None. Read from data/deskew/{pair}.json and cached with an
-    mtime guard so edits (or clears) are picked up without a worker restart.
+    Global deskew affine for a pair as ((a0,a1,a2),(b0,b1,b2)) displacement in
+    normalised [0,1] image space, or None. Read from data/deskew/{pair}.json and
+    cached with an mtime guard so edits (or clears) are picked up without a
+    worker restart.
     """
     path = DESKEW_DIR / f"{pair_id}.json"
     mtime = path.stat().st_mtime if path.exists() else None
@@ -262,30 +265,81 @@ def _deskew_affine(pair_id: int) -> "tuple | None":
     return affine
 
 
-def _crop_warped(gpage: np.ndarray, x_idx: int, y_idx: int, dx: float, dy: float, affine) -> np.ndarray:
+def _rigid_affine(pair_id: int) -> "tuple | None":
     """
-    Crop one CNN-sized moving tile while resampling the whole page through the
-    global deskew affine, so a strong stretch/shear is corrected within the tile
-    (a per-tile translation cannot do this). dx/dy add the residual FFT/field
-    offset on top, exactly as _crop_padded does.
+    Rigid 2×3 IHC→HE matrix in normalised [0,1] space from
+    data/rigid/light_v1/{pair}.json, or None. Mtime-cached like deskew.
+    """
+    path = RIGID_DIR / f"{pair_id}.json"
+    mtime = path.stat().st_mtime if path.exists() else None
+    cached = _rigid_cache.get(pair_id)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    rigid = None
+    if mtime is not None:
+        try:
+            rigid = json.loads(path.read_text()).get("rigid")
+        except Exception:
+            rigid = None
+    _rigid_cache[pair_id] = (mtime, rigid)
+    return rigid
 
-    The affine d(p)=c+L·p is the normalised HE-minus-IHC displacement, so the
-    aligned moving sample for output position p is ihc(p - d(p)) = ihc((I-L)p-c).
-    In this page's pixel space (W=grid*CNN_W, H=grid*CNN_H) that is the inverse
-    map fed to ndimage.affine_transform (row=y, col=x order).
+
+def _ihc_sample_map(pair_id: int) -> "tuple[np.ndarray, np.ndarray] | None":
+    """
+    Composed sample map for IHC crops: src = M @ p + b in normalised HE coords,
+    applying rigid (light_v1) then deskew. Returns None when neither is set.
+    """
+    rigid = _rigid_affine(pair_id)
+    deskew = _deskew_affine(pair_id)
+    if rigid is None and deskew is None:
+        return None
+
+    M = np.eye(2, dtype=float)
+    b = np.zeros(2, dtype=float)
+
+    if deskew is not None:
+        (a0, a1, a2), (b0, b1, b2) = deskew
+        L = np.array([[float(a1), float(a2)], [float(b1), float(b2)]], dtype=float)
+        c = np.array([float(a0), float(b0)], dtype=float)
+        M = np.eye(2) - L
+        b = -c
+
+    if rigid is not None:
+        (r00, r01, tx), (r10, r11, ty) = rigid
+        R = np.array([[float(r00), float(r01)], [float(r10), float(r11)]], dtype=float)
+        t = np.array([float(tx), float(ty)], dtype=float)
+        Rinv = np.linalg.inv(R)
+        b = Rinv @ (b - t)
+        M = Rinv @ M
+
+    return M, b
+
+
+def _crop_warped(
+    gpage: np.ndarray,
+    x_idx: int,
+    y_idx: int,
+    dx: float,
+    dy: float,
+    sample_map: "tuple[np.ndarray, np.ndarray]",
+) -> np.ndarray:
+    """
+    Crop one CNN-sized moving tile while resampling through the composed
+    IHC sample map (rigid then deskew). dx/dy add the residual FFT/field
+    offset on top, exactly as _crop_padded does.
     """
     h, w = gpage.shape[:2]
-    (a0, a1, a2), (b0, _b1, b2) = affine
-    s = a2
+    M, bvec = sample_map
     wx0 = x_idx * CNN_W - dx
     wy0 = y_idx * CNN_H - dy
-    m00 = 1.0 - b2
-    m01 = -s * (h / w)
-    m10 = -s * (w / h)
-    m11 = 1.0 - a1
+    m00 = float(M[1, 1])
+    m01 = float(M[1, 0]) * (h / w)
+    m10 = float(M[0, 1]) * (w / h)
+    m11 = float(M[0, 0])
     matrix = np.array([[m00, m01], [m10, m11]], dtype=float)
-    off_row = m00 * wy0 + m01 * wx0 - b0 * h
-    off_col = m10 * wy0 + m11 * wx0 - a0 * w
+    off_row = m00 * wy0 + m01 * wx0 + float(bvec[1]) * h
+    off_col = m10 * wy0 + m11 * wx0 + float(bvec[0]) * w
     out = ndimage.affine_transform(
         gpage,
         matrix,
@@ -301,8 +355,8 @@ def _crop_warped(gpage: np.ndarray, x_idx: int, y_idx: int, dx: float, dy: float
 def _crop_tile(pair_id: int, level: int, x: int, y: int, side: str, dx: float, dy: float) -> np.ndarray:
     """np.uint8 (CNN_H, CNN_W) greyscale tile with a CNN-pixel offset.
 
-    The moving (IHC) side is resampled through the pair's global deskew affine
-    when one is stored; the fixed (HE) side is always a plain padded crop.
+    The moving (IHC) side is resampled through rigid (light_v1) then deskew when
+    either is stored; the fixed (HE) side is always a plain padded crop.
     """
     he_id, ihc_id = pair_image_ids(pair_id)
     image_id = he_id if side == "he" else ihc_id
@@ -315,9 +369,9 @@ def _crop_tile(pair_id: int, level: int, x: int, y: int, side: str, dx: float, d
     grid = 2 ** level
     gpage = _compact_page(image_id, level, page_idx, grid)
     if side != "he":
-        affine = _deskew_affine(pair_id)
-        if affine is not None:
-            return _crop_warped(gpage, x, y, dx, dy, affine)
+        sample_map = _ihc_sample_map(pair_id)
+        if sample_map is not None:
+            return _crop_warped(gpage, x, y, dx, dy, sample_map)
     return _crop_padded(gpage, x, y, dx, dy)
 
 

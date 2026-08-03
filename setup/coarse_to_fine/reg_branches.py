@@ -7,9 +7,12 @@ from pathlib import Path
 import conf
 
 LAMS = ("fft", "superpoint_glue")
-FIELD_ESTIMATORS = ("tps", "wendland")
+FIELD_ESTIMATORS = ("tps", "wendland", "bspline")
 DEFAULT_LAM = "fft"
 DEFAULT_FIELD_ESTIMATOR = "tps"
+DEFAULT_WENDLAND_EPS = 0.35
+DEFAULT_BSPLINE_GRID = 8
+DEFAULT_BSPLINE_REG = 1e-3
 
 DATA_ROOT = conf.PROJECT_ROOT / "data"
 CURATED_ROOT = DATA_ROOT / "curated_field_sets"

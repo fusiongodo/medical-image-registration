@@ -7,3 +7,4 @@ scipy
 tifffile
 tqdm
 gdown
+lightglue @ git+https://github.com/cvg/LightGlue.git

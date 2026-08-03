@@ -1,5 +1,5 @@
 export type Lam = 'fft' | 'superpoint_glue';
-export type FieldEstimator = 'tps' | 'wendland';
+export type FieldEstimator = 'tps' | 'wendland' | 'bspline';
 
 export interface RegConfig {
 	lam: Lam;
@@ -22,8 +22,18 @@ export const LAM_OPTIONS: { id: Lam; label: string; hint: string }[] = [
 
 export const ESTIMATOR_OPTIONS: { id: FieldEstimator; label: string; hint: string }[] = [
 	{ id: 'tps', label: 'Thin-plate spline', hint: 'Global τ-gated TPS (current default).' },
-	{ id: 'wendland', label: 'Wendland RBF', hint: 'Compactly supported C² RBF — local influence.' }
+	{ id: 'wendland', label: 'Wendland RBF', hint: 'Compactly supported C² RBF — local influence.' },
+	{
+		id: 'bspline',
+		label: 'B-spline FFD',
+		hint: 'Cubic free-form deformation on a uniform control grid.'
+	}
 ];
+
+function parseEstimator(v: unknown): FieldEstimator {
+	if (v === 'wendland' || v === 'bspline' || v === 'tps') return v;
+	return 'tps';
+}
 
 export function storageKey(pairId: number): string {
 	return `mvrRegConfig:${pairId}`;
@@ -36,7 +46,7 @@ export function loadRegConfig(pairId: number): RegConfig {
 		const parsed = JSON.parse(raw) as Partial<RegConfig>;
 		return {
 			lam: parsed.lam === 'superpoint_glue' ? 'superpoint_glue' : 'fft',
-			fieldEstimator: parsed.fieldEstimator === 'wendland' ? 'wendland' : 'tps'
+			fieldEstimator: parseEstimator(parsed.fieldEstimator)
 		};
 	} catch {
 		return { ...DEFAULT_REG_CONFIG };

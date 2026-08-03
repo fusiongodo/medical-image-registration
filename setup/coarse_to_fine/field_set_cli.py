@@ -38,7 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 import conf
 
-from setup.coarse_to_fine import annotations, deskew, masks
+from setup.coarse_to_fine import annotations, deskew, masks, rigid_sp_lg as rigid
 from setup.coarse_to_fine.identity import pair_fingerprint
 from setup.coarse_to_fine.reg_branches import (
     DEFAULT_FIELD_ESTIMATOR,
@@ -199,6 +199,20 @@ def _snapshot_into(pair_id: int, set_dir: Path) -> None:
     elif deskew_dst.exists():
         deskew_dst.unlink()
 
+    rigid_store = rigid.load(pair_id)
+    rigid_dst = set_dir / "rigid_light_v1.json"
+    if rigid_store is not None:
+        rigid_dst.write_text(json.dumps(rigid_store, separators=(",", ":")))
+    elif rigid_dst.exists():
+        rigid_dst.unlink()
+
+    matches_store = rigid.load_matches(pair_id)
+    matches_dst = set_dir / "rigid_light_v1.matches.json"
+    if matches_store is not None:
+        matches_dst.write_text(json.dumps(matches_store, separators=(",", ":")))
+    elif matches_dst.exists():
+        matches_dst.unlink()
+
     field_src = _field_path(pair_id)
     field_dst = set_dir / "field.json"
     if field_src.exists():
@@ -259,6 +273,15 @@ def load_set(pair_id: int, set_id: str) -> dict:
     deskew_path = set_dir / "deskew.json"
     deskew.write(pair_id, json.loads(deskew_path.read_text()) if deskew_path.exists() else None)
 
+    rigid_path = set_dir / "rigid_light_v1.json"
+    rigid.write(pair_id, json.loads(rigid_path.read_text()) if rigid_path.exists() else None)
+
+    matches_path = set_dir / "rigid_light_v1.matches.json"
+    rigid.write_matches(
+        pair_id,
+        json.loads(matches_path.read_text()) if matches_path.exists() else None,
+    )
+
     field_src = set_dir / "field.json"
     field_dst = _field_path(pair_id)
     if field_src.exists():
@@ -283,6 +306,7 @@ def new_set(pair_id: int, name: str) -> dict:
     annotations.save(pair_id, [])
     masks.save(pair_id, [])
     deskew.clear(pair_id)
+    rigid.clear(pair_id)
     field_dst = _field_path(pair_id)
     if field_dst.exists():
         field_dst.unlink()

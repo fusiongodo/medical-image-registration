@@ -236,7 +236,7 @@ def main() -> None:
     if len(argv) < 3:
         sys.exit(
             "Usage: refit_cli.py <pair_id> <depth> <tau> "
-            "[--keep <fraction>] [--field-estimator tps|wendland] [--save]"
+            "[--keep <fraction>] [--field-estimator tps|wendland|bspline] [--save]"
         )
     pair_id, depth, tau = int(argv[0]), int(argv[1]), float(argv[2])
     print(

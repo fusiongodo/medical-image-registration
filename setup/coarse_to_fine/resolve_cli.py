@@ -193,7 +193,7 @@ def main() -> None:
     if len(argv) < 3:
         sys.exit(
             "Usage: resolve_cli.py <pair_id> <depth> <tau> "
-            "[--keep <fraction>] [--n <peaks>] [--field-estimator tps|wendland]"
+            "[--keep <fraction>] [--n <peaks>] [--field-estimator tps|wendland|bspline]"
         )
     pair_id, depth, tau = int(argv[0]), int(argv[1]), float(argv[2])
     print(

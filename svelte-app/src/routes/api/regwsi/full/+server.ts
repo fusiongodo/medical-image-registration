@@ -5,7 +5,13 @@ import type { RequestHandler } from './$types';
 import { pairCount } from '$lib/server/pairs';
 
 const REPO_ROOT = resolve('..');
-const LAYERS = new Set(['he', 'ihc', 'ihc_warped']);
+const LAYERS = new Set([
+	'he',
+	'ihc',
+	'ihc_warped',
+	'ihc_fieldset_tps',
+	'ihc_fieldset_wendland'
+]);
 
 function fullDir(pairId: number) {
 	return resolve(REPO_ROOT, 'data', 'regwsi', String(pairId), 'full');
@@ -32,7 +38,9 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	const qx = url.searchParams.get('qx');
 	const qy = url.searchParams.get('qy');
-	if (!layer || !LAYERS.has(layer)) error(400, 'layer must be he, ihc, or ihc_warped');
+	if (!layer || !LAYERS.has(layer)) {
+		error(400, 'layer must be he, ihc, ihc_warped, ihc_fieldset_tps, or ihc_fieldset_wendland');
+	}
 	if (qx == null || qy == null || !/^\d+$/.test(qx) || !/^\d+$/.test(qy)) {
 		error(400, 'qx and qy must be non-negative integers');
 	}
