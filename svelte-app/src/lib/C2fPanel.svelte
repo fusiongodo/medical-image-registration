@@ -58,10 +58,27 @@
 		onFlash?: (msg: string, kind?: 'ok' | 'warn' | 'err') => void;
 	} = $props();
 
-	const lamReady = $derived(regConfig.lam === 'fft');
-
 	// The global deskew is only meaningful at the coarsest levels (1 or 4 tiles).
 	const DESKEW_MAX_LEVEL = 1;
+
+	function stageLabel(stage: string): string {
+		switch (stage) {
+			case 'start':
+				return 'starting';
+			case 'load_models':
+				return 'loading SuperPoint + LightGlue';
+			case 'models_ready':
+				return 'models ready';
+			case 'superpoint_he':
+				return 'SuperPoint on HE';
+			case 'superpoint_ihc':
+				return 'SuperPoint on IHC';
+			case 'lightglue':
+				return 'LightGlue matching';
+			default:
+				return stage;
+		}
+	}
 
 	type Rating = 'bad' | 'ok' | 'good';
 
@@ -317,14 +334,8 @@
 		const p = pairId, d = depth;
 		const branch = `${regConfig.lam}/${regConfig.fieldEstimator}`;
 		refitError = null;
-		if (!lamReady) {
-			cached = false;
-			refit = null;
-			refitError = 'SuperPoint + LightGlue is not implemented yet';
-			return;
-		}
 		try {
-			const data = await getCandidates(p, d);
+			const data = await getCandidates(p, d, regConfig);
 			if (p !== pairId || d !== depth) return; // navigated away mid-flight
 			if (`${regConfig.lam}/${regConfig.fieldEstimator}` !== branch) return;
 			cached = data.cached === true;
@@ -337,7 +348,7 @@
 	}
 
 	async function runRefit() {
-		if (!cached || !lamReady) return;
+		if (!cached) return;
 		const p = pairId, d = depth;
 		const branch = `${regConfig.lam}/${regConfig.fieldEstimator}`;
 		refitError = null;
@@ -381,11 +392,7 @@
 	}
 
 	async function startCompute() {
-		if (!lamReady) {
-			onFlash?.('SuperPoint + LightGlue is not implemented yet', 'warn');
-			return;
-		}
-		const data = await computeCandidates(pairId, depth);
+		const data = await computeCandidates(pairId, depth, regConfig);
 		job = data.state;
 		if (job?.running) startPolling();
 	}
@@ -393,7 +400,7 @@
 	function startPolling() {
 		if (pollTimer) return;
 		pollTimer = setInterval(async () => {
-			job = await getProgress(pairId, depth);
+			job = await getProgress(pairId, depth, regConfig);
 			if (!job?.running) {
 				clearInterval(pollTimer!);
 				pollTimer = null;
@@ -410,7 +417,7 @@
 	// candidates (fast). This fills the LNCC²/factor columns on demand.
 	async function startMetrics() {
 		if (!cached) return;
-		const data = await computeMetrics(pairId, depth);
+		const data = await computeMetrics(pairId, depth, regConfig);
 		metricsJob = data.state;
 		if (metricsJob?.running) startMetricsPolling();
 	}
@@ -418,7 +425,7 @@
 	function startMetricsPolling() {
 		if (metricsPollTimer) return;
 		metricsPollTimer = setInterval(async () => {
-			metricsJob = await getMetricsProgress(pairId, depth);
+			metricsJob = await getMetricsProgress(pairId, depth, regConfig);
 			if (!metricsJob?.running) {
 				clearInterval(metricsPollTimer!);
 				metricsPollTimer = null;
@@ -843,16 +850,15 @@
 					</div>
 				</div>
 			{/if}
-			{#if !lamReady}
-				<div class="controls-row">
-					<span class="err">SuperPoint + LightGlue is not implemented yet</span>
-				</div>
-			{:else if cached === null}
+			{#if cached === null}
 				<span class="loading">loading…</span>
 			{:else if !cached}
 				<div class="controls-row">
 					{#if job?.running}
-						<span class="progress">Computing candidates… {job.done} / {job.total || '?'}</span>
+						<span class="progress">
+							Computing candidates… {job.done} / {job.total || '?'}{#if job.stage}
+								· {stageLabel(job.stage)}{/if}
+						</span>
 					{:else}
 						<button class="compute-btn" onclick={startCompute}>Compute candidates</button>
 					{/if}

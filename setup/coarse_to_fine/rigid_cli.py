@@ -87,6 +87,7 @@ def cmd_field_fit(args: argparse.Namespace) -> dict:
             bspline_grid=args.bspline_grid,
             bspline_reg=args.bspline_reg,
             inliers_only=not args.all_matches,
+            mode=args.mode,
         )
     except Exception as exc:
         return {"error": str(exc)}
@@ -138,6 +139,11 @@ def main() -> None:
     p_ff.add_argument("--bspline-grid", type=int, default=None)
     p_ff.add_argument("--bspline-reg", type=float, default=None)
     p_ff.add_argument("--all-matches", action="store_true")
+    p_ff.add_argument(
+        "--mode",
+        default="residual_after_rigid",
+        choices=("residual_after_rigid", "direct"),
+    )
     p_ff.set_defaults(func=cmd_field_fit)
 
     p_rc = sub.add_parser("reclassify")

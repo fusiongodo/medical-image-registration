@@ -9,12 +9,67 @@
 		rigidAssetUrl,
 		saveRigid,
 		startRigidRun,
+		type FieldFitMode,
 		type FieldFitResult,
 		type RigidHyperparams,
 		type RigidMatches,
 		type RigidResult
 	} from '$lib/c2fClient';
-	import type { FieldEstimator } from '$lib/regConfig';
+	import { ESTIMATOR_OPTIONS, type FieldEstimator } from '$lib/regConfig';
+
+	type OverlayMoving = 'rigid' | `field:${string}`;
+	type OverlayModePill = 'rigid' | 'residual_after_rigid' | 'direct';
+
+	const FIELD_ESTIMATORS = ESTIMATOR_OPTIONS.map((o) => o.id);
+
+	type FieldFitEntry = {
+		id: string;
+		mode: FieldFitMode;
+		estimator: string;
+		label: string;
+		fit: FieldFitResult;
+		treMeanPx: number;
+	};
+
+	function fieldEntryId(mode: FieldFitMode, estimator: string) {
+		return `field:${mode}:${estimator}`;
+	}
+
+	function fieldModeLabel(mode: FieldFitMode) {
+		return mode === 'direct' ? 'Field(direct)' : 'Field(+rigid)';
+	}
+
+	function fmtTre(v: number) {
+		return Number.isFinite(v) ? v.toFixed(2) : 'NaN';
+	}
+
+	function treMeanFromPairs(
+		pairs: { heX: number; heY: number; ihcX: number; ihcY: number; inlier: boolean }[]
+	): { mean: number; n: number } | null {
+		let sum = 0;
+		let n = 0;
+		for (const c of pairs) {
+			if (!c.inlier) continue;
+			sum += Math.hypot(c.heX - c.ihcX, c.heY - c.ihcY);
+			n += 1;
+		}
+		if (!n) return null;
+		return { mean: sum / n, n };
+	}
+
+	function treFromFieldFit(fit: FieldFitResult): number {
+		if (typeof fit.tre_mean_px === 'number' && Number.isFinite(fit.tre_mean_px)) {
+			return fit.tre_mean_px;
+		}
+		const corrs = (fit.overlay_corrs ?? []).map((c) => ({
+			heX: c.he[0],
+			heY: c.he[1],
+			ihcX: c.field[0],
+			ihcY: c.field[1],
+			inlier: c.inlier
+		}));
+		return treMeanFromPairs(corrs)?.mean ?? NaN;
+	}
 
 	let { data } = $props();
 	const pairId = $derived(data.pairId);
@@ -83,30 +138,44 @@
 	let wendlandEps = $state(0.35);
 	let bsplineGrid = $state(8);
 	let bsplineReg = $state(0.001);
-	let fieldFit = $state<FieldFitResult | null>(null);
+	let fieldMode = $state<FieldFitMode>('residual_after_rigid');
+	let fieldFits = $state<FieldFitEntry[]>([]);
 	let fieldBusy = $state(false);
 	let reclassBusy = $state(false);
-	let overlayMoving = $state<'rigid' | 'field'>('rigid');
+	let overlayMoving = $state<OverlayMoving>('rigid');
 	let inlierPx = $state(3.0);
 
 	const heSrc = $derived(liveWholeUrl(pairId, 'he', previewLevel));
 	const ihcSrc = $derived(liveWholeUrl(pairId, 'ihc', previewLevel));
-	const hasOverlay = $derived(!!run || !!fieldFit || !!saved);
-	const overlayHeSrc = $derived(hasOverlay ? rigidAssetUrl(pairId, 'he.png', bust) : '');
-	const overlayIhcSrc = $derived(
-		hasOverlay
-			? rigidAssetUrl(
-					pairId,
-					overlayMoving === 'field' && fieldFit ? 'field_preview.png' : 'ihc_rigid.png',
-					bust
-				)
-			: ''
+	const activeFieldEntry = $derived(
+		overlayMoving.startsWith('field:')
+			? (fieldFits.find((f) => f.id === overlayMoving) ?? null)
+			: null
 	);
+	const activeFieldFit = $derived(activeFieldEntry?.fit ?? null);
+	const hasOverlay = $derived(!!run || fieldFits.length > 0 || !!saved);
+	const overlayHeSrc = $derived(hasOverlay ? rigidAssetUrl(pairId, 'he.png', bust) : '');
+	const overlayIhcSrc = $derived.by(() => {
+		if (!hasOverlay) return '';
+		if (activeFieldFit) {
+			const stem = activeFieldFit.mode === 'direct' ? 'direct' : 'residual';
+			const est = activeFieldFit.field_estimator;
+			return rigidAssetUrl(
+				pairId,
+				activeFieldFit.preview ?? `field_preview_${stem}_${est}.png`,
+				bust
+			);
+		}
+		return rigidAssetUrl(pairId, 'ihc_rigid.png', bust);
+	});
 	const overlayHeOpacity = $derived(overlayEmphasis === 'ihc' ? 0 : 1);
 	const overlayIhcOpacity = $derived(
 		overlayEmphasis === 'he' ? 0 : overlayEmphasis === 'ihc' ? 1 : 0.5
 	);
 	const canFieldFit = $derived(!!savedMatches || !!run);
+	const canResidualField = $derived(
+		!!(matchPts?.rigid_prerot || run?.rigid_prerot || saved?.rigid_prerot)
+	);
 
 	type OverlayCorr = {
 		heX: number;
@@ -116,16 +185,7 @@
 		inlier: boolean;
 	};
 
-	const overlayCorrs = $derived.by((): OverlayCorr[] => {
-		if (overlayMoving === 'field' && fieldFit?.overlay_corrs?.length) {
-			return fieldFit.overlay_corrs.map((c) => ({
-				heX: c.he[0],
-				heY: c.he[1],
-				ihcX: c.field[0],
-				ihcY: c.field[1],
-				inlier: c.inlier
-			}));
-		}
+	const rigidOverlayCorrs = $derived.by((): OverlayCorr[] => {
 		if (!matchPts || !matchPts.rigid_prerot) return [];
 		const w = matchPts.width;
 		const h = matchPts.height;
@@ -147,12 +207,107 @@
 		return out;
 	});
 
+	const overlayCorrs = $derived.by((): OverlayCorr[] => {
+		if (activeFieldFit?.overlay_corrs?.length) {
+			return activeFieldFit.overlay_corrs.map((c) => ({
+				heX: c.he[0],
+				heY: c.he[1],
+				ihcX: c.field[0],
+				ihcY: c.field[1],
+				inlier: c.inlier
+			}));
+		}
+		return rigidOverlayCorrs;
+	});
+
+	const rigidTre = $derived(treMeanFromPairs(rigidOverlayCorrs));
+	const rigidTreMean = $derived(rigidTre?.mean ?? NaN);
+
+	const fieldTreLookup = $derived.by(() => {
+		const map = new Map<string, number>();
+		for (const f of fieldFits) {
+			map.set(`${f.mode}:${f.estimator}`, f.treMeanPx);
+		}
+		return map;
+	});
+
+	const hasResidualFit = $derived(
+		fieldFits.some((f) => f.mode === 'residual_after_rigid')
+	);
+	const hasDirectFit = $derived(fieldFits.some((f) => f.mode === 'direct'));
+
+	const overlayModePill = $derived.by((): OverlayModePill => {
+		if (activeFieldEntry?.mode === 'direct') return 'direct';
+		if (activeFieldEntry?.mode === 'residual_after_rigid') return 'residual_after_rigid';
+		return 'rigid';
+	});
+
 	const overlayW = $derived(
-		fieldFit?.width ?? matchPts?.width ?? run?.stats.width ?? 512
+		activeFieldFit?.width ?? matchPts?.width ?? run?.stats.width ?? 512
 	);
 	const overlayH = $derived(
-		fieldFit?.height ?? matchPts?.height ?? run?.stats.height ?? 344
+		activeFieldFit?.height ?? matchPts?.height ?? run?.stats.height ?? 344
 	);
+
+	const overlayMovingLabel = $derived(
+		activeFieldEntry
+			? `${activeFieldEntry.label} · ${activeFieldEntry.estimator}`
+			: 'rigid'
+	);
+
+	function upsertFieldFit(fit: FieldFitResult) {
+		const mode: FieldFitMode =
+			fit.mode === 'direct' ? 'direct' : 'residual_after_rigid';
+		const estimator = fit.field_estimator;
+		const id = fieldEntryId(mode, estimator);
+		const entry: FieldFitEntry = {
+			id,
+			mode,
+			estimator,
+			label: fieldModeLabel(mode),
+			fit,
+			treMeanPx: treFromFieldFit(fit)
+		};
+		const idx = fieldFits.findIndex((f) => f.id === id);
+		if (idx >= 0) {
+			fieldFits = fieldFits.map((f, i) => (i === idx ? entry : f));
+		} else {
+			fieldFits = [...fieldFits, entry];
+		}
+		return entry;
+	}
+
+	function clearFieldFits() {
+		fieldFits = [];
+		overlayMoving = 'rigid';
+	}
+
+	function pickFieldEntry(mode: FieldFitMode): FieldFitEntry | null {
+		const preferred = fieldFits.find(
+			(f) => f.mode === mode && f.estimator === fieldEstimator
+		);
+		if (preferred) return preferred;
+		const ofMode = fieldFits.filter((f) => f.mode === mode);
+		return ofMode.length ? ofMode[ofMode.length - 1]! : null;
+	}
+
+	function selectOverlayMode(mode: OverlayModePill) {
+		if (mode === 'rigid') {
+			overlayMoving = 'rigid';
+			return;
+		}
+		const entry = pickFieldEntry(mode);
+		if (entry) overlayMoving = entry.id as OverlayMoving;
+	}
+
+	function selectFieldOverlay(mode: FieldFitMode, estimator: FieldEstimator) {
+		const entry = fieldFits.find((f) => f.mode === mode && f.estimator === estimator);
+		if (entry) overlayMoving = entry.id as OverlayMoving;
+	}
+
+	function fieldTre(mode: FieldFitMode, estimator: FieldEstimator): number {
+		return fieldTreLookup.get(`${mode}:${estimator}`) ?? NaN;
+	}
 
 	function toggleOverlayEmphasis(side: 'he' | 'ihc') {
 		overlayEmphasis = overlayEmphasis === side ? null : side;
@@ -179,6 +334,12 @@
 		previewLevel = loaded.preview_level;
 		hyperparams = loaded.hyperparams;
 		inlierPx = loaded.hyperparams.rigid_inlier_px;
+		fieldFits = [];
+		overlayMoving = 'rigid';
+		matchPts = null;
+		saved = null;
+		run = null;
+		savedMatches = null;
 		let stale = false;
 		getRigid(pair).then((s) => {
 			if (stale) return;
@@ -273,7 +434,7 @@
 		if (!run) return;
 		reclassBusy = true;
 		status = null;
-		fieldFit = null;
+		clearFieldFits();
 		try {
 			const res = await reclassifyRigidInliers(pairId, inlierPx);
 			if (res.run) run = res.run;
@@ -317,7 +478,7 @@
 		errorMsg = null;
 		status = null;
 		showMatches = false;
-		fieldFit = null;
+		clearFieldFits();
 		try {
 			await startRigidRun(pairId, previewLevel, preRotation, hyperparams);
 			await pollUntilDone();
@@ -363,6 +524,10 @@
 	}
 
 	async function onFieldFit() {
+		if (fieldMode === 'residual_after_rigid' && !canResidualField) {
+			status = { msg: 'Residual field needs a rigid matrix — run SP/LG first.', kind: 'err' };
+			return;
+		}
 		fieldBusy = true;
 		status = null;
 		try {
@@ -370,13 +535,16 @@
 				field_estimator: fieldEstimator,
 				wendland_epsilon: fieldEstimator === 'wendland' ? wendlandEps : undefined,
 				bspline_grid: fieldEstimator === 'bspline' ? bsplineGrid : undefined,
-				bspline_reg: fieldEstimator === 'bspline' ? bsplineReg : undefined
+				bspline_reg: fieldEstimator === 'bspline' ? bsplineReg : undefined,
+				mode: fieldMode
 			});
-			fieldFit = res;
-			overlayMoving = 'field';
+			const entry = upsertFieldFit(res);
+			overlayMoving = entry.id as OverlayMoving;
 			bust = Date.now();
+			const tre =
+				Number.isFinite(entry.treMeanPx) ? `${entry.treMeanPx.toFixed(2)} px` : '—';
 			status = {
-				msg: `Field ${res.field_estimator} · ${res.n_anchors} anchors · rmse ${res.rmse_norm.toExponential(3)} (norm)`,
+				msg: `${entry.label}/${entry.estimator} · TRE ${tre} · ${res.n_anchors} anchors`,
 				kind: 'ok'
 			};
 		} catch (e) {
@@ -561,11 +729,83 @@
 		</section>
 
 		<section class="card">
-			<h2>Overlay</h2>
+			<div class="overlay-head">
+				<h2>Overlay</h2>
+				<table class="tre-table" title="Mean TRE on rigid inliers (preview px)">
+					<thead>
+						<tr>
+							<th></th>
+							<th>Rigid</th>
+							{#each FIELD_ESTIMATORS as est}
+								<th>{est}</th>
+							{/each}
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<th>Rigid</th>
+							<td>
+								{#if Number.isFinite(rigidTreMean)}
+									<button
+										type="button"
+										class="tre-cell"
+										class:active={overlayMoving === 'rigid'}
+										onclick={() => selectOverlayMode('rigid')}
+									>{fmtTre(rigidTreMean)}</button>
+								{:else}
+									<span class="tre-nan">NaN</span>
+								{/if}
+							</td>
+							{#each FIELD_ESTIMATORS as _}
+								<td class="tre-empty">—</td>
+							{/each}
+						</tr>
+						<tr>
+							<th>Field(+rigid)</th>
+							<td class="tre-empty">—</td>
+							{#each FIELD_ESTIMATORS as est}
+								{@const v = fieldTre('residual_after_rigid', est)}
+								<td>
+									{#if Number.isFinite(v)}
+										<button
+											type="button"
+											class="tre-cell"
+											class:active={overlayMoving === fieldEntryId('residual_after_rigid', est)}
+											onclick={() => selectFieldOverlay('residual_after_rigid', est)}
+										>{fmtTre(v)}</button>
+									{:else}
+										<span class="tre-nan">NaN</span>
+									{/if}
+								</td>
+							{/each}
+						</tr>
+						<tr>
+							<th>Field(direct)</th>
+							<td class="tre-empty">—</td>
+							{#each FIELD_ESTIMATORS as est}
+								{@const v = fieldTre('direct', est)}
+								<td>
+									{#if Number.isFinite(v)}
+										<button
+											type="button"
+											class="tre-cell"
+											class:active={overlayMoving === fieldEntryId('direct', est)}
+											onclick={() => selectFieldOverlay('direct', est)}
+										>{fmtTre(v)}</button>
+									{:else}
+										<span class="tre-nan">NaN</span>
+									{/if}
+								</td>
+							{/each}
+						</tr>
+					</tbody>
+				</table>
+			</div>
 			<p class="hint">
-				HE + IHC after {overlayMoving === 'field' ? 'rigid+field' : 'rigid'} ·
-				correspondences are post-rigid (blue HE, orange mapped IHC
-				{overlayMoving === 'field' ? ' + field' : ''}) · Shift+Q/W
+				HE + IHC after {overlayMovingLabel} · blue HE / orange mapped IHC · Shift+Q/W
+				{#if rigidTre}
+					· n={rigidTre.n} inliers
+				{/if}
 			</p>
 			<div class="overlay-controls">
 				<span class="emph-pills">
@@ -588,16 +828,23 @@
 					<button
 						type="button"
 						class="emph-pill"
-						class:active={overlayMoving === 'rigid'}
-						onclick={() => (overlayMoving = 'rigid')}
+						class:active={overlayModePill === 'rigid'}
+						onclick={() => selectOverlayMode('rigid')}
 					>Rigid</button>
 					<button
 						type="button"
 						class="emph-pill"
-						class:active={overlayMoving === 'field'}
-						disabled={!fieldFit}
-						onclick={() => (overlayMoving = 'field')}
-					>Field</button>
+						class:active={overlayModePill === 'residual_after_rigid'}
+						disabled={!hasResidualFit}
+						onclick={() => selectOverlayMode('residual_after_rigid')}
+					>Field(+rigid)</button>
+					<button
+						type="button"
+						class="emph-pill"
+						class:active={overlayModePill === 'direct'}
+						disabled={!hasDirectFit}
+						onclick={() => selectOverlayMode('direct')}
+					>Field(direct)</button>
 				</span>
 				<label class="chk">
 					<input type="checkbox" bind:checked={showOverlayCorr} />
@@ -649,9 +896,27 @@
 		<section class="card">
 			<h2>Field from matches</h2>
 			<p class="hint">
-				Residual after rigid on inlier matches → warp ihc_rigid (not persisted — always refit).
+				Compare residual (after rigid → warp ihc_rigid) vs direct (full he−ihc → warp prerot IHC). Not persisted.
 				{savedMatches ? ` · ${savedMatches.n_inliers} saved inliers` : run ? ` · ${run.n_inliers} run inliers` : ''}
 			</p>
+			<div class="overlay-controls" style="margin-bottom: 10px">
+				<span class="emph-pills">
+					<button
+						type="button"
+						class="emph-pill"
+						class:active={fieldMode === 'residual_after_rigid'}
+						disabled={fieldBusy || !canResidualField}
+						onclick={() => (fieldMode = 'residual_after_rigid')}
+					>After rigid</button>
+					<button
+						type="button"
+						class="emph-pill"
+						class:active={fieldMode === 'direct'}
+						disabled={fieldBusy}
+						onclick={() => (fieldMode = 'direct')}
+					>Direct</button>
+				</span>
+			</div>
 			<div class="hp-grid">
 				<label>
 					<span>Model</span>
@@ -680,14 +945,19 @@
 			</div>
 			<div class="actions" style="margin-top: 12px">
 				<button class="btn primary" disabled={fieldBusy || running} onclick={onFieldFit}>
-					{fieldBusy ? 'Fitting…' : 'Fit field'}
+					{fieldBusy ? 'Fitting…' : fieldMode === 'direct' ? 'Fit direct field' : 'Fit residual field'}
 				</button>
-				{#if fieldFit}
-					<span class="status">
-						{fieldFit.field_estimator} · n={fieldFit.n_anchors} · rmse={fieldFit.rmse_norm.toExponential(3)}
-					</span>
-				{/if}
 			</div>
+			{#if fieldFits.length}
+				<div class="field-stats">
+					{#each fieldFits as f (f.id)}
+						<span class="status">
+							{f.label}/{f.estimator} · TRE {Number.isFinite(f.treMeanPx) ? `${f.treMeanPx.toFixed(2)} px` : '—'}
+							· n={f.fit.n_anchors}
+						</span>
+					{/each}
+				</div>
+			{/if}
 		</section>
 	{/if}
 </div>
@@ -916,9 +1186,76 @@
 		gap: 14px;
 		margin-bottom: 12px;
 	}
+	.field-stats {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin-top: 10px;
+	}
+	.overlay-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+		flex-wrap: wrap;
+		margin-bottom: 4px;
+	}
+	.overlay-head h2 {
+		margin: 0;
+	}
+	.tre-table {
+		border-collapse: collapse;
+		font-size: 0.7rem;
+		color: #9ca3af;
+	}
+	.tre-table th,
+	.tre-table td {
+		padding: 3px 7px;
+		border: 1px solid #2a2d3a;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.tre-table thead th {
+		color: #6b7280;
+		font-weight: 600;
+		text-align: center;
+	}
+	.tre-table tbody th {
+		text-align: left;
+		color: #d1d5db;
+		font-weight: 600;
+	}
+	.tre-empty {
+		color: #374151;
+		text-align: center;
+	}
+	.tre-nan {
+		color: #4b5563;
+	}
+	.tre-cell {
+		all: unset;
+		cursor: pointer;
+		color: #e5e7eb;
+		padding: 1px 4px;
+		border-radius: 3px;
+		border: 1px solid transparent;
+	}
+	.tre-cell:hover {
+		color: #93c5fd;
+	}
+	.tre-cell.active {
+		border-color: #3b82f6;
+		background: #1e3a5f;
+		color: #dbeafe;
+	}
 	.emph-pills {
 		display: inline-flex;
 		gap: 4px;
+	}
+	.emph-pill:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 	.emph-pill {
 		font-size: 0.72rem;

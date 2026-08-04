@@ -283,9 +283,11 @@
 
 	$effect(() => {
 		autoDispRefreshKey; // re-fetch after an alignment run
+		regConfig.lam;
 		const pair = data.pairId, depth = data.depth;
+		const cfg = regConfig;
 		let stale = false;
-		getCandidates(pair, depth).then((d) => {
+		getCandidates(pair, depth, cfg).then((d) => {
 			if (stale) return;
 			const m = new Map<string, C2fCandidate>();
 			if (d.cached && Array.isArray(d.candidates)) {

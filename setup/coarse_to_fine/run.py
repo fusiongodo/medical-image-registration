@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -45,8 +46,13 @@ from setup.coarse_to_fine.field import (
     fit_gated,
     write_field_json,
 )
+from setup.coarse_to_fine.reg_branches import (
+    DEFAULT_LAM,
+    LAMS,
+    cache_path,
+    normalize_lam,
+)
 
-CACHE_DIR = conf.PROJECT_ROOT / "data" / "c2f_cache"
 DEFAULT_LEVELS = [0, 1, 2, 3, 4, 5]
 DEFAULT_TAU = 0.01
 
@@ -62,40 +68,127 @@ def _level_records(
     coarse: Field,
     with_metrics: bool = False,
     on_progress=None,
+    lam: str | None = None,
 ) -> list[dict]:
     """
-    Residual FFT for every tissue tile at `level`. IHC is recropped from the raw
-    WSI at the coarse field prediction (full intersection) before the FFT, and
+    Residual LAM for every tissue tile at `level`. IHC is recropped from the raw
+    WSI at the coarse field prediction (full intersection) before the LAM, and
     the residual is composed back onto that prediction (total = coarse + residual).
-    Records are `{tile_loc, u, v, psr[, delta_px, by_patch]}` (metrics only when
-    `with_metrics`). `on_progress(done, total)` is called after each tile.
+
+    FFT → align.register_arrays. superpoint_glue → mean inlier match displacement.
+    Records are `{tile_loc, u, v, psr[, delta_px, by_patch, matches]}`.
     """
+    lam = normalize_lam(lam)
     tiles = _tissue_tiles(pair_id, level)
     total = len(tiles)
     records: list[dict] = []
+
+    sp_ctx = None
+    load_models_s = 0.0
+    timing_sum = {"sp_he_s": 0.0, "sp_ihc_s": 0.0, "sp_s": 0.0, "lg_s": 0.0, "crop_s": 0.0}
+    if lam == "superpoint_glue":
+        from setup.coarse_to_fine import lam_sp_lg
+
+        print("stage=load_models", flush=True)
+        t_load = time.perf_counter()
+        extractor, matcher, device, hp = lam_sp_lg.build_models()
+        load_models_s = time.perf_counter() - t_load
+        print(f"stage=models_ready device={device} load_s={load_models_s:.3f}", flush=True)
+        sp_ctx = (extractor, matcher, device, hp)
+
     for done, tile_loc in enumerate(tiles, start=1):
         x, y = (int(p) for p in tile_loc.split("_"))
         cdx, cdy = coarse.predict_tile_px_at(level, tile_loc)
+        t_crop = time.perf_counter()
         he = crop_core.crop_gray(pair_id, level, x, y, "he")
         ihc_base = crop_core.crop_gray(pair_id, level, x, y, "ihc", dx=cdx, dy=cdy)
-        res = align.register_arrays(he, ihc_base)
-        u, v = cdx + res["dx"], cdy + res["dy"]
-        # delta_px is cheap; the expensive LNCC by_patch is gated behind with_metrics.
-        record = {"tile_loc": tile_loc, "u": u, "v": v, "psr": res["psr"], "delta_px": (u ** 2 + v ** 2) ** 0.5}
+        crop_s = time.perf_counter() - t_crop
+
+        if lam == "superpoint_glue":
+            assert sp_ctx is not None
+            extractor, matcher, device, hp = sp_ctx
+
+            def _stage(name: str, _tile=tile_loc, _i=done, _total=total) -> None:
+                print(
+                    f"stage={name} tile={_tile} i={_i} total={_total}",
+                    flush=True,
+                )
+
+            res = lam_sp_lg.match_tile_residual(
+                he,
+                ihc_base,
+                extractor,
+                matcher,
+                device,
+                hp,
+                resize=None,
+                on_stage=_stage,
+            )
+            u, v = cdx + res["dx"], cdy + res["dy"]
+            t = res.get("timing") or {}
+            for k in ("sp_he_s", "sp_ihc_s", "sp_s", "lg_s"):
+                timing_sum[k] += float(t.get(k, 0.0))
+            timing_sum["crop_s"] += crop_s
+            record = {
+                "tile_loc": tile_loc,
+                "u": u,
+                "v": v,
+                "psr": res["psr"],
+                "delta_px": (u ** 2 + v ** 2) ** 0.5,
+                "n_matches": res["n_matches"],
+                "n_inliers": res["n_inliers"],
+                "matches": res["matches"],
+            }
+        else:
+            res = align.register_arrays(he, ihc_base)
+            u, v = cdx + res["dx"], cdy + res["dy"]
+            record = {
+                "tile_loc": tile_loc,
+                "u": u,
+                "v": v,
+                "psr": res["psr"],
+                "delta_px": (u ** 2 + v ** 2) ** 0.5,
+            }
+
         if with_metrics:
             ihc_auto = crop_core.crop_gray(pair_id, level, x, y, "ihc", dx=u, dy=v)
             record.update(tile_metrics.tile_metrics(he, ihc_base, ihc_auto, u, v))
         records.append(record)
         if on_progress is not None:
             on_progress(done, total)
+
+    if lam == "superpoint_glue" and total > 0:
+        sp = timing_sum["sp_s"]
+        lg = timing_sum["lg_s"]
+        crop = timing_sum["crop_s"]
+        infer = sp + lg
+        n = total
+        print(
+            f"timing level={level} tiles={n} "
+            f"load_models={load_models_s:.3f}s "
+            f"crop={crop:.3f}s "
+            f"superpoint={sp:.3f}s (he={timing_sum['sp_he_s']:.3f}s ihc={timing_sum['sp_ihc_s']:.3f}s) "
+            f"lightglue={lg:.3f}s "
+            f"infer={infer:.3f}s "
+            f"per_tile_sp={sp / n:.3f}s per_tile_lg={lg / n:.3f}s",
+            flush=True,
+        )
     return records
 
 
-def _level_candidates(pair_id: int, level: int, coarse: Field, on_progress=None) -> list[Candidate]:
+def _level_candidates(
+    pair_id: int,
+    level: int,
+    coarse: Field,
+    on_progress=None,
+    lam: str | None = None,
+) -> list[Candidate]:
     """Candidate objects for fitting/replay (no metrics)."""
     return [
         candidate_from_dict(level, r)
-        for r in _level_records(pair_id, level, coarse, with_metrics=False, on_progress=on_progress)
+        for r in _level_records(
+            pair_id, level, coarse, with_metrics=False, on_progress=on_progress, lam=lam
+        )
     ]
 
 
@@ -107,7 +200,7 @@ def _fit_level(
     tau: float,
     masked: "set[str] | None" = None,
 ) -> tuple[Field, list[Candidate]]:
-    """Fit the field at one level: honour human anchors <= level, tau-gate FFT soft points.
+    """Fit the field at one level: honour human anchors <= level, tau-gate soft points.
 
     Tiles explicitly marked as `exclude`, or masked out (propagated by index),
     are removed from the candidate set so they do not influence the fit.
@@ -124,18 +217,40 @@ def _fit_level(
     return fit_gated(human_anchors, kept_candidates, tau)
 
 
-def _coarse_field(pair_id: int, target_depth: int, levels: list[int], tau: float) -> Field:
+def _load_level_cache(
+    pair_id: int, level: int, lam: str | None = None
+) -> list[Candidate] | None:
+    path = cache_path(pair_id, level, lam)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+        return [candidate_from_dict(level, d) for d in payload.get("candidates", [])]
+    except Exception:
+        return None
+
+
+def _coarse_field(
+    pair_id: int,
+    target_depth: int,
+    levels: list[int],
+    tau: float,
+    lam: str | None = None,
+) -> Field:
     """Coarse field going into `target_depth`: replay all c2f levels below it
     (reproducing the saved previous-level field).
 
-    A global deskew, when present, is baked into the moving crops upstream
-    (crop_core), so it needs no handling here.
+    Uses branch caches when present; otherwise recomputes the LAM. A global
+    deskew, when present, is baked into the moving crops upstream (crop_core).
     """
+    lam = normalize_lam(lam)
     entries = annotations.load(pair_id)
     mask_entries = masks.load(pair_id)
     field = fit_field(annotations.to_anchors(entries, up_to_level=min(levels) - 1))
     for level in [lv for lv in levels if lv < target_depth]:
-        cands = _level_candidates(pair_id, level, field)
+        cands = _load_level_cache(pair_id, level, lam=lam)
+        if cands is None:
+            cands = _level_candidates(pair_id, level, field, lam=lam)
         if cands:
             masked = masks.masked_at(mask_entries, level, [c.tile_loc for c in cands])
             field, _ = _fit_level(field, cands, entries, level, tau, masked=masked)
@@ -149,6 +264,7 @@ def compute_candidates(
     tau: float,
     with_metrics: bool = False,
     on_progress=None,
+    lam: str | None = None,
 ) -> tuple[list[dict], Field]:
     """
     Build the coarse field by replaying all c2f levels below `target_depth`
@@ -157,56 +273,87 @@ def compute_candidates(
     `with_metrics` (see augment_metrics for the on-demand pass).
     `on_progress(done, total)` reports progress over the target level's tiles.
     """
-    field = _coarse_field(pair_id, target_depth, levels, tau)
+    field = _coarse_field(pair_id, target_depth, levels, tau, lam=lam)
     records = _level_records(
-        pair_id, target_depth, field, with_metrics=with_metrics, on_progress=on_progress
+        pair_id,
+        target_depth,
+        field,
+        with_metrics=with_metrics,
+        on_progress=on_progress,
+        lam=lam,
     )
     return records, field
 
 
-def cache_candidates(pair_id: int, target_depth: int, levels: list[int], tau: float) -> Path:
-    """Compute FFT-only candidate records for one pair+depth and cache them.
+def cache_candidates(
+    pair_id: int,
+    target_depth: int,
+    levels: list[int],
+    tau: float,
+    lam: str | None = None,
+) -> Path:
+    """Compute candidate records for one pair+depth and cache them under the LAM path."""
+    lam = normalize_lam(lam)
+    print(
+        f"stage=start pair={pair_id} depth={target_depth} lam={lam}",
+        flush=True,
+    )
 
-    LNCC by_patch metrics are intentionally excluded here (they dominate the
-    runtime); use augment_metrics to add them on demand.
-    """
     def _progress(done: int, total: int) -> None:
         print(f"done={done} total={total}", flush=True)
 
     records, _ = compute_candidates(
-        pair_id, target_depth, levels, tau, with_metrics=False, on_progress=_progress
+        pair_id,
+        target_depth,
+        levels,
+        tau,
+        with_metrics=False,
+        on_progress=_progress,
+        lam=lam,
     )
     payload = {
         "pair_id": pair_id,
         "identity": pair_fingerprint(pair_id),
         "depth": target_depth,
         "levels": levels,
+        "lam": lam,
         "candidates": records,
     }
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = CACHE_DIR / f"{pair_id}_d{target_depth}.json"
+    out_path = cache_path(pair_id, target_depth, lam)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, separators=(",", ":")))
-    print(f"pair {pair_id}  depth {target_depth}: cached {len(records)} candidates -> {out_path.name}")
+    print(
+        f"pair {pair_id}  depth {target_depth}  lam {lam}: "
+        f"cached {len(records)} candidates -> {out_path.relative_to(conf.PROJECT_ROOT)}"
+    )
     return out_path
 
 
-def augment_metrics(pair_id: int, target_depth: int, levels: list[int], tau: float) -> Path:
+def augment_metrics(
+    pair_id: int,
+    target_depth: int,
+    levels: list[int],
+    tau: float,
+    lam: str | None = None,
+) -> Path:
     """Add LNCC by_patch metrics to an already-cached candidate set.
 
-    Reuses each candidate's cached FFT (u, v) instead of recomputing it, and
+    Reuses each candidate's cached (u, v) instead of recomputing it, and
     rebuilds the coarse field so the IHC base can be recropped at the prior
     prediction. Rewrites the cache file in place, preserving identity/levels.
     """
-    out_path = CACHE_DIR / f"{pair_id}_d{target_depth}.json"
+    lam = normalize_lam(lam)
+    out_path = cache_path(pair_id, target_depth, lam)
     if not out_path.exists():
         raise SystemExit(
-            f"no cached candidates for pair {pair_id} depth {target_depth}; compute candidates first"
+            f"no cached candidates for pair {pair_id} depth {target_depth} lam {lam}; "
+            "compute candidates first"
         )
     payload = json.loads(out_path.read_text())
     records = payload.get("candidates", [])
     total = len(records)
 
-    field = _coarse_field(pair_id, target_depth, levels, tau)
+    field = _coarse_field(pair_id, target_depth, levels, tau, lam=lam)
     for done, rec in enumerate(records, start=1):
         tile_loc = rec["tile_loc"]
         x, y = (int(p) for p in tile_loc.split("_"))
@@ -219,21 +366,30 @@ def augment_metrics(pair_id: int, target_depth: int, levels: list[int], tau: flo
         print(f"done={done} total={total}", flush=True)
 
     payload["candidates"] = records
+    payload["lam"] = lam
     out_path.write_text(json.dumps(payload, separators=(",", ":")))
-    print(f"pair {pair_id}  depth {target_depth}: LNCC metrics for {total} candidates -> {out_path.name}")
+    print(
+        f"pair {pair_id}  depth {target_depth}  lam {lam}: "
+        f"LNCC metrics for {total} candidates -> {out_path.name}"
+    )
     return out_path
 
 
-def process_pair(pair_id: int, levels: list[int], tau: float) -> Field | None:
-    entries = annotations.load(pair_id)  # human actions only (empty in Phase 1)
+def process_pair(
+    pair_id: int,
+    levels: list[int],
+    tau: float,
+    lam: str | None = None,
+) -> Field | None:
+    lam = normalize_lam(lam)
+    entries = annotations.load(pair_id)
 
-    # Coarse field going into the first level = human anchors below it, else identity.
     field = fit_field(annotations.to_anchors(entries, up_to_level=levels[0] - 1))
 
     total_kept = 0
     total_seen = 0
     for level in levels:
-        candidates = _level_candidates(pair_id, level, field)
+        candidates = _level_candidates(pair_id, level, field, lam=lam)
         if not candidates:
             print(f"pair {pair_id}  level {level}: no tissue tiles, skipping")
             continue
@@ -254,12 +410,13 @@ def process_pair(pair_id: int, levels: list[int], tau: float) -> Field | None:
     meta = {
         "levels": levels,
         "tau": tau,
+        "lam": lam,
         "n_human_anchors": len(entries),
         "n_kept": total_kept,
         "n_seen": total_seen,
     }
     out_path = write_field_json(pair_id, field, meta=meta)
-    print(f"pair {pair_id}: saved {out_path.name}  ({total_kept}/{total_seen} FFT tiles kept)")
+    print(f"pair {pair_id}: saved {out_path.name}  ({total_kept}/{total_seen} tiles kept)")
     return field
 
 
@@ -275,25 +432,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Coarse-to-fine registration orchestrator")
     parser.add_argument("pair_id", type=int, nargs="?", help="single pair id")
     parser.add_argument("--pairs", type=int, help="process next N pairs without a c2f field")
-    parser.add_argument("--cache-depth", type=int, help="compute+cache FFT candidates for one depth (UI)")
+    parser.add_argument("--cache-depth", type=int, help="compute+cache LAM candidates for one depth (UI)")
     parser.add_argument("--metrics-depth", type=int, help="add LNCC metrics to cached candidates for one depth (UI)")
+    parser.add_argument("--lam", default=DEFAULT_LAM, choices=LAMS)
     parser.add_argument("--levels", type=int, nargs="+", default=DEFAULT_LEVELS)
     parser.add_argument("--tau", type=float, default=DEFAULT_TAU)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
     levels = sorted(args.levels)
+    lam = normalize_lam(args.lam)
 
     if args.cache_depth is not None:
         if args.pair_id is None:
             parser.error("--cache-depth requires a pair_id")
-        cache_candidates(args.pair_id, args.cache_depth, levels, args.tau)
+        cache_candidates(args.pair_id, args.cache_depth, levels, args.tau, lam=lam)
         return
 
     if args.metrics_depth is not None:
         if args.pair_id is None:
             parser.error("--metrics-depth requires a pair_id")
-        augment_metrics(args.pair_id, args.metrics_depth, levels, args.tau)
+        augment_metrics(args.pair_id, args.metrics_depth, levels, args.tau, lam=lam)
         return
 
     if args.pairs is not None:
@@ -303,13 +462,13 @@ def main() -> None:
             print("Nothing to process — all pairs already have a c2f field (use --force to rerun).")
             return
         for pid in batch:
-            process_pair(pid, levels, args.tau)
+            process_pair(pid, levels, args.tau, lam=lam)
         return
 
     if args.pair_id is None:
         parser.error("provide a pair_id or --pairs N")
 
-    process_pair(args.pair_id, levels, args.tau)
+    process_pair(args.pair_id, levels, args.tau, lam=lam)
 
 
 if __name__ == "__main__":

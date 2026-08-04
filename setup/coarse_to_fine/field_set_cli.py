@@ -9,7 +9,8 @@ plain snapshot / restore copies of the global active-workspace files:
 
     data/registration_annotations.json      (this pair's slice only)
     data/smooth_c2f/{pair}_smooth_field.json
-    data/c2f_cache/{pair}_d{level}.json
+    data/c2f_cache/{pair}_d{level}.json              (FFT LAM)
+    data/c2f_cache/{lam}/{pair}_d{level}.json         (other LAMs)
 
 The registration tools (align.py / run.py / refit_cli.py / annotate_cli.py) are
 untouched: they keep reading the global active files.  This manager only copies
@@ -46,13 +47,14 @@ from setup.coarse_to_fine.reg_branches import (
     FIELD_ESTIMATORS,
     LAMS,
     branch_root,
+    cache_dir,
+    cache_paths,
     normalize_estimator,
     normalize_lam,
 )
 
 DATA_ROOT = conf.PROJECT_ROOT / "data"
 SMOOTH_DIR = DATA_ROOT / "smooth_c2f"
-CACHE_DIR = DATA_ROOT / "c2f_cache"
 MAX_DEPTH = conf.MAX_CROP_DEPTH
 
 _BRANCH_LAM = DEFAULT_LAM
@@ -130,7 +132,7 @@ def _field_path(pair_id: int) -> Path:
 
 
 def _cache_paths(pair_id: int) -> list[Path]:
-    return sorted(CACHE_DIR.glob(f"{pair_id}_d*.json"))
+    return cache_paths(pair_id, _BRANCH_LAM)
 
 
 def _field_meta(pair_id: int) -> dict:
@@ -294,9 +296,10 @@ def load_set(pair_id: int, set_id: str) -> dict:
         stale.unlink()
     cache_src = set_dir / "candidates"
     if cache_src.exists():
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        dst_dir = cache_dir(_BRANCH_LAM)
+        dst_dir.mkdir(parents=True, exist_ok=True)
         for src in sorted(cache_src.glob(f"{pair_id}_d*.json")):
-            shutil.copy2(src, CACHE_DIR / src.name)
+            shutil.copy2(src, dst_dir / src.name)
 
     _write_active(pair_id, set_id)
     return {"ok": True, "set": manifest}

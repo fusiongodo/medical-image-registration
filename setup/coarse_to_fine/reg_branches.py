@@ -16,6 +16,7 @@ DEFAULT_BSPLINE_REG = 1e-3
 
 DATA_ROOT = conf.PROJECT_ROOT / "data"
 CURATED_ROOT = DATA_ROOT / "curated_field_sets"
+CACHE_ROOT = DATA_ROOT / "c2f_cache"
 
 
 def normalize_lam(lam: str | None) -> str:
@@ -34,3 +35,29 @@ def normalize_estimator(field_estimator: str | None) -> str:
 
 def branch_root(lam: str | None = None, field_estimator: str | None = None) -> Path:
     return CURATED_ROOT / normalize_lam(lam) / normalize_estimator(field_estimator)
+
+
+def cache_dir(lam: str | None = None) -> Path:
+    """FFT stays at data/c2f_cache/; other LAMs use data/c2f_cache/{lam}/."""
+    v = normalize_lam(lam)
+    if v == "fft":
+        return CACHE_ROOT
+    return CACHE_ROOT / v
+
+
+def cache_path(pair_id: int, depth: int, lam: str | None = None) -> Path:
+    return cache_dir(lam) / f"{int(pair_id)}_d{int(depth)}.json"
+
+
+def cache_paths(pair_id: int, lam: str | None = None) -> list[Path]:
+    return sorted(cache_dir(lam).glob(f"{int(pair_id)}_d*.json"))
+
+
+def clear_lam_caches(pair_id: int) -> int:
+    """Delete candidate caches for every LAM for this pair (prealignment invalidation)."""
+    n = 0
+    for lam in LAMS:
+        for path in cache_paths(pair_id, lam):
+            path.unlink()
+            n += 1
+    return n

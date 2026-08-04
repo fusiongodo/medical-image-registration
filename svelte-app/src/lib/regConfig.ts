@@ -16,7 +16,7 @@ export const LAM_OPTIONS: { id: Lam; label: string; hint: string }[] = [
 	{
 		id: 'superpoint_glue',
 		label: 'SuperPoint + LightGlue',
-		hint: 'Matcher not implemented yet — field sets can still be created on this branch.'
+		hint: 'Per-tile matches → mean inlier translation residual (one vector per tile).'
 	}
 ];
 

@@ -27,16 +27,11 @@ sys.path.insert(0, str(REPO_ROOT))
 import conf
 
 from setup.coarse_to_fine import deskew
-
-CACHE_DIR = conf.PROJECT_ROOT / "data" / "c2f_cache"
+from setup.coarse_to_fine.reg_branches import clear_lam_caches
 
 
 def _clear_caches(pair_id: int) -> int:
-    n = 0
-    for path in CACHE_DIR.glob(f"{pair_id}_d*.json"):
-        path.unlink()
-        n += 1
-    return n
+    return clear_lam_caches(pair_id)
 
 
 def apply(pair_id: int, depth: int, points: list[dict]) -> dict:

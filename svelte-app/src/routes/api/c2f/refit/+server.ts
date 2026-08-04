@@ -5,8 +5,19 @@ import type { RequestHandler } from './$types';
 import { pairCount } from '$lib/server/pairs';
 
 const REPO_ROOT = resolve('..');
-const PYTHON    = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
-const SCRIPT    = resolve(REPO_ROOT, 'setup', 'coarse_to_fine', 'refit_cli.py');
+const PYTHON = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
+const SCRIPT = resolve(REPO_ROOT, 'setup', 'coarse_to_fine', 'refit_cli.py');
+
+const LAMS = new Set(['fft', 'superpoint_glue']);
+const ESTIMATORS = new Set(['tps', 'wendland', 'bspline']);
+
+function normalizeLam(raw: string | null): string {
+	return raw && LAMS.has(raw) ? raw : 'fft';
+}
+
+function normalizeEstimator(raw: string | null): string {
+	return raw && ESTIMATORS.has(raw) ? raw : 'tps';
+}
 
 function runRefit(args: string[]): Promise<unknown> {
 	return new Promise((resolveP, rejectP) => {
@@ -28,11 +39,12 @@ function runRefit(args: string[]): Promise<unknown> {
 }
 
 export const GET: RequestHandler = async ({ url }) => {
-	const pair  = url.searchParams.get('pair');
+	const pair = url.searchParams.get('pair');
 	const depth = url.searchParams.get('depth');
-	const tau   = url.searchParams.get('tau');
-	const keep  = url.searchParams.get('keep');
-	const fieldEstimator = url.searchParams.get('field_estimator') ?? 'tps';
+	const tau = url.searchParams.get('tau');
+	const keep = url.searchParams.get('keep');
+	const fieldEstimator = normalizeEstimator(url.searchParams.get('field_estimator'));
+	const lam = normalizeLam(url.searchParams.get('lam'));
 	if (!pair || !depth || (!tau && !keep)) error(400, 'Missing pair / depth / (tau or keep)');
 
 	const pairId = parseInt(pair, 10);
@@ -40,7 +52,15 @@ export const GET: RequestHandler = async ({ url }) => {
 		error(400, `Pair ${pair} does not exist (valid range 0..${pairCount() - 1})`);
 	}
 
-	const args = [pair, depth, tau ?? '0', '--field-estimator', fieldEstimator];
+	const args = [
+		pair,
+		depth,
+		tau ?? '0',
+		'--lam',
+		lam,
+		'--field-estimator',
+		fieldEstimator
+	];
 	if (keep) args.push('--keep', keep);
 
 	try {

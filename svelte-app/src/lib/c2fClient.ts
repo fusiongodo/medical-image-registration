@@ -44,6 +44,7 @@ export interface JobState {
 	total: number;
 	error: string | null;
 	finishedAt: number | null;
+	stage?: string | null;
 }
 
 export interface TileResult {
@@ -104,37 +105,64 @@ function gateQuery(gate: Gate): string {
 	return 'keep' in gate ? `keep=${gate.keep}` : `tau=${gate.tau}`;
 }
 
-export async function getCandidates(pair: number, depth: number): Promise<CandidatesResponse> {
-	const r = await fetch(`/api/c2f/candidates?pair=${pair}&depth=${depth}`);
+export async function getCandidates(
+	pair: number,
+	depth: number,
+	regConfig?: Partial<RegConfig>
+): Promise<CandidatesResponse> {
+	const c = cfg(regConfig);
+	const r = await fetch(`/api/c2f/candidates?pair=${pair}&depth=${depth}&lam=${c.lam}`);
 	return r.json();
 }
 
-export async function computeCandidates(pair: number, depth: number): Promise<{ state: JobState }> {
+export async function computeCandidates(
+	pair: number,
+	depth: number,
+	regConfig?: Partial<RegConfig>
+): Promise<{ state: JobState }> {
+	const c = cfg(regConfig);
 	const r = await fetch('/api/c2f/candidates', {
 		method: 'POST',
 		headers: JSON_HEADERS,
-		body: JSON.stringify({ pair_id: pair, depth })
+		body: JSON.stringify({ pair_id: pair, depth, lam: c.lam })
 	});
 	return r.json();
 }
 
-export async function getProgress(pair: number, depth: number): Promise<JobState> {
-	const r = await fetch(`/api/c2f/candidates/progress?pair=${pair}&depth=${depth}`);
+export async function getProgress(
+	pair: number,
+	depth: number,
+	regConfig?: Partial<RegConfig>
+): Promise<JobState> {
+	const c = cfg(regConfig);
+	const r = await fetch(
+		`/api/c2f/candidates/progress?pair=${pair}&depth=${depth}&lam=${c.lam}`
+	);
 	return r.json();
 }
 
 /** Add LNCC by_patch metrics to an already-cached candidate set (slow, opt-in). */
-export async function computeMetrics(pair: number, depth: number): Promise<{ state: JobState }> {
+export async function computeMetrics(
+	pair: number,
+	depth: number,
+	regConfig?: Partial<RegConfig>
+): Promise<{ state: JobState }> {
+	const c = cfg(regConfig);
 	const r = await fetch('/api/c2f/metrics', {
 		method: 'POST',
 		headers: JSON_HEADERS,
-		body: JSON.stringify({ pair_id: pair, depth })
+		body: JSON.stringify({ pair_id: pair, depth, lam: c.lam })
 	});
 	return r.json();
 }
 
-export async function getMetricsProgress(pair: number, depth: number): Promise<JobState> {
-	const r = await fetch(`/api/c2f/metrics/progress?pair=${pair}&depth=${depth}`);
+export async function getMetricsProgress(
+	pair: number,
+	depth: number,
+	regConfig?: Partial<RegConfig>
+): Promise<JobState> {
+	const c = cfg(regConfig);
+	const r = await fetch(`/api/c2f/metrics/progress?pair=${pair}&depth=${depth}&lam=${c.lam}`);
 	return r.json();
 }
 
@@ -147,7 +175,7 @@ export async function getRefit(
 ): Promise<{ ok: boolean; data?: RefitData; error?: string }> {
 	const c = cfg(regConfig);
 	const r = await fetch(
-		`/api/c2f/refit?pair=${pair}&depth=${depth}&${gateQuery(gate)}&field_estimator=${c.fieldEstimator}`
+		`/api/c2f/refit?pair=${pair}&depth=${depth}&${gateQuery(gate)}&lam=${c.lam}&field_estimator=${c.fieldEstimator}`
 	);
 	if (r.ok) return { ok: true, data: await r.json() };
 	return { ok: false, error: (await r.text().catch(() => '')) || `refit failed (${r.status})` };
@@ -162,8 +190,8 @@ export async function saveFieldRequest(
 	const c = cfg(regConfig);
 	const body =
 		'keep' in gate
-			? { pair_id: pair, depth, keep: gate.keep, field_estimator: c.fieldEstimator }
-			: { pair_id: pair, depth, tau: gate.tau, field_estimator: c.fieldEstimator };
+			? { pair_id: pair, depth, keep: gate.keep, lam: c.lam, field_estimator: c.fieldEstimator }
+			: { pair_id: pair, depth, tau: gate.tau, lam: c.lam, field_estimator: c.fieldEstimator };
 	const r = await fetch('/api/c2f/save-field', {
 		method: 'POST',
 		headers: JSON_HEADERS,
@@ -195,8 +223,8 @@ export async function resolveExcluded(
 	const c = cfg(regConfig);
 	const body =
 		'keep' in gate
-			? { pair_id: pair, depth, keep: gate.keep, field_estimator: c.fieldEstimator }
-			: { pair_id: pair, depth, tau: gate.tau, field_estimator: c.fieldEstimator };
+			? { pair_id: pair, depth, keep: gate.keep, lam: c.lam, field_estimator: c.fieldEstimator }
+			: { pair_id: pair, depth, tau: gate.tau, lam: c.lam, field_estimator: c.fieldEstimator };
 	const r = await fetch('/api/c2f/resolve', {
 		method: 'POST',
 		headers: JSON_HEADERS,
@@ -372,25 +400,32 @@ export interface RigidJobState extends JobState {
 	stage?: string | null;
 }
 
+export type FieldFitMode = 'residual_after_rigid' | 'direct';
+
 export interface FieldOverlayCorr {
 	he: [number, number];
 	rigid: [number, number];
+	source?: [number, number];
 	field: [number, number];
 	inlier: boolean;
 }
 
 export interface FieldFitResult {
 	pair_id: number;
-	mode?: string;
+	mode?: FieldFitMode | string;
 	field_estimator: string;
 	wendland_epsilon?: number | null;
 	bspline_grid?: number | null;
 	bspline_reg?: number | null;
 	n_anchors: number;
 	rmse_norm: number;
+	tre_mean_px?: number;
+	tre_rmse_px?: number;
+	tre_n?: number;
 	kind: string;
 	width?: number;
 	height?: number;
+	preview?: string;
 	overlay_corrs?: FieldOverlayCorr[];
 	ran_at: number;
 	error?: string;
@@ -447,6 +482,7 @@ export async function fitRigidField(
 		wendland_epsilon?: number;
 		bspline_grid?: number;
 		bspline_reg?: number;
+		mode?: FieldFitMode;
 	}
 ): Promise<FieldFitResult> {
 	const r = await fetch('/api/c2f/rigid/light_v1', {

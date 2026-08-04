@@ -89,11 +89,17 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 
 	if (action === 'field-fit') {
+		const mode =
+			body.mode === 'direct' || body.mode === 'residual_after_rigid'
+				? body.mode
+				: 'residual_after_rigid';
 		const args = [
 			'field-fit',
 			String(pair_id),
 			'--estimator',
-			typeof body.field_estimator === 'string' ? body.field_estimator : 'tps'
+			typeof body.field_estimator === 'string' ? body.field_estimator : 'tps',
+			'--mode',
+			mode
 		];
 		if (typeof body.wendland_epsilon === 'number') {
 			args.push('--wendland-eps', String(body.wendland_epsilon));

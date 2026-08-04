@@ -50,8 +50,8 @@ from setup.coarse_to_fine.field import (
     residuals,
     tau_for_keep,
 )
+from setup.coarse_to_fine.reg_branches import DEFAULT_LAM, LAMS, cache_path, normalize_lam
 
-CACHE_DIR = conf.PROJECT_ROOT / "data" / "c2f_cache"
 N_PEAKS = 5
 
 
@@ -78,6 +78,35 @@ def _best_in_tau_peak(
     return best
 
 
+def _best_in_tau_sp_lg(
+    pair_id: int,
+    depth: int,
+    tile_loc: str,
+    pred_dx: float,
+    pred_dy: float,
+    gate_field,
+    tau: float,
+    extractor,
+    matcher,
+    device,
+    hp: dict,
+) -> "tuple[float, float, float, float, list] | None":
+    from setup.coarse_to_fine import lam_sp_lg
+
+    x, y = (int(p) for p in tile_loc.split("_"))
+    he = crop_core.crop_gray(pair_id, depth, x, y, "he")
+    ihc = crop_core.crop_gray(pair_id, depth, x, y, "ihc", dx=pred_dx, dy=pred_dy)
+    res = lam_sp_lg.match_tile_residual(
+        he, ihc, extractor, matcher, device, hp, resize=None
+    )
+    u, v = pred_dx + res["dx"], pred_dy + res["dy"]
+    cand = Candidate(level=depth, tile_loc=tile_loc, u=u, v=v, psr=res["psr"])
+    residual = residuals([cand], gate_field)[0]
+    if residual > tau:
+        return None
+    return (u, v, res["psr"], residual, res["matches"])
+
+
 def resolve(
     pair_id: int,
     depth: int,
@@ -85,12 +114,14 @@ def resolve(
     keep: "float | None" = None,
     n_peaks: int = N_PEAKS,
     field_estimator: str | None = None,
+    lam: str | None = None,
 ) -> dict:
-    cache_path = CACHE_DIR / f"{pair_id}_d{depth}.json"
-    if not cache_path.exists():
-        return {"error": f"no cached candidates for pair {pair_id} depth {depth}"}
+    lam = normalize_lam(lam)
+    path = cache_path(pair_id, depth, lam)
+    if not path.exists():
+        return {"error": f"no cached candidates for pair {pair_id} depth {depth} lam {lam}"}
 
-    payload = json.loads(cache_path.read_text())
+    payload = json.loads(path.read_text())
     raw_by_loc = {d["tile_loc"]: d for d in payload.get("candidates", [])}
     candidates = [candidate_from_dict(depth, d) for d in payload.get("candidates", [])]
 
@@ -115,6 +146,12 @@ def resolve(
     )
     devs = residuals(candidates, gate_field)
 
+    sp_ctx = None
+    if lam == "superpoint_glue":
+        from setup.coarse_to_fine import lam_sp_lg
+
+        sp_ctx = lam_sp_lg.build_models()
+
     tiles_out: list[dict] = []
     resolved = 0
     approved = 0
@@ -127,21 +164,43 @@ def resolve(
             continue
 
         pred_dx, pred_dy = gate_field.predict_tile_px_at(depth, cand.tile_loc)
-        best = _best_in_tau_peak(
-            pair_id, depth, cand.tile_loc, pred_dx, pred_dy, gate_field, tau, n_peaks
-        )
+        best = None
+        matches = None
+        if lam == "superpoint_glue":
+            assert sp_ctx is not None
+            extractor, matcher, device, hp = sp_ctx
+            hit = _best_in_tau_sp_lg(
+                pair_id,
+                depth,
+                cand.tile_loc,
+                pred_dx,
+                pred_dy,
+                gate_field,
+                tau,
+                extractor,
+                matcher,
+                device,
+                hp,
+            )
+            if hit is not None:
+                u, v, psr, res, matches = hit
+                best = (u, v, psr, res)
+        else:
+            best = _best_in_tau_peak(
+                pair_id, depth, cand.tile_loc, pred_dx, pred_dy, gate_field, tau, n_peaks
+            )
+
         if best is not None:
             u, v, psr, res = best
             raw = raw_by_loc[cand.tile_loc]
             raw["u"], raw["v"], raw["psr"] = u, v, psr
             raw["delta_px"] = float((u ** 2 + v ** 2) ** 0.5)
             raw.pop("by_patch", None)
+            if matches is not None:
+                raw["matches"] = matches
+                raw["n_matches"] = len(matches)
+                raw["n_inliers"] = sum(1 for m in matches if m.get("inlier"))
             resolved += 1
-            # Pin auto-rejected reds as approve anchors so they stay green in both
-            # gate modes (under exclude-% the kept fraction is fixed, so a rewritten
-            # candidate alone would only swap which tile is red). Manually excluded
-            # tiles keep their vote; their candidate is still rewritten so clearing
-            # the exclude vote later folds in the field-consistent peak.
             if ann is None:
                 new_entries.append(annotations.make_entry(
                     depth, cand.tile_loc, u, v, "approve", "resolve", psr_to_conf(psr)
@@ -154,7 +213,7 @@ def resolve(
                               "residual": dev})
 
     if resolved:
-        cache_path.write_text(json.dumps(payload, separators=(",", ":")))
+        path.write_text(json.dumps(payload, separators=(",", ":")))
     if new_entries:
         annotations.save(pair_id, entries + new_entries)
 
@@ -162,6 +221,7 @@ def resolve(
         "ok": True,
         "tau": tau,
         "keep": keep,
+        "lam": lam,
         "tried": len(tiles_out),
         "resolved": resolved,
         "approved": approved,
@@ -190,15 +250,30 @@ def main() -> None:
         field_estimator = argv[i + 1]
         argv = argv[:i] + argv[i + 2:]
 
+    lam: str | None = DEFAULT_LAM
+    if "--lam" in argv:
+        i = argv.index("--lam")
+        lam = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
+
     if len(argv) < 3:
         sys.exit(
             "Usage: resolve_cli.py <pair_id> <depth> <tau> "
-            "[--keep <fraction>] [--n <peaks>] [--field-estimator tps|wendland|bspline]"
+            f"[--keep <fraction>] [--n <peaks>] [--lam {'|'.join(LAMS)}] "
+            "[--field-estimator tps|wendland|bspline]"
         )
     pair_id, depth, tau = int(argv[0]), int(argv[1]), float(argv[2])
     print(
         json.dumps(
-            resolve(pair_id, depth, tau, keep, n_peaks, field_estimator=field_estimator),
+            resolve(
+                pair_id,
+                depth,
+                tau,
+                keep,
+                n_peaks,
+                field_estimator=field_estimator,
+                lam=lam,
+            ),
             separators=(",", ":"),
         )
     )

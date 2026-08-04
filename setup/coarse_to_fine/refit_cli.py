@@ -38,13 +38,14 @@ from setup.coarse_to_fine.field import (
     tau_for_keep,
     write_field_json,
 )
+from setup.coarse_to_fine.reg_branches import DEFAULT_LAM, LAMS, cache_path, normalize_lam
 from setup.coarse_to_fine.run import _level_candidates
 
-CACHE_DIR = conf.PROJECT_ROOT / "data" / "c2f_cache"
 
-
-def _load_level_cache(pair_id: int, level: int) -> list[Candidate] | None:
-    path = CACHE_DIR / f"{pair_id}_d{level}.json"
+def _load_level_cache(
+    pair_id: int, level: int, lam: str | None = None
+) -> list[Candidate] | None:
+    path = cache_path(pair_id, level, lam)
     if not path.exists():
         return None
     try:
@@ -61,6 +62,7 @@ def _compute_prior_field(
     levels: list[int],
     mask_entries: list[dict],
     field_estimator: str | None = None,
+    lam: str | None = None,
 ) -> Field:
     """
     Replay all coarser levels (< depth) to obtain the prior field that was used
@@ -71,6 +73,7 @@ def _compute_prior_field(
     matches the saved field. A global deskew, when present, is baked into the
     moving crops upstream (crop_core), so it needs no handling here.
     """
+    lam = normalize_lam(lam)
     entries = annotations.load(pair_id)
     min_level = min(levels)
     field = fit_field(
@@ -79,9 +82,9 @@ def _compute_prior_field(
     )
 
     for level in sorted(lv for lv in levels if lv < depth):
-        cands = _load_level_cache(pair_id, level)
+        cands = _load_level_cache(pair_id, level, lam=lam)
         if cands is None:
-            cands = _level_candidates(pair_id, level, field)
+            cands = _level_candidates(pair_id, level, field, lam=lam)
         if not cands:
             continue
         masked = masks.masked_at(mask_entries, level, [c.tile_loc for c in cands])
@@ -99,12 +102,14 @@ def refit(
     save: bool,
     keep: float | None = None,
     field_estimator: str | None = None,
+    lam: str | None = None,
 ) -> dict:
-    cache_path = CACHE_DIR / f"{pair_id}_d{depth}.json"
-    if not cache_path.exists():
-        return {"error": f"no cached candidates for pair {pair_id} depth {depth}"}
+    lam = normalize_lam(lam)
+    path = cache_path(pair_id, depth, lam)
+    if not path.exists():
+        return {"error": f"no cached candidates for pair {pair_id} depth {depth} lam {lam}"}
 
-    payload = json.loads(cache_path.read_text())
+    payload = json.loads(path.read_text())
     levels = payload.get("levels", [0, 1, 2, 3, 4, 5])
     candidates = [candidate_from_dict(depth, d) for d in payload.get("candidates", [])]
 
@@ -145,7 +150,13 @@ def refit(
         tau = tau_for_keep(human_anchors, auto_candidates, keep, field_estimator=field_estimator)
 
     prior_field = _compute_prior_field(
-        pair_id, depth, tau, levels, mask_entries, field_estimator=field_estimator
+        pair_id,
+        depth,
+        tau,
+        levels,
+        mask_entries,
+        field_estimator=field_estimator,
+        lam=lam,
     )
 
     field, _ = fit_gated(human_anchors, fit_candidates, tau, field_estimator=field_estimator)
@@ -204,6 +215,7 @@ def refit(
             "tau": tau,
             "keep": keep,
             "saved_depth": depth,
+            "lam": lam,
             "n_kept": n_kept,
             "n_seen": len(tiles),
             "n_human": n_human,
@@ -213,6 +225,7 @@ def refit(
         result["saved"] = True
 
     result["field_estimator"] = field.estimator
+    result["lam"] = lam
     return result
 
 
@@ -233,15 +246,30 @@ def main() -> None:
         field_estimator = argv[i + 1]
         argv = argv[:i] + argv[i + 2:]
 
+    lam: str | None = DEFAULT_LAM
+    if "--lam" in argv:
+        i = argv.index("--lam")
+        lam = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
+
     if len(argv) < 3:
         sys.exit(
             "Usage: refit_cli.py <pair_id> <depth> <tau> "
-            "[--keep <fraction>] [--field-estimator tps|wendland|bspline] [--save]"
+            f"[--keep <fraction>] [--lam {'|'.join(LAMS)}] "
+            "[--field-estimator tps|wendland|bspline] [--save]"
         )
     pair_id, depth, tau = int(argv[0]), int(argv[1]), float(argv[2])
     print(
         json.dumps(
-            refit(pair_id, depth, tau, save, keep, field_estimator=field_estimator),
+            refit(
+                pair_id,
+                depth,
+                tau,
+                save,
+                keep,
+                field_estimator=field_estimator,
+                lam=lam,
+            ),
             separators=(",", ":"),
         )
     )

@@ -4,8 +4,19 @@ import { resolve } from 'path';
 import type { RequestHandler } from './$types';
 
 const REPO_ROOT = resolve('..');
-const PYTHON    = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
-const SCRIPT    = resolve(REPO_ROOT, 'setup', 'coarse_to_fine', 'resolve_cli.py');
+const PYTHON = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
+const SCRIPT = resolve(REPO_ROOT, 'setup', 'coarse_to_fine', 'resolve_cli.py');
+
+const LAMS = new Set(['fft', 'superpoint_glue']);
+const ESTIMATORS = new Set(['tps', 'wendland', 'bspline']);
+
+function normalizeLam(raw: unknown): string {
+	return typeof raw === 'string' && LAMS.has(raw) ? raw : 'fft';
+}
+
+function normalizeEstimator(raw: unknown): string {
+	return typeof raw === 'string' && ESTIMATORS.has(raw) ? raw : 'tps';
+}
 
 function runResolve(args: string[]): Promise<unknown> {
 	return new Promise((resolveP, rejectP) => {
@@ -35,23 +46,28 @@ export const POST: RequestHandler = async ({ request }) => {
 		typeof body.depth !== 'number' ||
 		(typeof body.tau !== 'number' && !hasKeep)
 	) {
-		error(400, 'Expected { pair_id: number, depth: number, tau?: number, keep?: number }');
+		error(400, 'Expected { pair_id: number, depth: number, tau?: number, keep?: number, lam? }');
 	}
 
-	const { pair_id, depth, tau, keep, field_estimator } = body as {
+	const { pair_id, depth, tau, keep } = body as {
 		pair_id: number;
 		depth: number;
 		tau?: number;
 		keep?: number;
 		field_estimator?: string;
+		lam?: string;
 	};
+	const field_estimator = normalizeEstimator(body.field_estimator);
+	const lam = normalizeLam(body.lam);
 
 	const args = [
 		String(pair_id),
 		String(depth),
 		String(tau ?? 0),
+		'--lam',
+		lam,
 		'--field-estimator',
-		field_estimator === 'wendland' ? 'wendland' : 'tps'
+		field_estimator
 	];
 	if (hasKeep) args.push('--keep', String(keep));
 

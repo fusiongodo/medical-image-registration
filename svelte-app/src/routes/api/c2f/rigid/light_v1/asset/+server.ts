@@ -18,13 +18,19 @@ const ALLOWED = new Set([
 	'field_fit.json'
 ]);
 
+const FIELD_ASSET = /^field_(preview|fit)_[a-z0-9_]+\.(png|json)$/;
+
+function isAllowedAsset(name: string): boolean {
+	return ALLOWED.has(name) || FIELD_ASSET.test(name);
+}
+
 export const GET: RequestHandler = ({ url }) => {
 	const pair = Number(url.searchParams.get('pair'));
 	const name = url.searchParams.get('name') ?? '';
 	if (!Number.isInteger(pair) || pair < 0 || pair >= pairCount()) {
 		error(400, 'Missing/invalid pair');
 	}
-	if (!ALLOWED.has(name)) error(400, `asset not allowed: ${name}`);
+	if (!isAllowedAsset(name)) error(400, `asset not allowed: ${name}`);
 
 	const path = join(REPO_ROOT, 'data', 'rigid', 'light_v1', String(pair), 'run', name);
 	if (!existsSync(path)) error(404, `missing ${name}`);

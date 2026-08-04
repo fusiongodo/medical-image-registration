@@ -21,18 +21,18 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "setup" / "live_crop"))
 import conf
 
+from setup.coarse_to_fine import lam_sp_lg
 from setup.coarse_to_fine.identity import pair_fingerprint
+from setup.coarse_to_fine.reg_branches import clear_lam_caches
 
 VERSION = "light_v1"
 RIGID_ROOT = conf.PROJECT_ROOT / "data" / "rigid" / VERSION
-CACHE_DIR = conf.PROJECT_ROOT / "data" / "c2f_cache"
 
 DEFAULT_HYPERPARAMS = {
     "sp_conf_thresh": 0.015,
@@ -43,6 +43,7 @@ DEFAULT_HYPERPARAMS = {
     "rigid_inlier_px": 3.0,
 }
 DEFAULT_PREVIEW_LEVEL = 2
+RIGID_EXTRACT_RESIZE = 1024
 
 
 def saved_path(pair_id: int) -> Path:
@@ -138,11 +139,7 @@ def _normalise_run_matches(result: dict, matches_raw: dict) -> dict:
 
 
 def clear_caches(pair_id: int) -> int:
-    n = 0
-    for path in CACHE_DIR.glob(f"{pair_id}_d*.json"):
-        path.unlink()
-        n += 1
-    return n
+    return clear_lam_caches(pair_id)
 
 
 def _progress(pair_id: int, stage: str, detail: str = "") -> None:
@@ -313,50 +310,18 @@ def run(
     ihc_prerot, pre_M = _rotate_gray(ihc, float(pre_rotation_deg))
     cv2.imwrite(str(rd / "ihc_prerot.png"), ihc_prerot)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    _progress(pair_id, "superpoint", "loading models")
+    extractor, matcher, device, _ = lam_sp_lg.build_models(hp)
     _progress(pair_id, "superpoint", f"device={device}")
-
-    from lightglue import LightGlue, SuperPoint
-    from lightglue.utils import numpy_image_to_torch, rbd
-
-    extractor = SuperPoint(
-        max_num_keypoints=int(hp["sp_max_keypoints"]),
-        detection_threshold=float(hp["sp_conf_thresh"]),
-        nms_radius=int(hp["sp_nms_dist"]),
-    ).eval().to(device)
-    matcher = LightGlue(
-        features="superpoint",
-        depth_confidence=float(hp["lg_depth_confidence"]),
-        width_confidence=float(hp["lg_width_confidence"]),
-    ).eval().to(device)
-
-    def _to_rgb_torch(gray: np.ndarray) -> torch.Tensor:
-        rgb = np.stack([gray, gray, gray], axis=-1)
-        return numpy_image_to_torch(rgb).to(device)
-
-    with torch.no_grad():
-        feats0 = extractor.extract(_to_rgb_torch(he))
-        feats1 = extractor.extract(_to_rgb_torch(ihc_prerot))
-        _progress(pair_id, "lightglue", "matching")
-        matches01 = matcher({"image0": feats0, "image1": feats1})
-
-    feats0, feats1, matches01 = [rbd(x) for x in (feats0, feats1, matches01)]
-    matches = matches01["matches"]
-    if matches is None or len(matches) == 0:
+    _progress(pair_id, "lightglue", "matching")
+    raw = lam_sp_lg.extract_and_match(
+        he, ihc_prerot, extractor, matcher, device, resize=RIGID_EXTRACT_RESIZE
+    )
+    he_pts = raw["he_pts"]
+    ihc_pts = raw["ihc_pts"]
+    match_scores = raw["scores"]
+    if len(he_pts) == 0:
         raise RuntimeError("LightGlue returned no matches")
-
-    k0 = feats0["keypoints"].detach().cpu().numpy()
-    k1 = feats1["keypoints"].detach().cpu().numpy()
-    scores = matches01.get("scores")
-    if scores is not None:
-        scores = scores.detach().cpu().numpy()
-    else:
-        scores = np.ones(len(matches), dtype=float)
-
-    m = matches.detach().cpu().numpy()
-    he_pts = k0[m[:, 0]]
-    ihc_pts = k1[m[:, 1]]
-    match_scores = scores[: len(m)] if len(scores) == len(m) else np.ones(len(m))
 
     _progress(pair_id, "fit", f"n_matches={len(he_pts)}")
     h, w = he.shape[:2]
@@ -618,6 +583,52 @@ def _ensure_rigid_preview(pair_id: int, matches: dict) -> tuple[np.ndarray, np.n
     return he, ihc_rigid, rd
 
 
+def _warp_field_preview(moving: np.ndarray, field) -> np.ndarray:
+    h_px, w_px = moving.shape[:2]
+    ys = np.arange(h_px, dtype=np.float32)
+    xs = np.arange(w_px, dtype=np.float32)
+    map_x = np.empty((h_px, w_px), dtype=np.float32)
+    map_y = np.empty((h_px, w_px), dtype=np.float32)
+    chunk = 128
+    for y0 in range(0, h_px, chunk):
+        y1 = min(h_px, y0 + chunk)
+        grid_y, grid_x = np.meshgrid(ys[y0:y1], xs, indexing="ij")
+        pts = np.stack([grid_x.reshape(-1) / w_px, grid_y.reshape(-1) / h_px], axis=1)
+        disp = field.predict_norm(pts).reshape(y1 - y0, w_px, 2)
+        map_x[y0:y1] = grid_x - disp[:, :, 0] * w_px
+        map_y[y0:y1] = grid_y - disp[:, :, 1] * h_px
+    return cv2.remap(
+        moving,
+        map_x,
+        map_y,
+        interpolation=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=255,
+    )
+
+
+def _ensure_moving_prerot(pair_id: int, matches: dict) -> tuple[np.ndarray, Path]:
+    """IHC after pre-rotation only (no rigid) — moving image for direct field fit."""
+    rd = run_dir(pair_id)
+    rd.mkdir(parents=True, exist_ok=True)
+    prerot_path = rd / "ihc_prerot.png"
+    if prerot_path.exists():
+        img = cv2.imread(str(prerot_path), cv2.IMREAD_GRAYSCALE)
+        if img is not None:
+            return img, rd
+
+    level = int(matches.get("preview_level") or DEFAULT_PREVIEW_LEVEL)
+    pre_rot = float(matches.get("pre_rotation_deg") or 0.0)
+    from crop_core import whole_gray
+
+    ihc = whole_gray(pair_id, "ihc", level)
+    if ihc is None:
+        raise RuntimeError(f"no IHC preview for pair {pair_id} level {level}")
+    ihc_prerot, _ = _rotate_gray(ihc, pre_rot)
+    cv2.imwrite(str(prerot_path), ihc_prerot)
+    return ihc_prerot, rd
+
+
 def field_fit(
     pair_id: int,
     field_estimator: str = "tps",
@@ -625,9 +636,18 @@ def field_fit(
     bspline_grid: int | None = None,
     bspline_reg: float | None = None,
     inliers_only: bool = True,
+    mode: str = "residual_after_rigid",
 ) -> dict:
+    """
+    mode:
+      residual_after_rigid — anchors = he − rigid(ihc); warp ihc_rigid
+      direct — anchors = he − ihc; warp ihc_prerot (no rigid)
+    """
     from setup.coarse_to_fine.annotations import Anchor
     from setup.coarse_to_fine.field import fit_field
+
+    if mode not in ("residual_after_rigid", "direct"):
+        raise ValueError(f"unknown field mode {mode!r}")
 
     matches = _matches_for_fit(pair_id)
     rigid_prerot = matches.get("rigid_prerot")
@@ -635,12 +655,14 @@ def field_fit(
         run = load_run(pair_id)
         saved = load(pair_id)
         rigid_prerot = (run or {}).get("rigid_prerot") or (saved or {}).get("rigid_prerot")
-    if rigid_prerot is None:
+
+    if mode == "residual_after_rigid" and rigid_prerot is None:
         raise RuntimeError("no rigid_prerot matrix for residual anchors")
 
-    (r00, r01, tx), (r10, r11, ty) = rigid_prerot
-    w = float(matches.get("width") or 1.0)
-    h = float(matches.get("height") or 1.0)
+    r00 = r01 = tx = r10 = r11 = ty = 0.0
+    if rigid_prerot is not None:
+        (r00, r01, tx), (r10, r11, ty) = rigid_prerot
+
     anchors: list[Anchor] = []
     overlay_src: list[dict] = []
     for p in matches.get("points") or []:
@@ -652,18 +674,23 @@ def field_fit(
         overlay_src.append(
             {
                 "he": [hx, hy],
+                "ihc": [ix, iy],
                 "rigid": [rigid_x, rigid_y],
                 "inlier": inlier,
             }
         )
         if inliers_only and not inlier:
             continue
+        if mode == "direct":
+            du, dv = hx - ix, hy - iy
+        else:
+            du, dv = hx - rigid_x, hy - rigid_y
         anchors.append(
             Anchor(
                 px=hx,
                 py=hy,
-                du=hx - rigid_x,
-                dv=hy - rigid_y,
+                du=du,
+                dv=dv,
                 weight=max(float(p.get("score") or 1.0), 1e-6),
             )
         )
@@ -678,30 +705,29 @@ def field_fit(
         bspline_reg=bspline_reg,
     )
 
-    _he, ihc_rigid, rd = _ensure_rigid_preview(pair_id, matches)
-    h_px, w_px = ihc_rigid.shape[:2]
-    ys = np.arange(h_px, dtype=np.float32)
-    xs = np.arange(w_px, dtype=np.float32)
-    map_x = np.empty((h_px, w_px), dtype=np.float32)
-    map_y = np.empty((h_px, w_px), dtype=np.float32)
-    chunk = 128
-    for y0 in range(0, h_px, chunk):
-        y1 = min(h_px, y0 + chunk)
-        grid_y, grid_x = np.meshgrid(ys[y0:y1], xs, indexing="ij")
-        pts = np.stack([grid_x.reshape(-1) / w_px, grid_y.reshape(-1) / h_px], axis=1)
-        disp = field.predict_norm(pts).reshape(y1 - y0, w_px, 2)
-        map_x[y0:y1] = grid_x - disp[:, :, 0] * w_px
-        map_y[y0:y1] = grid_y - disp[:, :, 1] * h_px
+    if mode == "direct":
+        moving, rd = _ensure_moving_prerot(pair_id, matches)
+        he_path = rd / "he.png"
+        if not he_path.exists():
+            from crop_core import whole_gray
 
-    warped = cv2.remap(
-        ihc_rigid,
-        map_x,
-        map_y,
-        interpolation=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=255,
-    )
-    cv2.imwrite(str(rd / "field_preview.png"), warped)
+            level = int(matches.get("preview_level") or DEFAULT_PREVIEW_LEVEL)
+            he = whole_gray(pair_id, "he", level)
+            if he is not None:
+                cv2.imwrite(str(he_path), he)
+    else:
+        _he, moving, rd = _ensure_rigid_preview(pair_id, matches)
+
+    h_px, w_px = moving.shape[:2]
+    warped = _warp_field_preview(moving, field)
+    stem = "direct" if mode == "direct" else "residual"
+    est = field.estimator
+    preview_name = f"field_preview_{stem}_{est}.png"
+    fit_name = f"field_fit_{stem}_{est}.json"
+    cv2.imwrite(str(rd / preview_name), warped)
+    cv2.imwrite(str(rd / f"field_preview_{stem}.png"), warped)
+    if mode == "residual_after_rigid":
+        cv2.imwrite(str(rd / "field_preview.png"), warped)
 
     pts_a = np.array([[a.px, a.py] for a in anchors], dtype=float)
     truth = np.array([[a.du, a.dv] for a in anchors], dtype=float)
@@ -711,32 +737,57 @@ def field_fit(
     he_pts_n = np.array([o["he"] for o in overlay_src], dtype=float)
     disp_all = field.predict_norm(he_pts_n)
     overlay_corrs = []
+    tre_sum = 0.0
+    tre_sq = 0.0
+    tre_n = 0
     for o, d in zip(overlay_src, disp_all):
-        rx, ry = o["rigid"]
+        if mode == "direct":
+            sx, sy = o["ihc"]
+        else:
+            sx, sy = o["rigid"]
+        he_x, he_y = o["he"][0] * w_px, o["he"][1] * h_px
+        field_x = (sx + float(d[0])) * w_px
+        field_y = (sy + float(d[1])) * h_px
         overlay_corrs.append(
             {
-                "he": [o["he"][0] * w_px, o["he"][1] * h_px],
-                "rigid": [rx * w_px, ry * h_px],
-                "field": [(rx + float(d[0])) * w_px, (ry + float(d[1])) * h_px],
+                "he": [he_x, he_y],
+                "rigid": [o["rigid"][0] * w_px, o["rigid"][1] * h_px],
+                "source": [sx * w_px, sy * h_px],
+                "field": [field_x, field_y],
                 "inlier": o["inlier"],
             }
         )
+        if o["inlier"]:
+            dist = float(np.hypot(he_x - field_x, he_y - field_y))
+            tre_sum += dist
+            tre_sq += dist * dist
+            tre_n += 1
+
+    tre_mean_px = float(tre_sum / tre_n) if tre_n else float("nan")
+    tre_rmse_px = float(np.sqrt(tre_sq / tre_n)) if tre_n else float("nan")
 
     payload = {
         "pair_id": pair_id,
-        "mode": "residual_after_rigid",
-        "field_estimator": field.estimator,
+        "mode": mode,
+        "field_estimator": est,
         "wendland_epsilon": wendland_epsilon,
         "bspline_grid": bspline_grid,
         "bspline_reg": bspline_reg,
         "inliers_only": inliers_only,
         "n_anchors": len(anchors),
         "rmse_norm": rmse,
+        "tre_mean_px": tre_mean_px,
+        "tre_rmse_px": tre_rmse_px,
+        "tre_n": tre_n,
         "kind": field.kind,
         "width": float(w_px),
         "height": float(h_px),
+        "preview": preview_name,
         "overlay_corrs": overlay_corrs,
         "ran_at": int(time.time()),
     }
-    (rd / "field_fit.json").write_text(json.dumps(payload, separators=(",", ":")))
+    text = json.dumps(payload, separators=(",", ":"))
+    (rd / fit_name).write_text(text)
+    (rd / f"field_fit_{stem}.json").write_text(text)
+    (rd / "field_fit.json").write_text(text)
     return payload
