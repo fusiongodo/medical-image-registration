@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -45,6 +46,51 @@ def default_config() -> dict:
     }
 
 
+def normalize_exclude_pct(raw) -> dict[str, float]:
+    base = {str(k): float(v) for k, v in EXCLUDE_PCT_BY_LEVEL.items()}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            try:
+                base[str(int(k))] = float(v)
+            except (TypeError, ValueError):
+                continue
+    return base
+
+
+def cell_config(cfg: dict | None) -> dict:
+    """Subset of batch config that defines a fit cell's identity."""
+    merged = {**default_config(), **(cfg or {})}
+    return {
+        "levels": [int(x) for x in merged["levels"]],
+        "exclude_pct_by_level": normalize_exclude_pct(merged.get("exclude_pct_by_level")),
+        "wendland_eps": float(merged["wendland_eps"]),
+        "bspline_grid": int(merged["bspline_grid"]),
+        "bspline_reg": float(merged["bspline_reg"]),
+        "eval_depth": int(EVAL_DEPTH),
+    }
+
+
+def config_fingerprint(cfg: dict | None) -> str:
+    payload = json.dumps(cell_config(cfg), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(payload.encode()).hexdigest()[:12]
+
+
+def config_summary(cfg: dict | None) -> dict:
+    c = cell_config(cfg)
+    excl = c["exclude_pct_by_level"]
+    return {
+        "wendland_eps": c["wendland_eps"],
+        "bspline_grid": c["bspline_grid"],
+        "bspline_reg": c["bspline_reg"],
+        "exclude_pct_by_level": excl,
+        "gate": (
+            f"L0–L3 keep 100% · L4 excl {100 * excl.get('4', 0.05):.0f}% · "
+            f"L5 excl {100 * excl.get('5', 0.10):.0f}%"
+        ),
+        "fingerprint": config_fingerprint(cfg),
+    }
+
+
 def batch_dir(batch_id: str) -> Path:
     return EVAL_ROOT / batch_id
 
@@ -71,6 +117,39 @@ def tre_path(batch_id: str, pair_id: int, lam: str, estimator: str) -> Path:
 
 def meta_path(batch_id: str, pair_id: int, lam: str, estimator: str) -> Path:
     return cell_dir(batch_id, pair_id, lam, estimator) / "meta.json"
+
+
+def regwsi_dir(batch_id: str, pair_id: int) -> Path:
+    return batch_dir(batch_id) / str(pair_id) / "regwsi"
+
+
+def regwsi_runtime_path(batch_id: str, pair_id: int) -> Path:
+    return regwsi_dir(batch_id, pair_id) / "runtime.json"
+
+
+def read_cell_meta(batch_id: str, pair_id: int, lam: str, estimator: str) -> dict | None:
+    path = meta_path(batch_id, pair_id, lam, estimator)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def read_runtime_s(path: Path) -> float | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:
+        return None
+    if isinstance(payload, dict) and payload.get("runtime_s") is not None:
+        try:
+            return float(payload["runtime_s"])
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def list_batches() -> list[dict]:
@@ -139,7 +218,8 @@ def create_batch(
     bid = batch_id or slugify(name)
     if manifest_path(bid).exists():
         raise FileExistsError(f"batch {bid} already exists")
-    cfg = {**default_config(), **(config or {})}
+    cfg = cell_config(config)
+    cfg["force"] = bool((config or {}).get("force", False))
     lam_list = list(lams) if lams else list(LAMS)
     est_list = list(estimators) if estimators else list(FIELD_ESTIMATORS)
     for lam in lam_list:
@@ -156,6 +236,7 @@ def create_batch(
         "lams": lam_list,
         "estimators": est_list,
         "config": cfg,
+        "config_fingerprint": config_fingerprint(cfg),
         "notes": notes or "",
     }
     write_manifest(bid, manifest)
@@ -172,5 +253,25 @@ def create_batch(
     return manifest
 
 
-def cell_complete(batch_id: str, pair_id: int, lam: str, estimator: str) -> bool:
-    return field_l5_path(batch_id, pair_id, lam, estimator).is_file()
+def cell_complete(
+    batch_id: str,
+    pair_id: int,
+    lam: str,
+    estimator: str,
+    cfg: dict | None = None,
+) -> bool:
+    if not field_l5_path(batch_id, pair_id, lam, estimator).is_file():
+        return False
+    if not tre_path(batch_id, pair_id, lam, estimator).is_file():
+        return False
+    if cfg is None:
+        man = read_manifest(batch_id) or {}
+        cfg = man.get("config")
+    meta = read_cell_meta(batch_id, pair_id, lam, estimator)
+    if not meta:
+        return False
+    expected = config_fingerprint(cfg)
+    got = meta.get("config_fingerprint")
+    if got is None:
+        return False
+    return str(got) == expected

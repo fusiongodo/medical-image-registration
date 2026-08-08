@@ -125,7 +125,9 @@ def _fit_pair_lam_estimator(
     meta = {
         "lam": lam,
         "field_estimator": estimator,
-        "exclude_pct_by_level": dict(eval_runs.EXCLUDE_PCT_BY_LEVEL),
+        "exclude_pct_by_level": {
+            str(k): float(v) for k, v in eval_runs.EXCLUDE_PCT_BY_LEVEL.items()
+        },
         "level_gates": level_gates,
         "levels": levels,
         "n_kept": total_kept,
@@ -146,11 +148,11 @@ def _write_cell(
     estimator: str,
     field: Field,
     meta: dict,
+    runtime_s: float | None = None,
 ) -> dict:
     cell = eval_runs.cell_dir(batch_id, pair_id, lam, estimator)
     cell.mkdir(parents=True, exist_ok=True)
 
-    # Full multi-depth JSON (overlay/TRE need depths["5"]); filename per plan.
     out_path = eval_runs.field_l5_path(batch_id, pair_id, lam, estimator)
     depths_out = {
         str(d): field.predict_tile_px(d) for d in range(eval_runs.EVAL_DEPTH + 1)
@@ -168,6 +170,9 @@ def _write_cell(
     if deskew_store:
         (cell / "deskew.json").write_text(json.dumps(deskew_store, separators=(",", ":")))
 
+    if runtime_s is not None:
+        meta = {**meta, "runtime_s": float(runtime_s)}
+
     eval_runs.meta_path(batch_id, pair_id, lam, estimator).write_text(
         json.dumps(meta, indent=2)
     )
@@ -179,7 +184,15 @@ def _write_cell(
         tre = tre_eval.annotate_tile_means(tre_eval.stats(errs), scale)
     else:
         tre = tre_eval.empty_err("no landmarks")
-    tre.update({"lam": lam, "field_estimator": estimator, "n": len(points)})
+    tre.update(
+        {
+            "lam": lam,
+            "field_estimator": estimator,
+            "n": len(points),
+            "runtime_s": meta.get("runtime_s"),
+            "config_fingerprint": meta.get("config_fingerprint"),
+        }
+    )
     eval_runs.tre_path(batch_id, pair_id, lam, estimator).write_text(
         json.dumps(tre, indent=2)
     )
@@ -195,11 +208,13 @@ def run_batch(batch_id: str) -> dict:
     lams = [normalize_lam(x) for x in manifest.get("lams") or []]
     estimators = [normalize_estimator(x) for x in manifest.get("estimators") or []]
     cfg = {**eval_runs.default_config(), **(manifest.get("config") or {})}
-    levels = sorted(int(x) for x in cfg["levels"])
-    force = bool(cfg.get("force"))
-    wendland_eps = float(cfg["wendland_eps"])
-    bspline_grid = int(cfg["bspline_grid"])
-    bspline_reg = float(cfg["bspline_reg"])
+    cell_cfg = eval_runs.cell_config(cfg)
+    fp = eval_runs.config_fingerprint(cell_cfg)
+    levels = sorted(int(x) for x in cell_cfg["levels"])
+    force = bool(cfg.get("force")) or bool(manifest.get("config", {}).get("force"))
+    wendland_eps = float(cell_cfg["wendland_eps"])
+    bspline_grid = int(cell_cfg["bspline_grid"])
+    bspline_reg = float(cell_cfg["bspline_reg"])
 
     jobs = [(p, lam, est) for p in pairs for lam in lams for est in estimators]
     total = len(jobs)
@@ -215,7 +230,7 @@ def run_batch(batch_id: str) -> dict:
             "started_at": int(time.time()),
         },
     )
-    _emit("start", batch=batch_id, total=total)
+    _emit("start", batch=batch_id, total=total, config_fp=fp)
 
     try:
         for pair_id, lam, estimator in jobs:
@@ -241,7 +256,7 @@ def run_batch(batch_id: str) -> dict:
             )
 
             if (
-                eval_runs.cell_complete(batch_id, pair_id, lam, estimator)
+                eval_runs.cell_complete(batch_id, pair_id, lam, estimator, cell_cfg)
                 and not force
             ):
                 _emit("skip", pair=pair_id, lam=lam, estimator=estimator)
@@ -257,6 +272,7 @@ def run_batch(batch_id: str) -> dict:
                 )
                 continue
 
+            t0 = time.perf_counter()
             _ensure_lam_caches(pair_id, levels, lam, force=force)
             field, meta = _fit_pair_lam_estimator(
                 pair_id,
@@ -267,7 +283,28 @@ def run_batch(batch_id: str) -> dict:
                 bspline_grid,
                 bspline_reg,
             )
-            _write_cell(batch_id, pair_id, lam, estimator, field, meta)
+            meta = {
+                **meta,
+                "config_fingerprint": fp,
+                "cell_config": cell_cfg,
+            }
+            runtime_s = time.perf_counter() - t0
+            _write_cell(
+                batch_id,
+                pair_id,
+                lam,
+                estimator,
+                field,
+                meta,
+                runtime_s=runtime_s,
+            )
+            _emit(
+                "cell_done",
+                pair=pair_id,
+                lam=lam,
+                estimator=estimator,
+                runtime_s=f"{runtime_s:.3f}",
+            )
             eval_runs.write_status(
                 batch_id,
                 {

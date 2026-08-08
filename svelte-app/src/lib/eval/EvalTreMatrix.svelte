@@ -14,6 +14,16 @@
 		field_estimator: string;
 		complete: boolean;
 		tre: TreStats;
+		runtime_s?: number | null;
+		runtime_avg_s?: number | null;
+	}
+
+	export interface BatchConfigSummary {
+		wendland_eps?: number;
+		bspline_grid?: number;
+		bspline_reg?: number;
+		gate?: string;
+		fingerprint?: string;
 	}
 
 	export interface BatchTreResult {
@@ -22,7 +32,10 @@
 		n: number;
 		none: TreStats;
 		regwsi: TreStats;
+		regwsi_runtime_s?: number | null;
+		regwsi_runtime_avg_s?: number | null;
 		methods: MethodCell[];
+		config?: BatchConfigSummary;
 	}
 
 	let {
@@ -47,6 +60,15 @@
 		return v == null ? '—' : v.toFixed(2);
 	}
 
+	function fmtSec(v: number | null | undefined) {
+		if (v == null || Number.isNaN(v)) return '—';
+		if (v < 10) return `${v.toFixed(2)}s`;
+		if (v < 60) return `${v.toFixed(1)}s`;
+		const m = Math.floor(v / 60);
+		const s = v - m * 60;
+		return `${m}m${s.toFixed(0)}s`;
+	}
+
 	function openRegwsi() {
 		if (pairId == null) return;
 		window.open(`/eval/${pairId}/overlay/regwsi`, `eval-overlay-${pairId}-regwsi`);
@@ -66,6 +88,7 @@
 	}
 
 	const methods = $derived(tre?.methods ?? []);
+	const cfg = $derived(tre?.config ?? null);
 </script>
 
 <aside class="tre-panel">
@@ -91,6 +114,16 @@
 	{:else if treErr}
 		<p class="err">{treErr}</p>
 	{:else if tre}
+		{#if cfg}
+			<div class="cfg">
+				<span>Wendland ε={cfg.wendland_eps ?? '—'}</span>
+				<span>B-spline grid={cfg.bspline_grid ?? '—'} reg={cfg.bspline_reg ?? '—'}</span>
+				<span>{cfg.gate ?? ''}</span>
+				{#if cfg.fingerprint}
+					<span class="fp">cfg {cfg.fingerprint}</span>
+				{/if}
+			</div>
+		{/if}
 		<div class="scroll">
 			<table>
 				<thead>
@@ -136,10 +169,26 @@
 							<td class:missing={!m.complete}>{fmt(m.tre.p95)}</td>
 						{/each}
 					</tr>
+					<tr class="runtime">
+						<td>runtime</td>
+						<td>—</td>
+						<td>{fmtSec(tre.regwsi_runtime_s)}</td>
+						{#each methods as m}
+							<td class:missing={!m.complete}>{fmtSec(m.runtime_s)}</td>
+						{/each}
+					</tr>
+					<tr class="runtime">
+						<td>runtime avg</td>
+						<td>—</td>
+						<td>{fmtSec(tre.regwsi_runtime_avg_s)}</td>
+						{#each methods as m}
+							<td>{fmtSec(m.runtime_avg_s)}</td>
+						{/each}
+					</tr>
 				</tbody>
 			</table>
 		</div>
-		<p class="n">n = {tre.n} landmarks</p>
+		<p class="n">n = {tre.n} landmarks · runtime = this pair · avg = mean over batch pairs with a stored time</p>
 		<div class="actions">
 			<button type="button" class="btn" disabled={tre.regwsi.mean == null} onclick={openRegwsi}>
 				Open regWSI overlay
@@ -199,6 +248,18 @@
 		font-size: 0.72rem;
 		color: #6b7280;
 	}
+	.cfg {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem 0.75rem;
+		font-size: 0.68rem;
+		color: #9ca3af;
+		line-height: 1.35;
+	}
+	.cfg .fp {
+		color: #6b7280;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
 	.muted {
 		margin: 0;
 		color: #6b7280;
@@ -241,6 +302,9 @@
 	}
 	td.missing {
 		color: #4b5563;
+	}
+	tr.runtime td {
+		color: #a5b4fc;
 	}
 	.n {
 		margin: 0;
