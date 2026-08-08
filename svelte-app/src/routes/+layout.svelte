@@ -46,7 +46,7 @@
 	}
 
 	let sidebarOpen = $state(true);
-	const overlayMode = $derived(/\/regwsi\/\d+\/overlay\//.test($page.url.pathname));
+	const overlayMode = $derived(/\/eval\/\d+\/overlay\//.test($page.url.pathname));
 
 	$effect(() => {
 		if (overlayMode) return;
@@ -89,7 +89,7 @@
 			</div>
 			<nav class="tools">
 				<a href="/live" class:active={$page.url.pathname === '/live'}>Live crop</a>
-				<a href="/regwsi" class:active={$page.url.pathname.startsWith('/regwsi')}>regWSI</a>
+				<a href="/eval" class:active={$page.url.pathname.startsWith('/eval')}>Eval</a>
 			</nav>
 			<h2>Pairs</h2>
 			<ul>

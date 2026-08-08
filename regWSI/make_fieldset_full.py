@@ -56,16 +56,26 @@ def _target_size(pair_id: int) -> tuple[int, int, int]:
     return paths.CANVAS_W, paths.CANVAS_H, paths.FULL_NQ
 
 
-def _layer_name(estimator: str) -> str:
+def _layer_name(estimator: str, *, lam: str | None = None, batch_id: str | None = None) -> str:
+    if batch_id:
+        return f"ihc_eval_{lam}_{estimator}"
     return f"ihc_fieldset_{estimator}"
 
 
-def _stamp_path(pair_id: int, estimator: str) -> Path:
-    return paths.full_dir(pair_id) / f"{_layer_name(estimator)}.stamp.json"
+def _stamp_path(pair_id: int, layer: str) -> Path:
+    return paths.full_dir(pair_id) / f"{layer}.stamp.json"
+
+
+def _field_file(set_dir: Path) -> Path:
+    for name in ("field.json", "field_l5.json"):
+        p = set_dir / name
+        if p.is_file():
+            return p
+    return set_dir / "field.json"
 
 
 def _field_mtime(set_dir: Path) -> float:
-    field = set_dir / "field.json"
+    field = _field_file(set_dir)
     deskew = set_dir / "deskew.json"
     mt = field.stat().st_mtime if field.is_file() else 0.0
     if deskew.is_file():
@@ -73,8 +83,8 @@ def _field_mtime(set_dir: Path) -> float:
     return mt
 
 
-def _stamp_fresh(pair_id: int, estimator: str, set_id: str, set_dir: Path, nq: int) -> bool:
-    stamp = _stamp_path(pair_id, estimator)
+def _stamp_fresh(pair_id: int, layer: str, set_id: str, set_dir: Path, nq: int) -> bool:
+    stamp = _stamp_path(pair_id, layer)
     if not stamp.is_file():
         return False
     try:
@@ -85,7 +95,6 @@ def _stamp_fresh(pair_id: int, estimator: str, set_id: str, set_dir: Path, nq: i
         return False
     if abs(float(data.get("field_mtime", -1)) - _field_mtime(set_dir)) > 1e-6:
         return False
-    layer = _layer_name(estimator)
     for qy in range(nq):
         for qx in range(nq):
             if not paths.full_quadrant(pair_id, layer, qy, qx).is_file():
@@ -95,7 +104,7 @@ def _stamp_fresh(pair_id: int, estimator: str, set_id: str, set_dir: Path, nq: i
 
 def _dense_disp(set_dir: Path, w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
     """Return (dx, dy) canvas-pixel maps of shape (h, w), HE←IHC displacement."""
-    field = json.loads((set_dir / "field.json").read_text())
+    field = json.loads(_field_file(set_dir).read_text())
     depth5 = field.get("depths", {}).get("5") or field.get("depths", {}).get(5) or {}
     scale = w / (GRID * conf.CNN_INPUT_WIDTH)
 
@@ -141,30 +150,48 @@ def _write_mosaic(img: np.ndarray, pair_id: int, layer: str, nq: int) -> tuple[i
     return qw, qh
 
 
-def make_fieldset_full(pair_id: int, estimator: str, force: bool = False) -> dict:
-    if estimator not in ("tps", "wendland"):
-        raise ValueError("estimator must be tps or wendland")
+def make_fieldset_full(
+    pair_id: int,
+    estimator: str,
+    force: bool = False,
+    *,
+    batch_id: str | None = None,
+    lam: str = "fft",
+) -> dict:
+    if estimator not in ("tps", "wendland", "bspline"):
+        raise ValueError("estimator must be tps, wendland, or bspline")
 
     ihc_path = paths.ihc_tiff(pair_id)
     if not ihc_path.is_file():
         raise FileNotFoundError(f"missing {ihc_path}")
 
-    set_id, set_dir, set_name = _resolve_set_dir(pair_id, estimator)
-    if set_dir is None or not (set_dir / "field.json").is_file():
-        raise FileNotFoundError(
-            f"no field.json for pair {pair_id} fft/{estimator}"
-            + (f" (set={set_id})" if set_id else "")
-        )
+    if batch_id:
+        from setup.coarse_to_fine import eval_runs
+
+        set_dir = eval_runs.cell_dir(batch_id, pair_id, lam, estimator)
+        set_id = f"{batch_id}/{lam}/{estimator}"
+        set_name = set_id
+        if not _field_file(set_dir).is_file():
+            raise FileNotFoundError(f"no field for batch cell {set_id}")
+    else:
+        set_id, set_dir, set_name = _resolve_set_dir(pair_id, estimator)
+        if set_dir is None or not _field_file(set_dir).is_file():
+            raise FileNotFoundError(
+                f"no field.json for pair {pair_id} fft/{estimator}"
+                + (f" (set={set_id})" if set_id else "")
+            )
 
     tw, th, nq = _target_size(pair_id)
-    layer = _layer_name(estimator)
+    layer = _layer_name(estimator, lam=lam, batch_id=batch_id)
     paths.ensure_pair_dirs(pair_id)
 
-    if not force and _stamp_fresh(pair_id, estimator, set_id or "", set_dir, nq):
+    if not force and _stamp_fresh(pair_id, layer, set_id or "", set_dir, nq):
         print(f"done=1 total=1 cached=1", flush=True)
         return {
             "pair_id": pair_id,
             "estimator": estimator,
+            "lam": lam,
+            "batch_id": batch_id,
             "layer": layer,
             "set_id": set_id,
             "set_name": set_name,
@@ -209,17 +236,21 @@ def make_fieldset_full(pair_id: int, estimator: str, force: bool = False) -> dic
     stamp = {
         "pair_id": pair_id,
         "estimator": estimator,
+        "lam": lam,
+        "batch_id": batch_id,
         "set_id": set_id,
         "set_name": set_name,
         "field_mtime": _field_mtime(set_dir),
         "layer": layer,
         "updated": int(time.time()),
     }
-    _stamp_path(pair_id, estimator).write_text(json.dumps(stamp, separators=(",", ":")))
+    _stamp_path(pair_id, layer).write_text(json.dumps(stamp, separators=(",", ":")))
     print(f"done=4 total=4 stage=done", flush=True)
     return {
         "pair_id": pair_id,
         "estimator": estimator,
+        "lam": lam,
+        "batch_id": batch_id,
         "layer": layer,
         "set_id": set_id,
         "set_name": set_name,
@@ -235,10 +266,23 @@ def make_fieldset_full(pair_id: int, estimator: str, force: bool = False) -> dic
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("pair", type=int)
-    ap.add_argument("--estimator", required=True, choices=["tps", "wendland"])
+    ap.add_argument("--estimator", required=True, choices=["tps", "wendland", "bspline"])
+    ap.add_argument("--lam", default="fft")
+    ap.add_argument("--batch", default=None, help="eval batch id (uses eval_runs cell)")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
-    print(json.dumps(make_fieldset_full(args.pair, args.estimator, force=args.force), indent=2))
+    print(
+        json.dumps(
+            make_fieldset_full(
+                args.pair,
+                args.estimator,
+                force=args.force,
+                batch_id=args.batch,
+                lam=args.lam,
+            ),
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
