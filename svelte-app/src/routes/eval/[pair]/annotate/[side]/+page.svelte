@@ -12,6 +12,7 @@
 
 	let { data } = $props();
 	const pairId = $derived(data.pairId);
+	const dataset = $derived(data.dataset ?? 'muromi');
 	const side = $derived(data.side as AnnotateSide);
 
 	let session = $state<AnnotateSession>(emptySession());
@@ -28,7 +29,7 @@
 
 	async function loadFromServer() {
 		const gen = ++loadGen;
-		const r = await fetch(`/api/eval/landmarks?pair=${pairId}`);
+		const r = await fetch(`/api/eval/landmarks?pair=${pairId}&dataset=${dataset}`);
 		if (!r.ok || gen !== loadGen) return;
 		const d = await r.json();
 		if (gen !== loadGen) return;
@@ -44,7 +45,7 @@
 	async function persistLandmarks(next: Landmark[]) {
 		saveBusy = true;
 		try {
-			const r = await fetch(`/api/eval/landmarks?pair=${pairId}`, {
+			const r = await fetch(`/api/eval/landmarks?pair=${pairId}&dataset=${dataset}`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ points: next })
@@ -90,18 +91,24 @@
 
 	async function clearLandmarks() {
 		if (!handle || saveBusy) return;
-		const r = await fetch(`/api/eval/landmarks?pair=${pairId}`, { method: 'DELETE' });
+		const r = await fetch(`/api/eval/landmarks?pair=${pairId}&dataset=${dataset}`, {
+			method: 'DELETE'
+		});
 		if (!r.ok) return;
 		session = handle.publish(session, { landmarks: [], pendingHe: null, phase: 'he' });
 	}
 
 	function openOther() {
 		const other = side === 'he' ? 'ihc' : 'he';
-		window.open(`/eval/${pairId}/annotate/${other}`, `eval-annotate-${pairId}-${other}`);
+		window.open(
+			`/eval/${pairId}/annotate/${other}?dataset=${dataset}`,
+			`eval-annotate-${pairId}-${other}`
+		);
 	}
 
 	$effect(() => {
 		void pairId;
+		void dataset;
 		loadGen += 1;
 		handle?.close();
 		handle = connectSession(pairId, applyRemote);
@@ -122,11 +129,11 @@
 			</p>
 		</div>
 		<nav class="nav">
-			<a href={`/eval/${pairId}/annotate`}>Hub</a>
+			<a href={`/eval/${pairId}/annotate?dataset=${dataset}`}>Hub</a>
 			<button type="button" class="linkish" onclick={openOther}>
 				Open {side === 'he' ? 'IHC' : 'HE'}
 			</button>
-			<a href="/eval">All pairs</a>
+			<a href={`/eval?dataset=${dataset}`}>All pairs</a>
 		</nav>
 	</header>
 
@@ -152,6 +159,7 @@
 		</div>
 		<AnnotateMosaic
 			{pairId}
+			{dataset}
 			{side}
 			meta={data.fullMeta}
 			landmarks={session.landmarks}

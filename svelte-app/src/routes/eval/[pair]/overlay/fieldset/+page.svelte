@@ -23,7 +23,8 @@
 		const q = new URLSearchParams({
 			pair: String(data.pairId),
 			estimator: data.estimator,
-			lam: data.lam
+			lam: data.lam,
+			dataset: data.dataset ?? 'muromi'
 		});
 		if (data.batch) q.set('batch', data.batch);
 		return `/api/eval/fieldset-full?${q}`;
@@ -57,7 +58,8 @@
 				pair_id: data.pairId,
 				estimator: data.estimator,
 				lam: data.lam,
-				batch: data.batch
+				batch: data.batch,
+				dataset: data.dataset ?? 'muromi'
 			})
 		});
 		if (!r.ok) {
@@ -144,6 +146,7 @@
 {:else}
 	<RegwsiOverlayViewer
 		pairId={data.pairId}
+		dataset={data.dataset}
 		title={`Field overlay · pair ${data.pairId}`}
 		{subtitle}
 		movingLayer={layer}

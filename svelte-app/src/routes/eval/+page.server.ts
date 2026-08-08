@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import { pairCount } from '$lib/server/pairs';
+import { listDatasets, normalizeDataset, pairCount, regwsiRoot } from '$lib/server/datasets';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -57,13 +57,15 @@ function mainSetMeta(pairId: number): { mainSetId: string | null; mainSetName: s
 	return { mainSetId, mainSetName };
 }
 
-export const load: PageServerLoad = () => {
-	const n = pairCount();
+export const load: PageServerLoad = ({ url }) => {
+	const dataset = normalizeDataset(url.searchParams.get('dataset'));
+	const n = pairCount(dataset);
+	const root = regwsiRoot(dataset);
 	const pairs = [];
 	for (let i = 0; i < n; i++) {
-		const dir = resolve(REPO_ROOT, 'data', 'regwsi', String(i));
+		const dir = resolve(root, String(i));
 		const ready = existsSync(resolve(dir, 'out', 'displacement_field.mha'));
-		const { mainSetId, mainSetName } = mainSetMeta(i);
+		const { mainSetId, mainSetName } = dataset === 'muromi' ? mainSetMeta(i) : { mainSetId: null, mainSetName: null };
 		pairs.push({
 			pairId: i,
 			ready,
@@ -72,5 +74,5 @@ export const load: PageServerLoad = () => {
 			mainSetName
 		});
 	}
-	return { pairs };
+	return { pairs, dataset, datasets: listDatasets() };
 };

@@ -11,6 +11,7 @@
 
 	let { data } = $props();
 	const pairId = $derived(data.pairId);
+	const dataset = $derived(data.dataset ?? 'muromi');
 
 	let session = $state<AnnotateSession>(emptySession());
 	let saveBusy = $state(false);
@@ -28,7 +29,7 @@
 
 	async function loadFromServer() {
 		const gen = ++loadGen;
-		const r = await fetch(`/api/eval/landmarks?pair=${pairId}`);
+		const r = await fetch(`/api/eval/landmarks?pair=${pairId}&dataset=${dataset}`);
 		if (!r.ok || gen !== loadGen) return;
 		const d = await r.json();
 		if (gen !== loadGen) return;
@@ -49,7 +50,7 @@
 	async function persistLandmarks(next: Landmark[]) {
 		saveBusy = true;
 		try {
-			const r = await fetch(`/api/eval/landmarks?pair=${pairId}`, {
+			const r = await fetch(`/api/eval/landmarks?pair=${pairId}&dataset=${dataset}`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ points: next })
@@ -79,7 +80,9 @@
 
 	async function clearLandmarks() {
 		if (!handle || saveBusy) return;
-		const r = await fetch(`/api/eval/landmarks?pair=${pairId}`, { method: 'DELETE' });
+		const r = await fetch(`/api/eval/landmarks?pair=${pairId}&dataset=${dataset}`, {
+			method: 'DELETE'
+		});
 		if (!r.ok) return;
 		session = handle.publish(session, { landmarks: [], pendingHe: null, phase: 'he' });
 		tre = null;
@@ -95,7 +98,7 @@
 		treBusy = true;
 		treErr = null;
 		try {
-			const r = await fetch(`/api/eval/tre?pair=${pairId}`);
+			const r = await fetch(`/api/eval/tre?pair=${pairId}&dataset=${dataset}`);
 			if (!r.ok) throw new Error(await r.text());
 			tre = await r.json();
 		} catch (e) {
@@ -107,11 +110,15 @@
 	}
 
 	function openSide(side: 'he' | 'ihc') {
-		window.open(`/eval/${pairId}/annotate/${side}`, `eval-annotate-${pairId}-${side}`);
+		window.open(
+			`/eval/${pairId}/annotate/${side}?dataset=${dataset}`,
+			`eval-annotate-${pairId}-${side}`
+		);
 	}
 
 	$effect(() => {
 		void pairId;
+		void dataset;
 		loadGen += 1;
 		handle?.close();
 		handle = connectSession(pairId, applyRemote);
@@ -133,8 +140,8 @@
 			</p>
 		</div>
 		<nav class="nav">
-			<a href={`/eval/${pairId}`}>Overlay</a>
-			<a href="/eval">All pairs</a>
+			<a href={`/eval/${pairId}?dataset=${dataset}`}>Overlay</a>
+			<a href={`/eval?dataset=${dataset}`}>All pairs</a>
 		</nav>
 	</header>
 
@@ -175,6 +182,7 @@
 			{tre}
 			{treBusy}
 			{treErr}
+			{dataset}
 			landmarkCount={session.landmarks.length}
 			mainSetName={data.mainSetName}
 			mainSetId={data.mainSetId}

@@ -20,6 +20,7 @@
 {:else}
 	<RegwsiOverlayViewer
 		pairId={data.pairId}
+		dataset={data.dataset}
 		title={`regWSI overlay · pair ${data.pairId}`}
 		subtitle="HE vs DeeperHistReg warped IHC"
 		movingLayer="ihc_warped"

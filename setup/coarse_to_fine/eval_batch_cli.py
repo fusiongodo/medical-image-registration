@@ -18,6 +18,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from setup import datasets
 from setup.coarse_to_fine import annotations, deskew, eval_runs, masks, tre_eval
 from setup.coarse_to_fine.field import (
     Candidate,
@@ -152,14 +153,21 @@ def _write_cell(
 ) -> dict:
     cell = eval_runs.cell_dir(batch_id, pair_id, lam, estimator)
     cell.mkdir(parents=True, exist_ok=True)
+    ds = datasets.active_dataset()
 
     out_path = eval_runs.field_l5_path(batch_id, pair_id, lam, estimator)
     depths_out = {
         str(d): field.predict_tile_px(d) for d in range(eval_runs.EVAL_DEPTH + 1)
     }
+    identity = (
+        datasets.pair_fingerprint(pair_id, ds)
+        if ds == "acrobat"
+        else pair_fingerprint(pair_id)
+    )
     payload = {
         "pair_id": pair_id,
-        "identity": pair_fingerprint(pair_id),
+        "dataset": ds,
+        "identity": identity,
         "fit_depth": eval_runs.EVAL_DEPTH,
         "depths": depths_out,
         **meta,
@@ -169,6 +177,11 @@ def _write_cell(
     deskew_store = deskew.load(pair_id)
     if deskew_store:
         (cell / "deskew.json").write_text(json.dumps(deskew_store, separators=(",", ":")))
+
+    rigid_path = datasets.rigid_path(pair_id, ds)
+    if rigid_path.is_file():
+        shutil_copy = rigid_path.read_text()
+        (cell / "rigid.json").write_text(shutil_copy)
 
     if runtime_s is not None:
         meta = {**meta, "runtime_s": float(runtime_s)}
@@ -180,7 +193,14 @@ def _write_cell(
     points = tre_eval.load_landmarks(pair_id)
     w, h, scale = tre_eval.canvas_scale(pair_id)
     if points:
-        errs = tre_eval.tre_field_file(points, out_path, w, h, scale)
+        errs = tre_eval.tre_field_file(
+            points,
+            out_path,
+            w,
+            h,
+            scale,
+            rigid_path=rigid_path if rigid_path.is_file() else None,
+        )
         tre = tre_eval.annotate_tile_means(tre_eval.stats(errs), scale)
     else:
         tre = tre_eval.empty_err("no landmarks")
@@ -204,6 +224,9 @@ def run_batch(batch_id: str) -> dict:
     if manifest is None:
         raise FileNotFoundError(f"no batch {batch_id}")
 
+    ds_name = datasets.normalize_dataset(manifest.get("dataset"))
+    datasets.set_active_dataset(ds_name)
+
     pairs = [int(p) for p in manifest["pairs"]]
     lams = [normalize_lam(x) for x in manifest.get("lams") or []]
     estimators = [normalize_estimator(x) for x in manifest.get("estimators") or []]
@@ -216,8 +239,14 @@ def run_batch(batch_id: str) -> dict:
     bspline_grid = int(cell_cfg["bspline_grid"])
     bspline_reg = float(cell_cfg["bspline_reg"])
 
+    if ds_name == "acrobat":
+        from setup.acrobat.ingest import ingest
+
+        _emit("ingest", dataset=ds_name, pairs=len(pairs))
+        ingest(unzip=True, pair_ids=pairs, force=False)
+
     jobs = [(p, lam, est) for p in pairs for lam in lams for est in estimators]
-    total = len(jobs)
+    total = len(jobs) + (len(pairs) if ds_name == "acrobat" else 0)
     done = 0
     eval_runs.write_status(
         batch_id,
@@ -230,9 +259,52 @@ def run_batch(batch_id: str) -> dict:
             "started_at": int(time.time()),
         },
     )
-    _emit("start", batch=batch_id, total=total, config_fp=fp)
+    _emit("start", batch=batch_id, dataset=ds_name, total=total, config_fp=fp)
 
     try:
+        if ds_name == "acrobat":
+            from regWSI import paths as rpaths
+            from regWSI.register import register_pair
+
+            for pair_id in pairs:
+                done += 1
+                detail = f"pair={pair_id} stage=regwsi"
+                _emit("regwsi", pair=pair_id, done=done, total=total)
+                eval_runs.write_status(
+                    batch_id,
+                    {
+                        "state": "running",
+                        "done": done - 1,
+                        "total": total,
+                        "detail": detail,
+                        "error": None,
+                    },
+                )
+                df = rpaths.displacement_field(pair_id)
+                rigid = datasets.rigid_path(pair_id, "acrobat")
+                if df.is_file() and rigid.is_file() and not force:
+                    _emit("regwsi_skip", pair=pair_id)
+                else:
+                    t0 = time.perf_counter()
+                    register_pair(pair_id, persist_rigid=True)
+                    runtime_s = time.perf_counter() - t0
+                    rd = eval_runs.regwsi_dir(batch_id, pair_id)
+                    rd.mkdir(parents=True, exist_ok=True)
+                    (rd / "runtime.json").write_text(
+                        json.dumps({"runtime_s": runtime_s, "pair_id": pair_id}, indent=2)
+                    )
+                    _emit("regwsi_done", pair=pair_id, runtime_s=f"{runtime_s:.3f}")
+                eval_runs.write_status(
+                    batch_id,
+                    {
+                        "state": "running",
+                        "done": done,
+                        "total": total,
+                        "detail": detail,
+                        "error": None,
+                    },
+                )
+
         for pair_id, lam, estimator in jobs:
             done += 1
             detail = f"pair={pair_id} lam={lam} estimator={estimator}"
@@ -377,6 +449,7 @@ def cmd_create(args: argparse.Namespace) -> None:
             config=config,
             notes=args.notes,
             batch_id=args.id,
+            dataset=args.dataset,
         )
     except FileExistsError as e:
         _print_json({"ok": False, "error": str(e)})
@@ -400,6 +473,7 @@ def main() -> None:
     c.add_argument("--id", default=None, help="optional batch id (slug)")
     c.add_argument("--lams", default=None, help="comma-separated, default all")
     c.add_argument("--estimators", default=None, help="comma-separated, default all")
+    c.add_argument("--dataset", default="muromi", help="muromi|acrobat")
     c.add_argument("--wendland-eps", type=float, default=None)
     c.add_argument("--bspline-grid", type=int, default=None)
     c.add_argument("--bspline-reg", type=float, default=None)

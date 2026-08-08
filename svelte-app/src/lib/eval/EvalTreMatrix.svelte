@@ -45,6 +45,7 @@
 		treErr,
 		landmarkCount,
 		batchId = null,
+		dataset = 'muromi',
 		onClose = undefined
 	}: {
 		pairId: number | null;
@@ -53,6 +54,7 @@
 		treErr: string | null;
 		landmarkCount: number;
 		batchId?: string | null;
+		dataset?: 'muromi' | 'acrobat';
 		onClose?: (() => void) | undefined;
 	} = $props();
 
@@ -71,7 +73,8 @@
 
 	function openRegwsi() {
 		if (pairId == null) return;
-		window.open(`/eval/${pairId}/overlay/regwsi`, `eval-overlay-${pairId}-regwsi`);
+		const q = new URLSearchParams({ dataset });
+		window.open(`/eval/${pairId}/overlay/regwsi?${q}`, `eval-overlay-${pairId}-regwsi`);
 	}
 
 	function openMethod(m: MethodCell) {
@@ -79,7 +82,8 @@
 		const q = new URLSearchParams({
 			estimator: m.field_estimator,
 			lam: m.lam,
-			batch: batchId
+			batch: batchId,
+			dataset
 		});
 		window.open(
 			`/eval/${pairId}/overlay/fieldset?${q}`,

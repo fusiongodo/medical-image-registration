@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { spawn } from 'child_process';
 import { resolve } from 'path';
 import type { RequestHandler } from './$types';
-import { pairCount } from '$lib/server/pairs';
+import { normalizeDataset, pairCount } from '$lib/server/datasets';
 
 const REPO_ROOT = resolve('..');
 const PYTHON = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
@@ -48,12 +48,14 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (!body || typeof body.name !== 'string' || !Array.isArray(body.pairs)) {
 		error(400, 'Expected { name: string, pairs: number[], ... }');
 	}
+	const dataset = normalizeDataset(typeof body.dataset === 'string' ? body.dataset : 'muromi');
+	const n = pairCount(dataset);
 	const pairs = (body.pairs as unknown[])
 		.map((p) => Number(p))
-		.filter((p) => Number.isInteger(p) && p >= 0 && p < pairCount());
+		.filter((p) => Number.isInteger(p) && p >= 0 && p < n);
 	if (!pairs.length) error(400, 'No valid pairs');
 
-	const args = ['create', '--name', body.name, '--pairs', pairs.join(',')];
+	const args = ['create', '--name', body.name, '--pairs', pairs.join(','), '--dataset', dataset];
 	if (typeof body.id === 'string' && body.id) args.push('--id', body.id);
 	if (typeof body.notes === 'string') args.push('--notes', body.notes);
 	if (Array.isArray(body.lams) && body.lams.length) args.push('--lams', body.lams.join(','));

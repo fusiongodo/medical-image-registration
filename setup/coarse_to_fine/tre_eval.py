@@ -11,7 +11,7 @@ import numpy as np
 from scipy.ndimage import map_coordinates
 
 import conf
-from setup.coarse_to_fine.identity import fingerprint_matches, pair_fingerprint
+from setup.coarse_to_fine.identity import fingerprint_matches
 from setup.coarse_to_fine.reg_branches import CURATED_ROOT
 
 from regWSI import paths
@@ -67,8 +67,11 @@ def load_landmarks(pair_id: int) -> list[dict]:
     if not path.is_file():
         return []
     data = json.loads(path.read_text())
-    if not fingerprint_matches(pair_id, data.get("identity")):
-        raise RuntimeError("landmarks identity does not match current labels")
+    from setup import datasets as ds
+
+    if ds.active_dataset() != "acrobat":
+        if not fingerprint_matches(pair_id, data.get("identity")):
+            raise RuntimeError("landmarks identity does not match current labels")
     return list(data.get("points") or [])
 
 
@@ -77,6 +80,13 @@ def deskew_disp_norm(affine, xn: np.ndarray, yn: np.ndarray) -> tuple[np.ndarray
     du = a0 + a1 * xn + s * yn
     dv = b0 + s * xn + b2 * yn
     return du, dv
+
+
+def apply_rigid_norm(rigid, xn: np.ndarray, yn: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    (r00, r01, tx), (r10, r11, ty) = rigid
+    xp = float(r00) * xn + float(r01) * yn + float(tx)
+    yp = float(r10) * xn + float(r11) * yn + float(ty)
+    return xp, yp
 
 
 def field_disp_canvas(
@@ -164,6 +174,7 @@ def tre_field_payload(
     h: int,
     scale: float,
     deskew_affine=None,
+    rigid=None,
 ) -> np.ndarray:
     depth5 = (
         field_payload.get("depths", {}).get("5")
@@ -173,8 +184,11 @@ def tre_field_payload(
     he = np.array([p["he"] for p in points], dtype=float)
     ihc = np.array([p["ihc"] for p in points], dtype=float)
     he_xy = np.stack([he[:, 0] * w, he[:, 1] * h], axis=1)
-    ihc_xy = np.stack([ihc[:, 0] * w, ihc[:, 1] * h], axis=1)
     xn, yn = ihc[:, 0], ihc[:, 1]
+
+    if rigid is not None:
+        xn, yn = apply_rigid_norm(rigid, xn, yn)
+    base_xy = np.stack([xn * w, yn * h], axis=1)
 
     du_n = np.zeros(len(points))
     dv_n = np.zeros(len(points))
@@ -184,7 +198,7 @@ def tre_field_payload(
     fdx, fdy = field_disp_canvas(depth5, xn, yn, scale)
     dx = du_n * w + fdx
     dy = dv_n * h + fdy
-    pred = ihc_xy + np.stack([dx, dy], axis=1)
+    pred = base_xy + np.stack([dx, dy], axis=1)
     return np.linalg.norm(pred - he_xy, axis=1)
 
 
@@ -195,6 +209,7 @@ def tre_field_file(
     h: int,
     scale: float,
     deskew_path: Path | None = None,
+    rigid_path: Path | None = None,
 ) -> np.ndarray:
     field = json.loads(field_path.read_text())
     deskew_aff = None
@@ -202,7 +217,14 @@ def tre_field_file(
         deskew_aff = json.loads(deskew_path.read_text()).get("affine")
     elif (field_path.parent / "deskew.json").is_file():
         deskew_aff = json.loads((field_path.parent / "deskew.json").read_text()).get("affine")
-    return tre_field_payload(points, field, w, h, scale, deskew_affine=deskew_aff)
+    rigid = None
+    if rigid_path is not None and rigid_path.is_file():
+        rigid = json.loads(rigid_path.read_text()).get("rigid")
+    elif (field_path.parent / "rigid.json").is_file():
+        rigid = json.loads((field_path.parent / "rigid.json").read_text()).get("rigid")
+    return tre_field_payload(
+        points, field, w, h, scale, deskew_affine=deskew_aff, rigid=rigid
+    )
 
 
 def annotate_tile_means(st: dict, scale: float) -> dict:
@@ -271,11 +293,14 @@ def resolve_curated_set_dir(
 
 def compute_pair_baseline(pair_id: int) -> dict:
     """none + regwsi TRE (no method matrix)."""
+    from setup import datasets as ds
+
     points = load_landmarks(pair_id)
     w, h, scale = canvas_scale(pair_id)
     result: dict = {
         "pair_id": pair_id,
-        "identity": pair_fingerprint(pair_id),
+        "dataset": ds.active_dataset(),
+        "identity": ds.pair_fingerprint(pair_id),
         "n": len(points),
         "canvas": [w, h],
         "scale": scale,

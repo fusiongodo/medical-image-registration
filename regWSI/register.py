@@ -56,9 +56,19 @@ def _find_warped_source(out: Path) -> Path | None:
     return None
 
 
-def register_pair(pair_id: int, do_export: bool = False, force_export: bool = False) -> dict:
-    if do_export or not paths.he_tiff(pair_id).is_file() or not paths.ihc_tiff(pair_id).is_file():
-        export_pair(pair_id, force=force_export)
+def register_pair(
+    pair_id: int,
+    do_export: bool = False,
+    force_export: bool = False,
+    *,
+    persist_rigid: bool = True,
+) -> dict:
+    from setup import datasets as ds
+
+    dataset = ds.active_dataset()
+    if dataset == "muromi":
+        if do_export or not paths.he_tiff(pair_id).is_file() or not paths.ihc_tiff(pair_id).is_file():
+            export_pair(pair_id, force=force_export)
 
     he = paths.he_tiff(pair_id)
     ihc = paths.ihc_tiff(pair_id)
@@ -74,6 +84,9 @@ def register_pair(pair_id: int, do_export: bool = False, force_export: bool = Fa
     device = _device()
     _patch_device(registration_params, device)
     registration_params["loading_params"]["loader"] = "tiff"
+    init_params = registration_params.get("initial_registration_params") or {}
+    init_params["save_results"] = True
+    registration_params["initial_registration_params"] = init_params
 
     temp = paths.pair_dir(pair_id) / "tmp"
     if temp.exists():
@@ -87,7 +100,7 @@ def register_pair(pair_id: int, do_export: bool = False, force_export: bool = Fa
         "case_name": f"pair_{pair_id}",
         "save_displacement_field": True,
         "copy_target": True,
-        "delete_temporary_results": True,
+        "delete_temporary_results": False,
         "temporary_path": str(temp),
     }
     deeperhistreg.run_registration(**config)
@@ -98,6 +111,23 @@ def register_pair(pair_id: int, do_export: bool = False, force_export: bool = Fa
             f"registration finished without displacement_field.mha for pair {pair_id}; "
             f"check logs under {out}"
         )
+
+    rigid_store = None
+    if persist_rigid:
+        from regWSI.extract_rigid import find_initial_df, persist_regwsi_rigid
+
+        init_df = find_initial_df(temp, out)
+        if init_df is None:
+            init_df = df
+        rigid_store = persist_regwsi_rigid(
+            pair_id,
+            init_df,
+            dataset=dataset,
+            source="regwsi_initial" if init_df != df else "regwsi_composed_fallback",
+        )
+
+    if temp.exists():
+        shutil.rmtree(temp, ignore_errors=True)
 
     warped = _find_warped_source(out)
     dest = paths.warped_ihc(pair_id)
@@ -121,9 +151,15 @@ def register_pair(pair_id: int, do_export: bool = False, force_export: bool = Fa
             to_template_shape=True,
         )
 
+    identity = (
+        ds.pair_fingerprint(pair_id, dataset)
+        if dataset == "acrobat"
+        else pair_fingerprint(pair_id)
+    )
     meta = {
         "pair_id": pair_id,
-        "identity": pair_fingerprint(pair_id),
+        "dataset": dataset,
+        "identity": identity,
         "level": paths.LEVEL,
         "scale": paths.SCALE,
         "canvas": [paths.CANVAS_W, paths.CANVAS_H],
@@ -133,8 +169,19 @@ def register_pair(pair_id: int, do_export: bool = False, force_export: bool = Fa
         "target": "he",
         "displacement_field": str(df.relative_to(REPO_ROOT)),
         "warped_ihc": str(dest.relative_to(REPO_ROOT)) if dest.is_file() else None,
+        "rigid_path": str(ds.rigid_path(pair_id, dataset).relative_to(REPO_ROOT))
+        if rigid_store
+        else None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    if paths.meta_json(pair_id).is_file():
+        try:
+            prev = json.loads(paths.meta_json(pair_id).read_text())
+            for k in ("case_id", "he_file", "ihc_file", "ihc_stain", "he", "ihc"):
+                if k in prev and k not in meta:
+                    meta[k] = prev[k]
+        except Exception:
+            pass
     paths.meta_json(pair_id).write_text(json.dumps(meta, indent=2))
     return meta
 

@@ -1,8 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
-import { pairCount } from '$lib/server/pairs';
-
-const REPO_ROOT = resolve('..');
+import { normalizeDataset, pairCount, pairDir, type DatasetId } from '$lib/server/datasets';
 
 export type FullMeta = { w: number; h: number; qw: number; qh: number; nq?: number; scale?: number };
 
@@ -17,13 +15,14 @@ export function layersReady(fullDir: string, nq: number, layers: readonly string
 	});
 }
 
-export function loadOverlayPair(pairParam: string) {
-	const numPairs = pairCount();
+export function loadOverlayPair(pairParam: string, datasetRaw?: string | null) {
+	const dataset = normalizeDataset(datasetRaw);
+	const numPairs = pairCount(dataset);
 	const pairId = Number(pairParam);
 	if (!Number.isInteger(pairId) || pairId < 0 || pairId >= numPairs) {
-		return { error: 'out_of_range' as const, pairId, numPairs };
+		return { error: 'out_of_range' as const, pairId, numPairs, dataset };
 	}
-	const dir = resolve(REPO_ROOT, 'data', 'regwsi', String(pairId));
+	const dir = pairDir(dataset, pairId);
 	const fullDir = resolve(dir, 'full');
 	const metaPath = resolve(fullDir, 'meta.json');
 	let fullMeta: FullMeta | null = null;
@@ -45,6 +44,7 @@ export function loadOverlayPair(pairParam: string) {
 		error: null as null,
 		pairId,
 		numPairs,
+		dataset: dataset as DatasetId,
 		fullMeta,
 		heReady,
 		warpedReady,

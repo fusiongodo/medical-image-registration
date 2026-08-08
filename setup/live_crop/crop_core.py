@@ -48,6 +48,18 @@ PAD_FILL = 255
 DESKEW_DIR = conf.PROJECT_ROOT / "data" / "deskew"
 RIGID_DIR = conf.PROJECT_ROOT / "data" / "rigid" / "light_v1"
 
+
+def _dataset() -> str:
+    from setup import datasets as ds
+
+    return ds.active_dataset()
+
+
+def _rigid_dir() -> Path:
+    from setup import datasets as ds
+
+    return ds.rigid_root()
+
 # Pages are cached as grid*CNN greyscale (~180 MB/side at level 5) rather than
 # the raw multi-GB RGB page, so cap the warm cache by total bytes to keep the
 # worker (and the run.py candidate subprocess) memory bounded.
@@ -57,10 +69,10 @@ _labels_cache = None
 _labels_mtime: float | None = None
 _page_choice_cache: dict[tuple[int, int], tuple[int, int, int] | None] = {}
 _mask_cache: dict[int, "np.ndarray | None"] = {}
-_page_cache: "OrderedDict[tuple[int, int, int], np.ndarray]" = OrderedDict()
+_page_cache: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
 # pair_id -> (json mtime | None, affine coeffs | None); self-invalidates on mtime.
 _deskew_cache: dict[int, tuple[float | None, "tuple | None"]] = {}
-_rigid_cache: dict[int, tuple[float | None, "tuple | None"]] = {}
+_rigid_cache: dict[tuple, tuple[float | None, "tuple | None"]] = {}
 
 
 def _labels() -> list[dict]:
@@ -84,6 +96,10 @@ def _labels() -> list[dict]:
 
 
 def num_pairs() -> int:
+    if _dataset() == "acrobat":
+        from setup import datasets as ds
+
+        return ds.pair_count("acrobat")
     return len(_labels())
 
 
@@ -101,8 +117,19 @@ def choose_page(pair_id: int, level: int) -> tuple[int, int, int] | None:
     if key in _page_choice_cache:
         return _page_choice_cache[key]
 
-    he_id, ihc_id = pair_image_ids(pair_id)
     grid = 2 ** level
+    if _dataset() == "acrobat":
+        from setup import datasets as ds
+
+        he = ds.pair_dir(pair_id, "acrobat") / "he.tiff"
+        if he.is_file():
+            chosen = (0, CNN_H, CNN_W)
+        else:
+            chosen = None
+        _page_choice_cache[key] = chosen
+        return chosen
+
+    he_id, ihc_id = pair_image_ids(pair_id)
     chosen = None
     with (
         tifffile.TiffFile(_image_path(he_id)) as fixed_slide,
@@ -118,6 +145,35 @@ def choose_page(pair_id: int, level: int) -> tuple[int, int, int] | None:
 
     _page_choice_cache[key] = chosen
     return chosen
+
+
+def _acrobat_compact(pair_id: int, level: int, side: str) -> np.ndarray:
+    from setup import datasets as ds
+
+    path = ds.pair_dir(pair_id, "acrobat") / f"{side}.tiff"
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    key = ("acrobat", pair_id, level, side)
+    compact = _page_cache.get(key)
+    if compact is not None:
+        _page_cache.move_to_end(key)
+        return compact
+    with Image.open(path) as im:
+        rgb = np.asarray(im.convert("RGB"), dtype=np.uint8)
+    gray = (
+        0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
+    ).astype(np.uint8)
+    grid = 2 ** level
+    target = (grid * CNN_W, grid * CNN_H)
+    compact = np.asarray(
+        Image.fromarray(gray, mode="L").resize(target, Image.Resampling.BILINEAR),
+        dtype=np.uint8,
+    )
+    _page_cache[key] = compact
+    _page_cache.move_to_end(key)
+    while _page_cache_bytes() > MAX_CACHE_BYTES and len(_page_cache) > 1:
+        _page_cache.popitem(last=False)
+    return compact
 
 
 def _pair_mask(pair_id: int) -> "np.ndarray | None":
@@ -150,6 +206,16 @@ def tissue_tiles(pair_id: int, level: int) -> dict:
         return {"grid": grid, "page": None, "tile_w": 0, "tile_h": 0, "tiles": []}
 
     page_idx, tile_h, tile_w = chosen
+    if _dataset() == "acrobat":
+        tiles = [f"{x}_{y}" for y in range(grid) for x in range(grid)]
+        return {
+            "grid": grid,
+            "page": page_idx,
+            "tile_w": tile_w,
+            "tile_h": tile_h,
+            "tiles": tiles,
+        }
+
     mask = _pair_mask(pair_id)
     threshold = pair_mask.PRODUCTION_MIN_INSIDE_FRACTION
 
@@ -267,12 +333,13 @@ def _deskew_affine(pair_id: int) -> "tuple | None":
 
 def _rigid_affine(pair_id: int) -> "tuple | None":
     """
-    Rigid 2×3 IHC→HE matrix in normalised [0,1] space from
-    data/rigid/light_v1/{pair}.json, or None. Mtime-cached like deskew.
+    Rigid 2×3 IHC→HE matrix in normalised [0,1] space from the active
+    dataset rigid root, or None. Mtime-cached like deskew.
     """
-    path = RIGID_DIR / f"{pair_id}.json"
+    path = _rigid_dir() / f"{pair_id}.json"
     mtime = path.stat().st_mtime if path.exists() else None
-    cached = _rigid_cache.get(pair_id)
+    cache_key = (_dataset(), pair_id)
+    cached = _rigid_cache.get(cache_key)
     if cached is not None and cached[0] == mtime:
         return cached[1]
     rigid = None
@@ -281,7 +348,7 @@ def _rigid_affine(pair_id: int) -> "tuple | None":
             rigid = json.loads(path.read_text()).get("rigid")
         except Exception:
             rigid = None
-    _rigid_cache[pair_id] = (mtime, rigid)
+    _rigid_cache[cache_key] = (mtime, rigid)
     return rigid
 
 
@@ -355,19 +422,20 @@ def _crop_warped(
 def _crop_tile(pair_id: int, level: int, x: int, y: int, side: str, dx: float, dy: float) -> np.ndarray:
     """np.uint8 (CNN_H, CNN_W) greyscale tile with a CNN-pixel offset.
 
-    The moving (IHC) side is resampled through rigid (light_v1) then deskew when
+    The moving (IHC) side is resampled through rigid then deskew when
     either is stored; the fixed (HE) side is always a plain padded crop.
     """
-    he_id, ihc_id = pair_image_ids(pair_id)
-    image_id = he_id if side == "he" else ihc_id
-
     chosen = choose_page(pair_id, level)
     if chosen is None:
         raise ValueError(f"no pyramid page for pair {pair_id} level {level}")
     page_idx = chosen[0]
-
     grid = 2 ** level
-    gpage = _compact_page(image_id, level, page_idx, grid)
+    if _dataset() == "acrobat":
+        gpage = _acrobat_compact(pair_id, level, "he" if side == "he" else "ihc")
+    else:
+        he_id, ihc_id = pair_image_ids(pair_id)
+        image_id = he_id if side == "he" else ihc_id
+        gpage = _compact_page(image_id, level, page_idx, grid)
     if side != "he":
         sample_map = _ihc_sample_map(pair_id)
         if sample_map is not None:

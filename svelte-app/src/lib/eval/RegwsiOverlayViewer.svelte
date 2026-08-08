@@ -9,7 +9,8 @@
 		subtitle = '',
 		movingLayer,
 		fullMeta,
-		movingReady = true
+		movingReady = true,
+		dataset = 'muromi'
 	}: {
 		pairId: number;
 		title: string;
@@ -17,6 +18,7 @@
 		movingLayer: MovingLayer;
 		fullMeta: { w: number; h: number; qw: number; qh: number; nq?: number };
 		movingReady?: boolean;
+		dataset?: 'muromi' | 'acrobat';
 	} = $props();
 
 	const MAX_ZOOM = 40;
@@ -57,7 +59,7 @@
 	const hLines = $derived(Array.from({ length: GRID + 1 }, (_, i) => i * cellH));
 
 	function quadSrc(layer: 'he' | MovingLayer, qy: number, qx: number) {
-		return `/api/eval/full?pair=${pairId}&layer=${layer}&qy=${qy}&qx=${qx}`;
+		return `/api/eval/full?pair=${pairId}&layer=${layer}&qy=${qy}&qx=${qx}&dataset=${dataset}`;
 	}
 
 	function fit() {

@@ -37,27 +37,38 @@ def branch_root(lam: str | None = None, field_estimator: str | None = None) -> P
     return CURATED_ROOT / normalize_lam(lam) / normalize_estimator(field_estimator)
 
 
-def cache_dir(lam: str | None = None) -> Path:
-    """FFT stays at data/c2f_cache/; other LAMs use data/c2f_cache/{lam}/."""
+def cache_dir(lam: str | None = None, dataset: str | None = None) -> Path:
+    """FFT stays at data/c2f_cache/; other LAMs use data/c2f_cache/{lam}/.
+
+    Non-muromi datasets nest under data/c2f_cache/{dataset}/…
+    """
+    from setup import datasets as ds
+
     v = normalize_lam(lam)
+    ns = ds.cache_namespace(dataset)
+    root = CACHE_ROOT if ns is None else CACHE_ROOT / ns
     if v == "fft":
-        return CACHE_ROOT
-    return CACHE_ROOT / v
+        return root
+    return root / v
 
 
-def cache_path(pair_id: int, depth: int, lam: str | None = None) -> Path:
-    return cache_dir(lam) / f"{int(pair_id)}_d{int(depth)}.json"
+def cache_path(
+    pair_id: int, depth: int, lam: str | None = None, dataset: str | None = None
+) -> Path:
+    return cache_dir(lam, dataset=dataset) / f"{int(pair_id)}_d{int(depth)}.json"
 
 
-def cache_paths(pair_id: int, lam: str | None = None) -> list[Path]:
-    return sorted(cache_dir(lam).glob(f"{int(pair_id)}_d*.json"))
+def cache_paths(
+    pair_id: int, lam: str | None = None, dataset: str | None = None
+) -> list[Path]:
+    return sorted(cache_dir(lam, dataset=dataset).glob(f"{int(pair_id)}_d*.json"))
 
 
-def clear_lam_caches(pair_id: int) -> int:
+def clear_lam_caches(pair_id: int, dataset: str | None = None) -> int:
     """Delete candidate caches for every LAM for this pair (prealignment invalidation)."""
     n = 0
     for lam in LAMS:
-        for path in cache_paths(pair_id, lam):
+        for path in cache_paths(pair_id, lam, dataset=dataset):
             path.unlink()
             n += 1
     return n

@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import type { PageServerLoad } from './$types';
-import { pairCount } from '$lib/server/pairs';
+import { datasetFromUrl, pairCount, pairDir } from '$lib/server/datasets';
 
 const REPO_ROOT = resolve('..');
 const BASE_LAYERS = ['he', 'ihc'] as const;
@@ -22,13 +22,14 @@ function layersReady(
 	});
 }
 
-export const load: PageServerLoad = ({ params }) => {
-	const numPairs = pairCount();
+export const load: PageServerLoad = ({ params, url }) => {
+	const dataset = datasetFromUrl(url);
+	const numPairs = pairCount(dataset);
 	const pairId = Number(params.pair);
 	if (!Number.isInteger(pairId) || pairId < 0 || pairId >= numPairs) {
 		error(404, `pair ${params.pair} out of range`);
 	}
-	const dir = resolve(REPO_ROOT, 'data', 'regwsi', String(pairId));
+	const dir = pairDir(dataset, pairId);
 	const fullDir = resolve(dir, 'full');
 	const metaPath = resolve(fullDir, 'meta.json');
 	let fullMeta: { w: number; h: number; qw: number; qh: number; nq?: number; scale?: number } | null =
@@ -46,39 +47,41 @@ export const load: PageServerLoad = ({ params }) => {
 
 	let mainSetId: string | null = null;
 	let mainSetName: string | null = null;
-	const activePath = resolve(
-		REPO_ROOT,
-		'data',
-		'curated_field_sets',
-		'fft',
-		'tps',
-		String(pairId),
-		'active.json'
-	);
-	if (existsSync(activePath)) {
-		try {
-			const active = JSON.parse(readFileSync(activePath, 'utf-8'));
-			mainSetId = active.main_set_id ?? active.set_id ?? null;
-			if (mainSetId) {
-				const manifestPath = resolve(
-					REPO_ROOT,
-					'data',
-					'curated_field_sets',
-					'fft',
-					'tps',
-					String(pairId),
-					mainSetId,
-					'manifest.json'
-				);
-				if (existsSync(manifestPath)) {
-					const m = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-					mainSetName = m.name ?? mainSetId;
-				} else {
-					mainSetName = mainSetId;
+	if (dataset === 'muromi') {
+		const activePath = resolve(
+			REPO_ROOT,
+			'data',
+			'curated_field_sets',
+			'fft',
+			'tps',
+			String(pairId),
+			'active.json'
+		);
+		if (existsSync(activePath)) {
+			try {
+				const active = JSON.parse(readFileSync(activePath, 'utf-8'));
+				mainSetId = active.main_set_id ?? active.set_id ?? null;
+				if (mainSetId) {
+					const manifestPath = resolve(
+						REPO_ROOT,
+						'data',
+						'curated_field_sets',
+						'fft',
+						'tps',
+						String(pairId),
+						mainSetId,
+						'manifest.json'
+					);
+					if (existsSync(manifestPath)) {
+						const m = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+						mainSetName = m.name ?? mainSetId;
+					} else {
+						mainSetName = mainSetId;
+					}
 				}
+			} catch {
+				mainSetId = null;
 			}
-		} catch {
-			mainSetId = null;
 		}
 	}
 
@@ -98,6 +101,7 @@ export const load: PageServerLoad = ({ params }) => {
 	return {
 		pairId,
 		numPairs,
+		dataset,
 		fullReady,
 		warpedReady,
 		fullMeta,

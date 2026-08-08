@@ -31,6 +31,7 @@
 		mainSetName = null,
 		mainSetId = null,
 		emptyHint = 'Add correspondences to compute TRE',
+		dataset = 'muromi',
 		onClose = undefined
 	}: {
 		pairId?: number | null;
@@ -41,6 +42,7 @@
 		mainSetName?: string | null;
 		mainSetId?: string | null;
 		emptyHint?: string;
+		dataset?: 'muromi' | 'acrobat';
 		onClose?: (() => void) | undefined;
 	} = $props();
 
@@ -72,12 +74,16 @@
 	function openOverlay(kind: 'regwsi' | 'fieldset', estimator?: 'tps' | 'wendland') {
 		if (pairId == null) return;
 		if (kind === 'regwsi') {
-			window.open(`/eval/${pairId}/overlay/regwsi`, `eval-overlay-${pairId}-regwsi`);
+			window.open(
+				`/eval/${pairId}/overlay/regwsi?dataset=${dataset}`,
+				`eval-overlay-${pairId}-regwsi`
+			);
 			return;
 		}
 		const est = estimator ?? 'tps';
+		const q = new URLSearchParams({ estimator: est, dataset });
 		window.open(
-			`/eval/${pairId}/overlay/fieldset?estimator=${est}`,
+			`/eval/${pairId}/overlay/fieldset?${q}`,
 			`eval-overlay-${pairId}-fieldset-${est}`
 		);
 	}

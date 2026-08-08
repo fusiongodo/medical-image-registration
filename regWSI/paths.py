@@ -42,8 +42,14 @@ FULL_LAYERS = ("he", "ihc", "ihc_warped")
 FULL_QUAD_COORDS = tuple((qy, qx) for qy in range(FULL_NQ) for qx in range(FULL_NQ))
 
 
+def regwsi_root() -> Path:
+    from setup import datasets as ds
+
+    return ds.regwsi_root()
+
+
 def pair_dir(pair_id: int) -> Path:
-    return REGWSI_ROOT / str(pair_id)
+    return regwsi_root() / str(pair_id)
 
 
 def he_tiff(pair_id: int) -> Path:

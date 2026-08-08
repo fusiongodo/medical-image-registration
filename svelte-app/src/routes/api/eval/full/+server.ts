@@ -2,9 +2,8 @@ import { error, json } from '@sveltejs/kit';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import type { RequestHandler } from './$types';
-import { pairCount } from '$lib/server/pairs';
+import { datasetFromUrl, pairCount, pairDir } from '$lib/server/datasets';
 
-const REPO_ROOT = resolve('..');
 const BASE_LAYERS = new Set([
 	'he',
 	'ihc',
@@ -18,20 +17,21 @@ function layerAllowed(layer: string): boolean {
 	return BASE_LAYERS.has(layer) || /^ihc_eval_[a-z0-9_]+$/.test(layer);
 }
 
-function fullDir(pairId: number) {
-	return resolve(REPO_ROOT, 'data', 'regwsi', String(pairId), 'full');
+function fullDir(dataset: ReturnType<typeof datasetFromUrl>, pairId: number) {
+	return resolve(pairDir(dataset, pairId), 'full');
 }
 
 export const GET: RequestHandler = async ({ url }) => {
 	const pair = url.searchParams.get('pair');
 	const layer = url.searchParams.get('layer');
 	const metaOnly = url.searchParams.get('meta') === '1';
+	const dataset = datasetFromUrl(url);
 
 	if (!pair || !/^\d+$/.test(pair)) error(400, 'Missing or invalid pair');
 	const pairId = Number(pair);
-	if (pairId < 0 || pairId >= pairCount()) error(404, `pair ${pair} out of range`);
+	if (pairId < 0 || pairId >= pairCount(dataset)) error(404, `pair ${pair} out of range`);
 
-	const dir = fullDir(pairId);
+	const dir = fullDir(dataset, pairId);
 	const metaPath = resolve(dir, 'meta.json');
 
 	if (metaOnly) {

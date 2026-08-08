@@ -214,10 +214,14 @@ def create_batch(
     config: dict | None = None,
     notes: str | None = None,
     batch_id: str | None = None,
+    dataset: str | None = None,
 ) -> dict:
+    from setup import datasets as ds
+
     bid = batch_id or slugify(name)
     if manifest_path(bid).exists():
         raise FileExistsError(f"batch {bid} already exists")
+    ds_name = ds.normalize_dataset(dataset)
     cfg = cell_config(config)
     cfg["force"] = bool((config or {}).get("force", False))
     lam_list = list(lams) if lams else list(LAMS)
@@ -228,9 +232,14 @@ def create_batch(
     for est in est_list:
         if est not in FIELD_ESTIMATORS:
             raise ValueError(f"unknown estimator {est!r}")
+    n_pairs = ds.pair_count(ds_name)
+    for p in pairs:
+        if int(p) < 0 or int(p) >= n_pairs:
+            raise ValueError(f"pair {p} out of range for dataset {ds_name} (n={n_pairs})")
     manifest = {
         "id": bid,
         "name": name,
+        "dataset": ds_name,
         "created": int(time.time()),
         "pairs": [int(p) for p in pairs],
         "lams": lam_list,

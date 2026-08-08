@@ -58,10 +58,13 @@ def _batch_runtime_avgs(manifest: dict, batch_id: str) -> dict:
 
 
 def compute_batch_pair_tre(batch_id: str, pair_id: int) -> dict:
+    from setup import datasets as ds
+
     manifest = eval_runs.read_manifest(batch_id)
     if manifest is None:
         return {"error": f"no batch {batch_id}"}
 
+    ds.set_active_dataset(manifest.get("dataset"))
     baseline = tre_eval.compute_pair_baseline(pair_id)
     if "error" in baseline:
         return baseline

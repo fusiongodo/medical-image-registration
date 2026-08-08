@@ -1,12 +1,27 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import EvalTreMatrix, { type BatchTreResult } from '$lib/eval/EvalTreMatrix.svelte';
 	import type { BatchJobState } from '$lib/evalJobs';
 
-	let { data } = $props();
+	type DatasetId = 'muromi' | 'acrobat';
+	type EvalPageData = {
+		pairs: {
+			pairId: number;
+			ready: boolean;
+			landmarkCount: number;
+			mainSetId: string | null;
+			mainSetName: string | null;
+		}[];
+		dataset: DatasetId;
+		datasets: { id: DatasetId; label: string; pairCount: number }[];
+	};
+
+	let { data }: { data: EvalPageData } = $props();
 
 	interface BatchManifest {
 		id: string;
 		name: string;
+		dataset?: string;
 		pairs: number[];
 		lams?: string[];
 		estimators?: string[];
@@ -35,28 +50,41 @@
 	let runJob = $state<BatchJobState | null>(null);
 	let runPoll: ReturnType<typeof setInterval> | null = null;
 
+	const dataset = $derived(data.dataset ?? 'muromi');
 	const selectedBatch = $derived(batches.find((b) => b.id === batchId) ?? null);
 	const listPairs = $derived.by(() => {
 		if (selectedBatch?.pairs?.length) {
 			const set = new Set(selectedBatch.pairs);
 			return data.pairs.filter((p) => set.has(p.pairId));
 		}
+		if (dataset === 'acrobat') return data.pairs;
 		return data.pairs.filter((p) => p.landmarkCount > 0);
 	});
 	const selected = $derived(
 		selectedPair == null ? null : (data.pairs.find((p) => p.pairId === selectedPair) ?? null)
 	);
-	const landmarkPairs = $derived(data.pairs.filter((p) => p.landmarkCount > 0));
+	const selectablePairs = $derived(
+		dataset === 'acrobat' ? data.pairs : data.pairs.filter((p) => p.landmarkCount > 0)
+	);
 
 	async function loadBatches() {
 		const r = await fetch('/api/eval/batches');
 		if (!r.ok) throw new Error(await r.text());
 		const j = await r.json();
-		batches = Array.isArray(j.batches) ? j.batches : [];
+		const all = Array.isArray(j.batches) ? j.batches : [];
+		batches = all.filter((b: BatchManifest) => (b.dataset || 'muromi') === dataset);
 		if (!batchId && batches.length) batchId = batches[0].id;
 		if (batchId && !batches.some((b) => b.id === batchId)) {
 			batchId = batches[0]?.id ?? null;
 		}
+	}
+
+	function setDataset(next: DatasetId) {
+		if (next === dataset) return;
+		batchId = null;
+		selectedPair = null;
+		tre = null;
+		void goto(`/eval?dataset=${next}`, { invalidateAll: true });
 	}
 
 	async function fetchTre(pairId: number) {
@@ -113,7 +141,7 @@
 		const d = new Date();
 		const pad = (n: number) => String(n).padStart(2, '0');
 		newName = `run-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
-		newPairs = landmarkPairs.map((p) => p.pairId);
+		newPairs = selectablePairs.map((p) => p.pairId);
 		createErr = null;
 		showNew = true;
 	}
@@ -132,6 +160,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					name: newName,
+					dataset,
 					pairs: newPairs,
 					config: {
 						wendland_eps: newWendland,
@@ -196,6 +225,7 @@
 	}
 
 	$effect(() => {
+		void dataset;
 		void loadBatches().catch((e) => {
 			treErr = e instanceof Error ? e.message : 'failed to load batches';
 		});
@@ -212,6 +242,17 @@
 
 <div class="page">
 	<div class="batch-bar">
+		<label>
+			Dataset
+			<select
+				value={dataset}
+				onchange={(e) => setDataset((e.currentTarget as HTMLSelectElement).value as DatasetId)}
+			>
+				{#each data.datasets as d}
+					<option value={d.id}>{d.label} ({d.pairCount})</option>
+				{/each}
+			</select>
+		</label>
 		<label>
 			Batch
 			<select
@@ -241,7 +282,7 @@
 		{:else if selectedBatch?.status?.state}
 			<span class="prog muted">status: {selectedBatch.status.state}</span>
 		{/if}
-		<a class="link" href="/eval/0/annotate">Annotate landmarks</a>
+		<a class="link" href={`/eval/0/annotate?dataset=${dataset}`}>Annotate landmarks</a>
 	</div>
 
 	<div class="layout" class:with-panel={selectedPair != null}>
@@ -249,8 +290,13 @@
 			<header>
 				<h1>Evaluation</h1>
 				<p class="sub">
-					Batch-driven TRE for LAM × field estimator. Landmarks stay under data/regwsi; methods under
-					data/eval_runs.
+					{#if dataset === 'acrobat'}
+						ACROBAT: regWSI first (DF + rigid), then LAM × field. Official TRE via Grand Challenge
+						upload.
+					{:else}
+						muROMI: batch TRE for LAM × field. Landmarks under data/regwsi; methods under
+						data/eval_runs.
+					{/if}
 				</p>
 			</header>
 			<ul class="list">
@@ -266,8 +312,8 @@
 									<span class="badge">{p.ready ? 'regWSI' : 'no regWSI'}</span>
 								</span>
 							</button>
-							<a class="action" href={`/eval/${p.pairId}/annotate`}>Annotate</a>
-							<a class="action" href={`/eval/${p.pairId}/overlay/regwsi`}>Overlay</a>
+							<a class="action" href={`/eval/${p.pairId}/annotate?dataset=${dataset}`}>Annotate</a>
+							<a class="action" href={`/eval/${p.pairId}/overlay/regwsi?dataset=${dataset}`}>Overlay</a>
 						</div>
 					</li>
 				{/each}
@@ -277,6 +323,7 @@
 			<div class="panel-col">
 				<EvalTreMatrix
 					pairId={selectedPair}
+					{dataset}
 					{tre}
 					{treBusy}
 					{treErr}
@@ -297,10 +344,11 @@
 				Name
 				<input bind:value={newName} />
 			</label>
+			<p class="gate-note">Dataset: {dataset}</p>
 			<div class="pair-pick">
-				<span>Pairs with landmarks</span>
+				<span>{dataset === 'acrobat' ? 'ACROBAT pairs' : 'Pairs with landmarks'}</span>
 				<div class="chips">
-					{#each landmarkPairs as p}
+					{#each selectablePairs as p}
 						<button
 							type="button"
 							class="chip"

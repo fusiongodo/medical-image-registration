@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import type { RequestHandler } from './$types';
-import { pairCount } from '$lib/server/pairs';
+import { datasetFromUrl, normalizeDataset, pairCount, pairDir, type DatasetId } from '$lib/server/datasets';
 import { fieldsetJobs, fieldsetJobKey, type FieldsetJobState } from '$lib/eval/fieldsetJobs';
 
 const REPO_ROOT = resolve('..');
@@ -17,8 +17,8 @@ function layerName(estimator: string, lam: string, batch: string | null): string
 	return `ihc_fieldset_${estimator}`;
 }
 
-function layersReady(pairId: number, layer: string): boolean {
-	const dir = resolve(REPO_ROOT, 'data', 'regwsi', String(pairId), 'full');
+function layersReady(dataset: DatasetId, pairId: number, layer: string): boolean {
+	const dir = resolve(pairDir(dataset, pairId), 'full');
 	const metaPath = resolve(dir, 'meta.json');
 	if (!existsSync(metaPath)) return false;
 	let nq = 2;
@@ -35,8 +35,17 @@ function layersReady(pairId: number, layer: string): boolean {
 	return true;
 }
 
-function jobKey(pairId: number, estimator: string, lam: string, batch: string | null): string {
-	return batch ? `${fieldsetJobKey(pairId, estimator)}:${lam}:${batch}` : fieldsetJobKey(pairId, estimator);
+function jobKey(
+	dataset: DatasetId,
+	pairId: number,
+	estimator: string,
+	lam: string,
+	batch: string | null
+): string {
+	const base = batch
+		? `${fieldsetJobKey(pairId, estimator)}:${lam}:${batch}`
+		: fieldsetJobKey(pairId, estimator);
+	return `${dataset}:${base}`;
 }
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -44,25 +53,19 @@ export const GET: RequestHandler = async ({ url }) => {
 	const estimator = url.searchParams.get('estimator') ?? 'tps';
 	const lam = url.searchParams.get('lam') ?? 'fft';
 	const batch = url.searchParams.get('batch');
+	const dataset = datasetFromUrl(url);
 	if (!pair || !/^\d+$/.test(pair)) error(400, 'Missing pair');
 	if (!ESTIMATORS.has(estimator)) error(400, 'invalid estimator');
 	if (!LAMS.has(lam)) error(400, 'invalid lam');
 	const pairId = Number(pair);
-	if (pairId < 0 || pairId >= pairCount()) error(404, `pair ${pair} out of range`);
+	if (pairId < 0 || pairId >= pairCount(dataset)) error(404, `pair ${pair} out of range`);
 
 	const layer = layerName(estimator, lam, batch);
-	const key = jobKey(pairId, estimator, lam, batch);
+	const key = jobKey(dataset, pairId, estimator, lam, batch);
 	const job = fieldsetJobs.get(key) ?? null;
-	const ready = layersReady(pairId, layer);
+	const ready = layersReady(dataset, pairId, layer);
 	let stamp: unknown = null;
-	const stampPath = resolve(
-		REPO_ROOT,
-		'data',
-		'regwsi',
-		String(pairId),
-		'full',
-		`${layer}.stamp.json`
-	);
+	const stampPath = resolve(pairDir(dataset, pairId), 'full', `${layer}.stamp.json`);
 	if (existsSync(stampPath)) {
 		try {
 			stamp = JSON.parse(readFileSync(stampPath, 'utf-8'));
@@ -70,31 +73,32 @@ export const GET: RequestHandler = async ({ url }) => {
 			stamp = null;
 		}
 	}
-	return json({ ready, job, stamp, layer });
+	return json({ ready, job, stamp, layer, dataset });
 };
 
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
 	if (!body || typeof body.pair_id !== 'number') {
-		error(400, 'Expected { pair_id, estimator?, lam?, batch?, force? }');
+		error(400, 'Expected { pair_id, estimator?, lam?, batch?, force?, dataset? }');
 	}
+	const dataset = normalizeDataset(typeof body.dataset === 'string' ? body.dataset : 'muromi');
 	const pairId = body.pair_id as number;
 	const estimator = ESTIMATORS.has(body.estimator) ? body.estimator : 'tps';
 	const lam = LAMS.has(body.lam) ? body.lam : 'fft';
 	const batch = typeof body.batch === 'string' && body.batch ? body.batch : null;
 	const force = body.force === true;
-	if (pairId < 0 || pairId >= pairCount()) {
+	if (pairId < 0 || pairId >= pairCount(dataset)) {
 		error(400, `Pair ${pairId} out of range`);
 	}
 
 	const layer = layerName(estimator, lam, batch);
-	const key = jobKey(pairId, estimator, lam, batch);
+	const key = jobKey(dataset, pairId, estimator, lam, batch);
 	const existing = fieldsetJobs.get(key);
 	if (existing?.running) {
 		return json({ started: false, state: existing });
 	}
 
-	if (!force && layersReady(pairId, layer)) {
+	if (!force && layersReady(dataset, pairId, layer)) {
 		const state: FieldsetJobState = {
 			running: false,
 			done: 1,
@@ -120,7 +124,10 @@ export const POST: RequestHandler = async ({ request }) => {
 	const args = [SCRIPT, String(pairId), '--estimator', estimator, '--lam', lam];
 	if (batch) args.push('--batch', batch);
 	if (force) args.push('--force');
-	const child = spawn(PYTHON, args, { cwd: REPO_ROOT });
+	const child = spawn(PYTHON, args, {
+		cwd: REPO_ROOT,
+		env: { ...process.env, MVR_DATASET: dataset }
+	});
 
 	let stdout = '';
 	let stderr = '';

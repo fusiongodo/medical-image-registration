@@ -11,7 +11,8 @@
 		landmarks,
 		pendingHe,
 		active,
-		onAnnotate
+		onAnnotate,
+		dataset = 'muromi'
 	}: {
 		pairId: number;
 		side: AnnotateSide;
@@ -20,6 +21,7 @@
 		pendingHe: [number, number] | null;
 		active: boolean;
 		onAnnotate: (pt: [number, number]) => void;
+		dataset?: 'muromi' | 'acrobat';
 	} = $props();
 
 	const MAX_ZOOM = 40;
@@ -57,7 +59,7 @@
 	const hLines = $derived(Array.from({ length: GRID + 1 }, (_, i) => i * cellH));
 
 	function quadSrc(qy: number, qx: number) {
-		return `/api/eval/full?pair=${pairId}&layer=${side}&qy=${qy}&qx=${qx}`;
+		return `/api/eval/full?pair=${pairId}&layer=${side}&qy=${qy}&qx=${qx}&dataset=${dataset}`;
 	}
 
 	function fit() {
