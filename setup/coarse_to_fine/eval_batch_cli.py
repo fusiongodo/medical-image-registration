@@ -239,12 +239,6 @@ def run_batch(batch_id: str) -> dict:
     bspline_grid = int(cell_cfg["bspline_grid"])
     bspline_reg = float(cell_cfg["bspline_reg"])
 
-    if ds_name == "acrobat":
-        from setup.acrobat.ingest import ingest
-
-        _emit("ingest", dataset=ds_name, pairs=len(pairs))
-        ingest(unzip=True, pair_ids=pairs, force=False)
-
     jobs = [(p, lam, est) for p in pairs for lam in lams for est in estimators]
     total = len(jobs) + (len(pairs) if ds_name == "acrobat" else 0)
     done = 0
@@ -254,11 +248,29 @@ def run_batch(batch_id: str) -> dict:
             "state": "running",
             "done": 0,
             "total": total,
-            "detail": "start",
+            "detail": "ingest" if ds_name == "acrobat" else "start",
             "error": None,
             "started_at": int(time.time()),
         },
     )
+
+    if ds_name == "acrobat":
+        from setup.acrobat.ingest import ingest
+
+        _emit("ingest", dataset=ds_name, pairs=len(pairs), done=0, total=total)
+        ingest_result = ingest(unzip=True, pair_ids=pairs, force=False)
+        for err in ingest_result.get("errors") or []:
+            _emit(
+                "ingest_skip",
+                pair=err.get("pair_id"),
+                err=str(err.get("error", "")).replace(" ", "_")[:120],
+            )
+        _emit(
+            "ingest_done",
+            exported=ingest_result.get("exported"),
+            failed=ingest_result.get("failed"),
+        )
+
     _emit("start", batch=batch_id, dataset=ds_name, total=total, config_fp=fp)
 
     try:
@@ -282,18 +294,46 @@ def run_batch(batch_id: str) -> dict:
                 )
                 df = rpaths.displacement_field(pair_id)
                 rigid = datasets.rigid_path(pair_id, "acrobat")
+                he = rpaths.he_tiff(pair_id)
+                ihc = rpaths.ihc_tiff(pair_id)
+                if not he.is_file() or not ihc.is_file():
+                    _emit("regwsi_skip", pair=pair_id, reason="missing_inputs")
+                    eval_runs.write_status(
+                        batch_id,
+                        {
+                            "state": "running",
+                            "done": done,
+                            "total": total,
+                            "detail": detail,
+                            "error": None,
+                        },
+                    )
+                    continue
                 if df.is_file() and rigid.is_file() and not force:
                     _emit("regwsi_skip", pair=pair_id)
                 else:
-                    t0 = time.perf_counter()
-                    register_pair(pair_id, persist_rigid=True)
-                    runtime_s = time.perf_counter() - t0
-                    rd = eval_runs.regwsi_dir(batch_id, pair_id)
-                    rd.mkdir(parents=True, exist_ok=True)
-                    (rd / "runtime.json").write_text(
-                        json.dumps({"runtime_s": runtime_s, "pair_id": pair_id}, indent=2)
-                    )
-                    _emit("regwsi_done", pair=pair_id, runtime_s=f"{runtime_s:.3f}")
+                    try:
+                        t0 = time.perf_counter()
+                        register_pair(pair_id, persist_rigid=True)
+                        runtime_s = time.perf_counter() - t0
+                        rd = eval_runs.regwsi_dir(batch_id, pair_id)
+                        rd.mkdir(parents=True, exist_ok=True)
+                        (rd / "runtime.json").write_text(
+                            json.dumps(
+                                {"runtime_s": runtime_s, "pair_id": pair_id}, indent=2
+                            )
+                        )
+                        _emit(
+                            "regwsi_done",
+                            pair=pair_id,
+                            runtime_s=f"{runtime_s:.3f}",
+                        )
+                    except Exception as e:
+                        _emit(
+                            "regwsi_error",
+                            pair=pair_id,
+                            err=str(e).replace(" ", "_")[:160],
+                        )
                 eval_runs.write_status(
                     batch_id,
                     {

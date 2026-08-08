@@ -12,7 +12,7 @@ DATASETS = ("muromi", "acrobat")
 DEFAULT_DATASET = "muromi"
 
 ACROBAT_ROOT = conf.PROJECT_ROOT / "data" / "acrobat"
-ACROBAT_RAW = ACROBAT_ROOT / "raw" / "valid"
+ACROBAT_RAW = ACROBAT_ROOT / "valid"
 ACROBAT_PAIRS = ACROBAT_ROOT / "pairs.json"
 ACROBAT_REGWSI = ACROBAT_ROOT / "regwsi"
 ACROBAT_RIGID = ACROBAT_ROOT / "rigid"
