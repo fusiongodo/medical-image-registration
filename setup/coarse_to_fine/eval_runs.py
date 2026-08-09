@@ -103,6 +103,10 @@ def status_path(batch_id: str) -> Path:
     return batch_dir(batch_id) / "status.json"
 
 
+def shard_status_path(batch_id: str, shard_id: int) -> Path:
+    return batch_dir(batch_id) / f"status.shard-{int(shard_id)}.json"
+
+
 def cell_dir(batch_id: str, pair_id: int, lam: str, estimator: str) -> Path:
     return batch_dir(batch_id) / str(pair_id) / lam / estimator
 
@@ -203,6 +207,100 @@ def write_status(batch_id: str, status: dict) -> None:
     d = batch_dir(batch_id)
     d.mkdir(parents=True, exist_ok=True)
     status_path(batch_id).write_text(json.dumps(status, separators=(",", ":")))
+
+
+def write_shard_status(batch_id: str, shard_id: int, status: dict) -> None:
+    d = batch_dir(batch_id)
+    d.mkdir(parents=True, exist_ok=True)
+    payload = {**status, "worker": int(shard_id)}
+    shard_status_path(batch_id, shard_id).write_text(
+        json.dumps(payload, separators=(",", ":"))
+    )
+
+
+def read_shard_status(batch_id: str, shard_id: int) -> dict | None:
+    path = shard_status_path(batch_id, shard_id)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def list_shard_status_paths(batch_id: str) -> list[Path]:
+    d = batch_dir(batch_id)
+    if not d.is_dir():
+        return []
+    return sorted(d.glob("status.shard-*.json"))
+
+
+def clear_shard_statuses(batch_id: str) -> int:
+    n = 0
+    for path in list_shard_status_paths(batch_id):
+        path.unlink(missing_ok=True)
+        n += 1
+    return n
+
+
+def aggregate_status(batch_id: str) -> dict:
+    shards: list[dict] = []
+    for path in list_shard_status_paths(batch_id):
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            shards.append(payload)
+
+    if not shards:
+        return read_status(batch_id)
+
+    done = sum(int(s.get("done") or 0) for s in shards)
+    total = sum(int(s.get("total") or 0) for s in shards)
+    states = [str(s.get("state") or "idle") for s in shards]
+    errors = [s.get("error") for s in shards if s.get("error")]
+
+    if any(st == "error" for st in states) or errors:
+        state = "error"
+        error = next((e for e in errors if e), "shard error")
+    elif all(st == "done" for st in states):
+        state = "done"
+        error = None
+    elif any(st == "running" for st in states):
+        state = "running"
+        error = None
+    else:
+        state = "idle"
+        error = None
+
+    running = [
+        s for s in shards if str(s.get("state") or "") == "running" and s.get("detail")
+    ]
+    if running:
+        detail = "; ".join(
+            f"w{s.get('worker')}:{s.get('detail')}" for s in running[:4]
+        )
+    else:
+        detail = str(shards[-1].get("detail") or "")
+
+    started = [int(s["started_at"]) for s in shards if s.get("started_at") is not None]
+    finished = [
+        int(s["finished_at"]) for s in shards if s.get("finished_at") is not None
+    ]
+    out: dict = {
+        "state": state,
+        "done": done,
+        "total": total,
+        "detail": detail,
+        "error": error,
+        "workers": len(shards),
+    }
+    if started:
+        out["started_at"] = min(started)
+    if state in ("done", "error") and finished:
+        out["finished_at"] = max(finished)
+    return out
 
 
 def create_batch(

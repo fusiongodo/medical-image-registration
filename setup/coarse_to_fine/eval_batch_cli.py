@@ -5,12 +5,15 @@ Usage:
   python setup/coarse_to_fine/eval_batch_cli.py list
   python setup/coarse_to_fine/eval_batch_cli.py create --name demo --pairs 0,1,4,16
   python setup/coarse_to_fine/eval_batch_cli.py run <batch_id>
+  python setup/coarse_to_fine/eval_batch_cli.py run <batch_id> --pairs 0-9 --skip-ingest --shard-id 0
+  python setup/coarse_to_fine/eval_batch_cli.py run-parallel <batch_id> --workers 10 --skip-ingest
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -31,6 +34,44 @@ from setup.coarse_to_fine.field import (
 from setup.coarse_to_fine.identity import pair_fingerprint
 from setup.coarse_to_fine.reg_branches import cache_path, normalize_estimator, normalize_lam
 from setup.coarse_to_fine.run import cache_candidates
+
+
+def parse_pairs_spec(spec: str) -> list[int]:
+    out: list[int] = []
+    for part in (spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            lo, hi = int(a.strip()), int(b.strip())
+            if hi < lo:
+                lo, hi = hi, lo
+            out.extend(range(lo, hi + 1))
+        else:
+            out.append(int(part))
+    seen: set[int] = set()
+    uniq: list[int] = []
+    for p in out:
+        if p in seen:
+            continue
+        seen.add(p)
+        uniq.append(p)
+    return uniq
+
+
+def split_pair_shards(pairs: list[int], workers: int) -> list[list[int]]:
+    if not pairs:
+        return []
+    n_workers = max(1, min(int(workers), len(pairs)))
+    base, rem = divmod(len(pairs), n_workers)
+    shards: list[list[int]] = []
+    i = 0
+    for w in range(n_workers):
+        size = base + (1 if w < rem else 0)
+        shards.append(list(pairs[i : i + size]))
+        i += size
+    return [s for s in shards if s]
 
 
 def _emit(stage: str, **kv) -> None:
@@ -219,7 +260,13 @@ def _write_cell(
     return tre
 
 
-def run_batch(batch_id: str) -> dict:
+def run_batch(
+    batch_id: str,
+    *,
+    pair_ids: list[int] | None = None,
+    skip_ingest: bool = False,
+    shard_id: int | None = None,
+) -> dict:
     manifest = eval_runs.read_manifest(batch_id)
     if manifest is None:
         raise FileNotFoundError(f"no batch {batch_id}")
@@ -227,7 +274,22 @@ def run_batch(batch_id: str) -> dict:
     ds_name = datasets.normalize_dataset(manifest.get("dataset"))
     datasets.set_active_dataset(ds_name)
 
-    pairs = [int(p) for p in manifest["pairs"]]
+    manifest_pairs = [int(p) for p in manifest["pairs"]]
+    allowed = set(manifest_pairs)
+    if pair_ids is None:
+        pairs = list(manifest_pairs)
+    else:
+        pairs = [int(p) for p in pair_ids if int(p) in allowed]
+        missing = sorted({int(p) for p in pair_ids} - allowed)
+        if missing:
+            _emit(
+                "pairs_ignored",
+                n=len(missing),
+                sample=",".join(str(p) for p in missing[:8]),
+            )
+    if not pairs:
+        raise ValueError(f"no pairs to run for batch {batch_id}")
+
     lams = [normalize_lam(x) for x in manifest.get("lams") or []]
     estimators = [normalize_estimator(x) for x in manifest.get("estimators") or []]
     cfg = {**eval_runs.default_config(), **(manifest.get("config") or {})}
@@ -242,19 +304,37 @@ def run_batch(batch_id: str) -> dict:
     jobs = [(p, lam, est) for p in pairs for lam in lams for est in estimators]
     total = len(jobs) + (len(pairs) if ds_name == "acrobat" else 0)
     done = 0
-    eval_runs.write_status(
-        batch_id,
-        {
-            "state": "running",
-            "done": 0,
+    started_at = int(time.time())
+
+    def push_status(
+        *,
+        state: str,
+        detail: str,
+        error: str | None = None,
+        finished: bool = False,
+    ) -> None:
+        payload: dict = {
+            "state": state,
+            "done": done,
             "total": total,
-            "detail": "ingest" if ds_name == "acrobat" else "start",
-            "error": None,
-            "started_at": int(time.time()),
-        },
+            "detail": detail,
+            "error": error,
+            "pairs": pairs,
+            "started_at": started_at,
+        }
+        if finished:
+            payload["finished_at"] = int(time.time())
+        if shard_id is not None:
+            eval_runs.write_shard_status(batch_id, shard_id, payload)
+        else:
+            eval_runs.write_status(batch_id, payload)
+
+    push_status(
+        state="running",
+        detail="ingest" if (ds_name == "acrobat" and not skip_ingest) else "start",
     )
 
-    if ds_name == "acrobat":
+    if ds_name == "acrobat" and not skip_ingest:
         from setup.acrobat.ingest import ingest
 
         _emit("ingest", dataset=ds_name, pairs=len(pairs), done=0, total=total)
@@ -271,7 +351,15 @@ def run_batch(batch_id: str) -> dict:
             failed=ingest_result.get("failed"),
         )
 
-    _emit("start", batch=batch_id, dataset=ds_name, total=total, config_fp=fp)
+    _emit(
+        "start",
+        batch=batch_id,
+        dataset=ds_name,
+        total=total,
+        pairs=len(pairs),
+        shard=shard_id if shard_id is not None else "-",
+        config_fp=fp,
+    )
 
     try:
         if ds_name == "acrobat":
@@ -279,35 +367,17 @@ def run_batch(batch_id: str) -> dict:
             from regWSI.register import register_pair
 
             for pair_id in pairs:
-                done += 1
                 detail = f"pair={pair_id} stage=regwsi"
                 _emit("regwsi", pair=pair_id, done=done, total=total)
-                eval_runs.write_status(
-                    batch_id,
-                    {
-                        "state": "running",
-                        "done": done - 1,
-                        "total": total,
-                        "detail": detail,
-                        "error": None,
-                    },
-                )
+                push_status(state="running", detail=detail)
                 df = rpaths.displacement_field(pair_id)
                 rigid = datasets.rigid_path(pair_id, "acrobat")
                 he = rpaths.he_tiff(pair_id)
                 ihc = rpaths.ihc_tiff(pair_id)
                 if not he.is_file() or not ihc.is_file():
                     _emit("regwsi_skip", pair=pair_id, reason="missing_inputs")
-                    eval_runs.write_status(
-                        batch_id,
-                        {
-                            "state": "running",
-                            "done": done,
-                            "total": total,
-                            "detail": detail,
-                            "error": None,
-                        },
-                    )
+                    done += 1
+                    push_status(state="running", detail=detail)
                     continue
                 if df.is_file() and rigid.is_file() and not force:
                     _emit("regwsi_skip", pair=pair_id)
@@ -334,19 +404,10 @@ def run_batch(batch_id: str) -> dict:
                             pair=pair_id,
                             err=str(e).replace(" ", "_")[:160],
                         )
-                eval_runs.write_status(
-                    batch_id,
-                    {
-                        "state": "running",
-                        "done": done,
-                        "total": total,
-                        "detail": detail,
-                        "error": None,
-                    },
-                )
+                done += 1
+                push_status(state="running", detail=detail)
 
         for pair_id, lam, estimator in jobs:
-            done += 1
             detail = f"pair={pair_id} lam={lam} estimator={estimator}"
             _emit(
                 "cell",
@@ -356,32 +417,15 @@ def run_batch(batch_id: str) -> dict:
                 done=done,
                 total=total,
             )
-            eval_runs.write_status(
-                batch_id,
-                {
-                    "state": "running",
-                    "done": done - 1,
-                    "total": total,
-                    "detail": detail,
-                    "error": None,
-                },
-            )
+            push_status(state="running", detail=detail)
 
             if (
                 eval_runs.cell_complete(batch_id, pair_id, lam, estimator, cell_cfg)
                 and not force
             ):
                 _emit("skip", pair=pair_id, lam=lam, estimator=estimator)
-                eval_runs.write_status(
-                    batch_id,
-                    {
-                        "state": "running",
-                        "done": done,
-                        "total": total,
-                        "detail": detail,
-                        "error": None,
-                    },
-                )
+                done += 1
+                push_status(state="running", detail=detail)
                 continue
 
             t0 = time.perf_counter()
@@ -417,44 +461,192 @@ def run_batch(batch_id: str) -> dict:
                 estimator=estimator,
                 runtime_s=f"{runtime_s:.3f}",
             )
-            eval_runs.write_status(
-                batch_id,
-                {
-                    "state": "running",
-                    "done": done,
-                    "total": total,
-                    "detail": detail,
-                    "error": None,
-                },
-            )
+            done += 1
+            push_status(state="running", detail=detail)
 
-        eval_runs.write_status(
-            batch_id,
-            {
-                "state": "done",
-                "done": total,
-                "total": total,
-                "detail": "complete",
-                "error": None,
-                "finished_at": int(time.time()),
-            },
-        )
-        _emit("done", batch=batch_id, total=total)
-        return {"ok": True, "batch_id": batch_id, "total": total}
+        push_status(state="done", detail="complete", finished=True)
+        _emit("done", batch=batch_id, total=total, shard=shard_id if shard_id is not None else "-")
+        return {
+            "ok": True,
+            "batch_id": batch_id,
+            "total": total,
+            "pairs": pairs,
+            "shard_id": shard_id,
+        }
     except Exception as e:
-        eval_runs.write_status(
-            batch_id,
-            {
-                "state": "error",
-                "done": done,
-                "total": total,
-                "detail": "",
-                "error": str(e),
-                "finished_at": int(time.time()),
-            },
-        )
+        push_status(state="error", detail="", error=str(e), finished=True)
         _emit("error", batch=batch_id, msg=str(e).replace(" ", "_"))
         raise
+
+
+def run_parallel(
+    batch_id: str,
+    *,
+    workers: int = 10,
+    skip_ingest: bool = True,
+    poll_s: float = 2.0,
+) -> dict:
+    manifest = eval_runs.read_manifest(batch_id)
+    if manifest is None:
+        raise FileNotFoundError(f"no batch {batch_id}")
+
+    pairs = [int(p) for p in manifest["pairs"]]
+    shards = split_pair_shards(pairs, workers)
+    if not shards:
+        raise ValueError(f"no pairs in batch {batch_id}")
+
+    eval_runs.clear_shard_statuses(batch_id)
+    started_at = int(time.time())
+    eval_runs.write_status(
+        batch_id,
+        {
+            "state": "running",
+            "done": 0,
+            "total": 0,
+            "detail": f"spawning {len(shards)} workers",
+            "error": None,
+            "workers": len(shards),
+            "started_at": started_at,
+        },
+    )
+
+    cli = str(Path(__file__).resolve())
+    batch_root = eval_runs.batch_dir(batch_id)
+    batch_root.mkdir(parents=True, exist_ok=True)
+    procs: list[subprocess.Popen] = []
+    log_handles: list = []
+    for i, shard_pairs in enumerate(shards):
+        lo, hi = shard_pairs[0], shard_pairs[-1]
+        pair_spec = (
+            f"{lo}-{hi}"
+            if shard_pairs == list(range(lo, hi + 1))
+            else ",".join(str(p) for p in shard_pairs)
+        )
+        cmd = [
+            sys.executable,
+            cli,
+            "run",
+            batch_id,
+            "--pairs",
+            pair_spec,
+            "--shard-id",
+            str(i),
+        ]
+        if skip_ingest:
+            cmd.append("--skip-ingest")
+        log_path = batch_root / f"shard-{i}.log"
+        log_fh = open(log_path, "w")
+        log_handles.append(log_fh)
+        _emit(
+            "spawn",
+            shard=i,
+            pairs=f"{shard_pairs[0]}-{shard_pairs[-1]}",
+            n=len(shard_pairs),
+            log=str(log_path),
+        )
+        procs.append(
+            subprocess.Popen(
+                cmd,
+                cwd=str(REPO_ROOT),
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+            )
+        )
+
+    try:
+        while True:
+            alive = sum(1 for p in procs if p.poll() is None)
+            for i, p in enumerate(procs):
+                code = p.poll()
+                if code is None:
+                    continue
+                st = eval_runs.read_shard_status(batch_id, i) or {}
+                if st.get("state") in ("done", "error"):
+                    continue
+                if code == 0:
+                    eval_runs.write_shard_status(
+                        batch_id,
+                        i,
+                        {
+                            "state": "done",
+                            "done": int(st.get("done") or st.get("total") or 0),
+                            "total": int(st.get("total") or 0),
+                            "detail": st.get("detail") or "complete",
+                            "error": None,
+                            "pairs": st.get("pairs") or shards[i],
+                            "started_at": st.get("started_at") or started_at,
+                            "finished_at": int(time.time()),
+                        },
+                    )
+                else:
+                    eval_runs.write_shard_status(
+                        batch_id,
+                        i,
+                        {
+                            "state": "error",
+                            "done": int(st.get("done") or 0),
+                            "total": int(st.get("total") or 0),
+                            "detail": st.get("detail") or "",
+                            "error": f"shard {i} exited {code}",
+                            "pairs": st.get("pairs") or shards[i],
+                            "started_at": st.get("started_at") or started_at,
+                            "finished_at": int(time.time()),
+                        },
+                    )
+
+            agg = eval_runs.aggregate_status(batch_id)
+            if "started_at" not in agg:
+                agg["started_at"] = started_at
+            eval_runs.write_status(batch_id, agg)
+
+            if alive == 0:
+                break
+            time.sleep(max(0.2, float(poll_s)))
+
+        codes = [p.wait() for p in procs]
+        agg = eval_runs.aggregate_status(batch_id)
+        if "started_at" not in agg:
+            agg["started_at"] = started_at
+        if any(c != 0 for c in codes) and agg.get("state") != "error":
+            failed = [i for i, c in enumerate(codes) if c != 0]
+            agg["state"] = "error"
+            agg["error"] = f"shards failed: {failed}"
+            agg["finished_at"] = int(time.time())
+        elif agg.get("state") != "error":
+            agg["state"] = "done"
+            agg["finished_at"] = int(time.time())
+        eval_runs.write_status(batch_id, agg)
+        _emit(
+            "parallel_done",
+            batch=batch_id,
+            workers=len(shards),
+            done=agg.get("done"),
+            total=agg.get("total"),
+            state=agg.get("state"),
+        )
+        ok = agg.get("state") == "done" and all(c == 0 for c in codes)
+        return {
+            "ok": ok,
+            "batch_id": batch_id,
+            "workers": len(shards),
+            "exit_codes": codes,
+            "status": agg,
+            "shards": [
+                {"shard_id": i, "pairs": s, "lo": s[0], "hi": s[-1]}
+                for i, s in enumerate(shards)
+            ],
+        }
+    except Exception:
+        for p in procs:
+            if p.poll() is None:
+                p.terminate()
+        raise
+    finally:
+        for fh in log_handles:
+            try:
+                fh.close()
+            except Exception:
+                pass
 
 
 def _print_json(payload: dict) -> None:
@@ -466,7 +658,7 @@ def cmd_list() -> None:
 
 
 def cmd_create(args: argparse.Namespace) -> None:
-    pairs = [int(x) for x in args.pairs.split(",") if x.strip() != ""]
+    pairs = parse_pairs_spec(args.pairs)
     config = eval_runs.default_config()
     if args.wendland_eps is not None:
         config["wendland_eps"] = float(args.wendland_eps)
@@ -498,7 +690,27 @@ def cmd_create(args: argparse.Namespace) -> None:
 
 
 def cmd_run(args: argparse.Namespace) -> None:
-    _print_json(run_batch(args.batch_id))
+    pair_ids = parse_pairs_spec(args.pairs) if args.pairs else None
+    _print_json(
+        run_batch(
+            args.batch_id,
+            pair_ids=pair_ids,
+            skip_ingest=bool(args.skip_ingest),
+            shard_id=args.shard_id,
+        )
+    )
+
+
+def cmd_run_parallel(args: argparse.Namespace) -> None:
+    result = run_parallel(
+        args.batch_id,
+        workers=int(args.workers),
+        skip_ingest=bool(args.skip_ingest),
+        poll_s=float(args.poll_s),
+    )
+    _print_json(result)
+    if not result.get("ok"):
+        sys.exit(1)
 
 
 def main() -> None:
@@ -509,7 +721,7 @@ def main() -> None:
 
     c = sub.add_parser("create")
     c.add_argument("--name", required=True)
-    c.add_argument("--pairs", required=True, help="comma-separated pair ids")
+    c.add_argument("--pairs", required=True, help="comma-separated or ranges, e.g. 0-9,15")
     c.add_argument("--id", default=None, help="optional batch id (slug)")
     c.add_argument("--lams", default=None, help="comma-separated, default all")
     c.add_argument("--estimators", default=None, help="comma-separated, default all")
@@ -522,6 +734,40 @@ def main() -> None:
 
     r = sub.add_parser("run")
     r.add_argument("batch_id")
+    r.add_argument(
+        "--pairs",
+        default=None,
+        help="subset of manifest pairs: 0-9 or 0,1,2 or 0-9,15",
+    )
+    r.add_argument(
+        "--skip-ingest",
+        action="store_true",
+        help="skip acrobat ingest (use after a separate re-ingest)",
+    )
+    r.add_argument(
+        "--shard-id",
+        type=int,
+        default=None,
+        help="write status.shard-{id}.json instead of status.json",
+    )
+
+    rp = sub.add_parser("run-parallel")
+    rp.add_argument("batch_id")
+    rp.add_argument("--workers", type=int, default=10)
+    rp.add_argument(
+        "--skip-ingest",
+        dest="skip_ingest",
+        action="store_true",
+        default=True,
+        help="pass --skip-ingest to each shard (default)",
+    )
+    rp.add_argument(
+        "--ingest",
+        dest="skip_ingest",
+        action="store_false",
+        help="allow each shard to run ingest (not recommended)",
+    )
+    rp.add_argument("--poll-s", type=float, default=2.0)
 
     args = ap.parse_args()
     if args.cmd == "list":
@@ -530,6 +776,8 @@ def main() -> None:
         cmd_create(args)
     elif args.cmd == "run":
         cmd_run(args)
+    elif args.cmd == "run-parallel":
+        cmd_run_parallel(args)
 
 
 if __name__ == "__main__":
