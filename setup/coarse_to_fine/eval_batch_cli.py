@@ -6,7 +6,8 @@ Usage:
   python setup/coarse_to_fine/eval_batch_cli.py create --name demo --pairs 0,1,4,16
   python setup/coarse_to_fine/eval_batch_cli.py run <batch_id>
   python setup/coarse_to_fine/eval_batch_cli.py run <batch_id> --pairs 0-9 --skip-ingest --shard-id 0
-  python setup/coarse_to_fine/eval_batch_cli.py run-parallel <batch_id> --workers 10 --skip-ingest
+  python setup/coarse_to_fine/eval_batch_cli.py run-parallel <batch_id> --schedule resource --gpu-workers 3 --cpu-workers 7
+  python setup/coarse_to_fine/eval_batch_cli.py run-parallel <batch_id> --schedule shards --workers 10 --skip-ingest
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import json
 import subprocess
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 from PIL import Image
@@ -76,6 +78,63 @@ def split_pair_shards(pairs: list[int], workers: int) -> list[list[int]]:
         shards.append(list(pairs[i : i + size]))
         i += size
     return [s for s in shards if s]
+
+
+def _lam_is_gpu(lam: str) -> bool:
+    return normalize_lam(lam) != "fft"
+
+
+def _regwsi_ready(pair_id: int, *, force: bool = False) -> bool:
+    if force:
+        return False
+    from regWSI import paths as rpaths
+
+    return (
+        rpaths.displacement_field(pair_id).is_file()
+        and datasets.rigid_path(pair_id, "acrobat").is_file()
+    )
+
+
+def _lam_pending(
+    batch_id: str,
+    pair_id: int,
+    lam: str,
+    estimators: list[str],
+    cell_cfg: dict,
+    *,
+    force: bool = False,
+) -> bool:
+    if force:
+        return True
+    return any(
+        not eval_runs.cell_complete(batch_id, pair_id, lam, est, cell_cfg)
+        for est in estimators
+    )
+
+
+def _batch_progress_counts(
+    batch_id: str,
+    pairs: list[int],
+    lams: list[str],
+    estimators: list[str],
+    cell_cfg: dict,
+    ds_name: str,
+    *,
+    force: bool = False,
+) -> tuple[int, int]:
+    total = len(pairs) * len(lams) * len(estimators)
+    done = 0
+    if ds_name == "acrobat":
+        total += len(pairs)
+        for p in pairs:
+            if _regwsi_ready(p, force=False) and not force:
+                done += 1
+    for p in pairs:
+        for lam in lams:
+            for est in estimators:
+                if eval_runs.cell_complete(batch_id, p, lam, est, cell_cfg) and not force:
+                    done += 1
+    return done, total
 
 
 def _emit(stage: str, **kv) -> None:
@@ -270,10 +329,15 @@ def run_batch(
     pair_ids: list[int] | None = None,
     skip_ingest: bool = False,
     shard_id: int | None = None,
+    lam_filter: list[str] | None = None,
+    regwsi_only: bool = False,
+    skip_regwsi: bool = False,
 ) -> dict:
     manifest = eval_runs.read_manifest(batch_id)
     if manifest is None:
         raise FileNotFoundError(f"no batch {batch_id}")
+    if regwsi_only and skip_regwsi:
+        raise ValueError("regwsi_only and skip_regwsi are mutually exclusive")
 
     ds_name = datasets.normalize_dataset(manifest.get("dataset"))
     datasets.set_active_dataset(ds_name)
@@ -295,6 +359,11 @@ def run_batch(
         raise ValueError(f"no pairs to run for batch {batch_id}")
 
     lams = [normalize_lam(x) for x in manifest.get("lams") or []]
+    if lam_filter is not None:
+        want = {normalize_lam(x) for x in lam_filter}
+        lams = [x for x in lams if x in want]
+        if not lams and not regwsi_only:
+            raise ValueError("lam filter matched no manifest lams")
     estimators = [normalize_estimator(x) for x in manifest.get("estimators") or []]
     cfg = {**eval_runs.default_config(), **(manifest.get("config") or {})}
     cell_cfg = eval_runs.cell_config(cfg)
@@ -305,8 +374,14 @@ def run_batch(
     bspline_grid = int(cell_cfg["bspline_grid"])
     bspline_reg = float(cell_cfg["bspline_reg"])
 
-    jobs = [(p, lam, est) for p in pairs for lam in lams for est in estimators]
-    total = len(jobs) + (len(pairs) if ds_name == "acrobat" else 0)
+    do_regwsi = ds_name == "acrobat" and not skip_regwsi
+    do_cells = not regwsi_only
+    jobs = (
+        [(p, lam, est) for p in pairs for lam in lams for est in estimators]
+        if do_cells
+        else []
+    )
+    total = len(jobs) + (len(pairs) if do_regwsi else 0)
     done = 0
     started_at = int(time.time())
 
@@ -366,7 +441,7 @@ def run_batch(
     )
 
     try:
-        if ds_name == "acrobat":
+        if do_regwsi:
             from regWSI import paths as rpaths
             from regWSI.register import register_pair
 
@@ -483,7 +558,7 @@ def run_batch(
         raise
 
 
-def run_parallel(
+def run_parallel_shards(
     batch_id: str,
     *,
     workers: int = 10,
@@ -653,6 +728,339 @@ def run_parallel(
                 pass
 
 
+def run_parallel_resource(
+    batch_id: str,
+    *,
+    gpu_workers: int = 3,
+    cpu_workers: int = 7,
+    skip_ingest: bool = True,
+    poll_s: float = 2.0,
+) -> dict:
+    """GPU queue: regWSI then superpoint; CPU queue: fft. Shared job deques."""
+    manifest = eval_runs.read_manifest(batch_id)
+    if manifest is None:
+        raise FileNotFoundError(f"no batch {batch_id}")
+
+    ds_name = datasets.normalize_dataset(manifest.get("dataset"))
+    datasets.set_active_dataset(ds_name)
+    pairs = [int(p) for p in manifest["pairs"]]
+    lams = [normalize_lam(x) for x in manifest.get("lams") or []]
+    estimators = [normalize_estimator(x) for x in manifest.get("estimators") or []]
+    cfg = {**eval_runs.default_config(), **(manifest.get("config") or {})}
+    cell_cfg = eval_runs.cell_config(cfg)
+    force = bool(cfg.get("force")) or bool(manifest.get("config", {}).get("force"))
+
+    if not skip_ingest and ds_name == "acrobat":
+        from setup.acrobat.ingest import ingest
+
+        _emit("ingest", dataset=ds_name, pairs=len(pairs))
+        ingest(unzip=True, pair_ids=pairs, force=False)
+
+    n_gpu = max(0, int(gpu_workers))
+    n_cpu = max(0, int(cpu_workers))
+    if n_gpu + n_cpu < 1:
+        raise ValueError("need at least one gpu or cpu worker")
+
+    gpu_regwsi: deque[dict] = deque()
+    gpu_sp: deque[dict] = deque()
+    cpu_fft: deque[dict] = deque()
+    queued: set[tuple] = set()
+
+    def _enqueue(job: dict) -> None:
+        kind = job["kind"]
+        if kind == "regwsi":
+            key = ("regwsi", int(job["pair"]))
+            if key in queued:
+                return
+            queued.add(key)
+            gpu_regwsi.append(job)
+        elif kind == "lam":
+            lam = normalize_lam(job["lam"])
+            key = ("lam", int(job["pair"]), lam)
+            if key in queued:
+                return
+            queued.add(key)
+            job = {**job, "lam": lam}
+            if _lam_is_gpu(lam):
+                gpu_sp.append(job)
+            else:
+                cpu_fft.append(job)
+
+    def _seed_lam_jobs(pair_id: int) -> None:
+        for lam in lams:
+            if _lam_pending(
+                batch_id, pair_id, lam, estimators, cell_cfg, force=force
+            ):
+                _enqueue({"kind": "lam", "pair": int(pair_id), "lam": lam})
+
+    for pair_id in pairs:
+        if ds_name == "acrobat" and not _regwsi_ready(pair_id, force=force):
+            _enqueue({"kind": "regwsi", "pair": int(pair_id)})
+        else:
+            _seed_lam_jobs(pair_id)
+
+    eval_runs.clear_shard_statuses(batch_id)
+    started_at = int(time.time())
+    done0, total = _batch_progress_counts(
+        batch_id, pairs, lams, estimators, cell_cfg, ds_name, force=force
+    )
+    eval_runs.write_status(
+        batch_id,
+        {
+            "state": "running",
+            "done": done0,
+            "total": total,
+            "detail": f"resource queue gpu={n_gpu} cpu={n_cpu}",
+            "error": None,
+            "workers": n_gpu + n_cpu,
+            "schedule": "resource",
+            "started_at": started_at,
+        },
+    )
+
+    cli = str(Path(__file__).resolve())
+    batch_root = eval_runs.batch_dir(batch_id)
+    batch_root.mkdir(parents=True, exist_ok=True)
+
+    slots: list[dict] = []
+    for i in range(n_gpu):
+        slots.append({"role": "gpu", "shard_id": i, "proc": None, "job": None, "log": None})
+    for j in range(n_cpu):
+        slots.append(
+            {
+                "role": "cpu",
+                "shard_id": n_gpu + j,
+                "proc": None,
+                "job": None,
+                "log": None,
+            }
+        )
+
+    def _pop_job(role: str) -> dict | None:
+        if role == "gpu":
+            if gpu_regwsi:
+                return gpu_regwsi.popleft()
+            if gpu_sp:
+                return gpu_sp.popleft()
+            return None
+        if cpu_fft:
+            return cpu_fft.popleft()
+        return None
+
+    def _spawn(slot: dict, job: dict) -> None:
+        shard_id = int(slot["shard_id"])
+        pair = int(job["pair"])
+        cmd = [
+            sys.executable,
+            cli,
+            "run",
+            batch_id,
+            "--pairs",
+            str(pair),
+            "--shard-id",
+            str(shard_id),
+            "--skip-ingest",
+        ]
+        if job["kind"] == "regwsi":
+            cmd.append("--regwsi-only")
+        else:
+            cmd.extend(["--skip-regwsi", "--lams", job["lam"]])
+        log_path = batch_root / f"shard-{shard_id}.log"
+        log_fh = open(log_path, "a")
+        slot["log"] = log_fh
+        slot["job"] = job
+        slot["proc"] = subprocess.Popen(
+            cmd,
+            cwd=str(REPO_ROOT),
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+        )
+        _emit(
+            "spawn_job",
+            role=slot["role"],
+            shard=shard_id,
+            kind=job["kind"],
+            pair=pair,
+            lam=job.get("lam", "-"),
+        )
+
+    errors: list[str] = []
+    try:
+        while True:
+            for slot in slots:
+                proc = slot["proc"]
+                if proc is None:
+                    continue
+                code = proc.poll()
+                if code is None:
+                    continue
+                job = slot["job"] or {}
+                if slot["log"] is not None:
+                    try:
+                        slot["log"].close()
+                    except Exception:
+                        pass
+                slot["log"] = None
+                slot["proc"] = None
+                slot["job"] = None
+                if code != 0:
+                    errors.append(
+                        f"{slot['role']}/shard-{slot['shard_id']} "
+                        f"{job.get('kind')} pair={job.get('pair')} exit={code}"
+                    )
+                    _emit(
+                        "job_error",
+                        role=slot["role"],
+                        pair=job.get("pair"),
+                        kind=job.get("kind"),
+                        code=code,
+                    )
+                else:
+                    _emit(
+                        "job_done",
+                        role=slot["role"],
+                        pair=job.get("pair"),
+                        kind=job.get("kind"),
+                        lam=job.get("lam", "-"),
+                    )
+                    if (
+                        job.get("kind") == "regwsi"
+                        and ds_name == "acrobat"
+                        and _regwsi_ready(int(job["pair"]), force=False)
+                    ):
+                        _seed_lam_jobs(int(job["pair"]))
+
+            for slot in slots:
+                if slot["proc"] is not None:
+                    continue
+                job = _pop_job(slot["role"])
+                if job is None:
+                    continue
+                _spawn(slot, job)
+
+            done, total = _batch_progress_counts(
+                batch_id, pairs, lams, estimators, cell_cfg, ds_name, force=force
+            )
+            running = [
+                s
+                for s in slots
+                if s["proc"] is not None and s["job"] is not None
+            ]
+            detail_parts = []
+            for s in running[:4]:
+                j = s["job"]
+                bit = f"{s['role']}:{j['kind']} p={j['pair']}"
+                if j.get("lam"):
+                    bit += f" lam={j['lam']}"
+                detail_parts.append(bit)
+            qinfo = (
+                f"q_regwsi={len(gpu_regwsi)} q_sp={len(gpu_sp)} q_fft={len(cpu_fft)}"
+            )
+            detail = "; ".join(detail_parts) if detail_parts else qinfo
+            if detail_parts:
+                detail = f"{detail} · {qinfo}"
+            state = "error" if errors and not running and not (
+                gpu_regwsi or gpu_sp or cpu_fft
+            ) else "running"
+            eval_runs.write_status(
+                batch_id,
+                {
+                    "state": state,
+                    "done": done,
+                    "total": total,
+                    "detail": detail,
+                    "error": errors[0] if errors else None,
+                    "workers": n_gpu + n_cpu,
+                    "schedule": "resource",
+                    "started_at": started_at,
+                },
+            )
+
+            pending_q = bool(gpu_regwsi or gpu_sp or cpu_fft)
+            if not running and not pending_q:
+                break
+            time.sleep(max(0.2, float(poll_s)))
+
+        done, total = _batch_progress_counts(
+            batch_id, pairs, lams, estimators, cell_cfg, ds_name, force=force
+        )
+        ok = not errors and done >= total
+        eval_runs.write_status(
+            batch_id,
+            {
+                "state": "done" if ok else "error",
+                "done": done,
+                "total": total,
+                "detail": "complete" if ok else "resource queue finished with errors",
+                "error": errors[0] if errors else None,
+                "workers": n_gpu + n_cpu,
+                "schedule": "resource",
+                "started_at": started_at,
+                "finished_at": int(time.time()),
+            },
+        )
+        _emit(
+            "parallel_done",
+            batch=batch_id,
+            schedule="resource",
+            gpu=n_gpu,
+            cpu=n_cpu,
+            done=done,
+            total=total,
+            errors=len(errors),
+        )
+        return {
+            "ok": ok,
+            "batch_id": batch_id,
+            "schedule": "resource",
+            "gpu_workers": n_gpu,
+            "cpu_workers": n_cpu,
+            "done": done,
+            "total": total,
+            "errors": errors,
+        }
+    except Exception:
+        for slot in slots:
+            proc = slot["proc"]
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+            if slot["log"] is not None:
+                try:
+                    slot["log"].close()
+                except Exception:
+                    pass
+        raise
+
+
+def run_parallel(
+    batch_id: str,
+    *,
+    schedule: str = "resource",
+    workers: int = 10,
+    gpu_workers: int = 3,
+    cpu_workers: int = 7,
+    skip_ingest: bool = True,
+    poll_s: float = 2.0,
+) -> dict:
+    sched = (schedule or "resource").strip().lower()
+    if sched == "shards":
+        return run_parallel_shards(
+            batch_id,
+            workers=workers,
+            skip_ingest=skip_ingest,
+            poll_s=poll_s,
+        )
+    if sched != "resource":
+        raise ValueError(f"unknown schedule {schedule!r}; use resource|shards")
+    return run_parallel_resource(
+        batch_id,
+        gpu_workers=gpu_workers,
+        cpu_workers=cpu_workers,
+        skip_ingest=skip_ingest,
+        poll_s=poll_s,
+    )
+
+
 def _print_json(payload: dict) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
 
@@ -695,12 +1103,18 @@ def cmd_create(args: argparse.Namespace) -> None:
 
 def cmd_run(args: argparse.Namespace) -> None:
     pair_ids = parse_pairs_spec(args.pairs) if args.pairs else None
+    lam_filter = None
+    if args.lams:
+        lam_filter = [x.strip() for x in args.lams.split(",") if x.strip()]
     _print_json(
         run_batch(
             args.batch_id,
             pair_ids=pair_ids,
             skip_ingest=bool(args.skip_ingest),
             shard_id=args.shard_id,
+            lam_filter=lam_filter,
+            regwsi_only=bool(args.regwsi_only),
+            skip_regwsi=bool(args.skip_regwsi),
         )
     )
 
@@ -708,7 +1122,10 @@ def cmd_run(args: argparse.Namespace) -> None:
 def cmd_run_parallel(args: argparse.Namespace) -> None:
     result = run_parallel(
         args.batch_id,
+        schedule=str(args.schedule),
         workers=int(args.workers),
+        gpu_workers=int(args.gpu_workers),
+        cpu_workers=int(args.cpu_workers),
         skip_ingest=bool(args.skip_ingest),
         poll_s=float(args.poll_s),
     )
@@ -754,22 +1171,60 @@ def main() -> None:
         default=None,
         help="write status.shard-{id}.json instead of status.json",
     )
+    r.add_argument(
+        "--lams",
+        default=None,
+        help="comma-separated lam subset for this run (e.g. fft)",
+    )
+    r.add_argument(
+        "--regwsi-only",
+        action="store_true",
+        help="only run acrobat regWSI for selected pairs",
+    )
+    r.add_argument(
+        "--skip-regwsi",
+        action="store_true",
+        help="skip regWSI; only LAM×field cells",
+    )
 
     rp = sub.add_parser("run-parallel")
     rp.add_argument("batch_id")
-    rp.add_argument("--workers", type=int, default=10)
+    rp.add_argument(
+        "--schedule",
+        default="resource",
+        choices=("resource", "shards"),
+        help="resource=GPU/CPU job queues (default); shards=pair slices",
+    )
+    rp.add_argument(
+        "--workers",
+        type=int,
+        default=10,
+        help="pair-shard worker count when --schedule shards",
+    )
+    rp.add_argument(
+        "--gpu-workers",
+        type=int,
+        default=3,
+        help="resource schedule: workers for regWSI + superpoint (default 3)",
+    )
+    rp.add_argument(
+        "--cpu-workers",
+        type=int,
+        default=7,
+        help="resource schedule: workers for fft (default 7)",
+    )
     rp.add_argument(
         "--skip-ingest",
         dest="skip_ingest",
         action="store_true",
         default=True,
-        help="pass --skip-ingest to each shard (default)",
+        help="skip acrobat ingest (default)",
     )
     rp.add_argument(
         "--ingest",
         dest="skip_ingest",
         action="store_false",
-        help="allow each shard to run ingest (not recommended)",
+        help="allow ingest before queue (not recommended)",
     )
     rp.add_argument("--poll-s", type=float, default=2.0)
 
