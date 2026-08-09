@@ -261,14 +261,14 @@ def aggregate_status(batch_id: str) -> dict:
     states = [str(s.get("state") or "idle") for s in shards]
     errors = [s.get("error") for s in shards if s.get("error")]
 
-    if any(st == "error" for st in states) or errors:
+    if any(st == "running" for st in states):
+        state = "running"
+        error = next((e for e in errors if e), None)
+    elif any(st == "error" for st in states) or errors:
         state = "error"
         error = next((e for e in errors if e), "shard error")
     elif all(st == "done" for st in states):
         state = "done"
-        error = None
-    elif any(st == "running" for st in states):
-        state = "running"
         error = None
     else:
         state = "idle"

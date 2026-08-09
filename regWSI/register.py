@@ -2,12 +2,13 @@
 Run DeeperHistReg (regWSI) affine + deformable preregistration for one pair.
 
 Uses default_initial_nonrigid(); the composed transform is saved as
-data/regwsi/{pair}/out/displacement_field.mha ("the sum"). The registration's
-warped source is copied to out/warped_ihc.tiff.
+data/regwsi/{pair}/out/displacement_field.mha ("the sum"). By default only the
+DF (+ rigid JSON) are kept — no warped/target WSIs under out/.
 
 Usage:
   python regWSI/register.py <pair_id>
   python regWSI/register.py <pair_id> --export   # export RGB inputs first
+  python regWSI/register.py <pair_id> --keep-warped  # also persist warped IHC WSI
   python regWSI/register.py <pair_id> --preview  # also build preview PNGs
   python regWSI/register.py <pair_id> --full     # also build 2x2 full-res explorer JPEGs
 """
@@ -56,12 +57,31 @@ def _find_warped_source(out: Path) -> Path | None:
     return None
 
 
+def _purge_out_wsis(out: Path, *, keep_warped: bool) -> None:
+    keep = {"displacement_field.mha"}
+    if keep_warped:
+        keep.add("warped_ihc.tiff")
+    for p in list(out.iterdir()):
+        if not p.is_file():
+            continue
+        name = p.name
+        if name in keep:
+            continue
+        if name.endswith((".tiff", ".tif", ".mha", ".nii", ".nii.gz")):
+            if name == "displacement_field.mha":
+                continue
+            if keep_warped and ("warped" in name or name == "warped_ihc.tiff"):
+                continue
+            p.unlink(missing_ok=True)
+
+
 def register_pair(
     pair_id: int,
     do_export: bool = False,
     force_export: bool = False,
     *,
     persist_rigid: bool = True,
+    keep_warped: bool = False,
 ) -> dict:
     from setup import datasets as ds
 
@@ -99,7 +119,7 @@ def register_pair(
         "registration_parameters": registration_params,
         "case_name": f"pair_{pair_id}",
         "save_displacement_field": True,
-        "copy_target": True,
+        "copy_target": bool(keep_warped),
         "delete_temporary_results": False,
         "temporary_path": str(temp),
     }
@@ -129,27 +149,29 @@ def register_pair(
     if temp.exists():
         shutil.rmtree(temp, ignore_errors=True)
 
-    warped = _find_warped_source(out)
     dest = paths.warped_ihc(pair_id)
-    if warped is not None:
-        if warped.resolve() != dest.resolve():
-            shutil.copy2(warped, dest)
-    else:
-        from deeperhistreg.dhr_input_output.dhr_savers import tiff_saver as _tiff_saver
+    if keep_warped:
+        warped = _find_warped_source(out)
+        if warped is not None:
+            if warped.resolve() != dest.resolve():
+                shutil.copy2(warped, dest)
+        elif not dest.is_file():
+            from deeperhistreg.dhr_input_output.dhr_savers import tiff_saver as _tiff_saver
 
-        deeperhistreg.apply_deformation(
-            source_image_path=str(ihc),
-            target_image_path=str(he),
-            warped_image_path=str(dest),
-            displacement_field_path=str(df),
-            loader=deeperhistreg.loaders.TIFFLoader,
-            saver=deeperhistreg.savers.TIFFSaver,
-            save_params=_tiff_saver.default_params,
-            level=0,
-            pad_value=255.0,
-            save_source_only=True,
-            to_template_shape=True,
-        )
+            deeperhistreg.apply_deformation(
+                source_image_path=str(ihc),
+                target_image_path=str(he),
+                warped_image_path=str(dest),
+                displacement_field_path=str(df),
+                loader=deeperhistreg.loaders.TIFFLoader,
+                saver=deeperhistreg.savers.TIFFSaver,
+                save_params=_tiff_saver.default_params,
+                level=0,
+                pad_value=255.0,
+                save_source_only=True,
+                to_template_shape=True,
+            )
+    _purge_out_wsis(out, keep_warped=keep_warped)
 
     identity = (
         ds.pair_fingerprint(pair_id, dataset)
@@ -168,7 +190,9 @@ def register_pair(
         "source": "ihc",
         "target": "he",
         "displacement_field": str(df.relative_to(REPO_ROOT)),
-        "warped_ihc": str(dest.relative_to(REPO_ROOT)) if dest.is_file() else None,
+        "warped_ihc": str(dest.relative_to(REPO_ROOT))
+        if keep_warped and dest.is_file()
+        else None,
         "rigid_path": str(ds.rigid_path(pair_id, dataset).relative_to(REPO_ROOT))
         if rigid_store
         else None,
@@ -191,10 +215,21 @@ def main() -> None:
     ap.add_argument("pair", type=int, help="pair index")
     ap.add_argument("--export", action="store_true", help="(re)export RGB inputs first")
     ap.add_argument("--force-export", action="store_true", help="overwrite existing RGB tiffs")
+    ap.add_argument(
+        "--keep-warped",
+        action="store_true",
+        help="persist warped IHC (+ target copy) under out/; off by default",
+    )
     ap.add_argument("--preview", action="store_true", help="build preview PNGs after register")
     ap.add_argument("--full", action="store_true", help="build 2x2 full-res explorer JPEGs after register")
     args = ap.parse_args()
-    meta = register_pair(args.pair, do_export=args.export or args.force_export, force_export=args.force_export)
+    keep_warped = bool(args.keep_warped or args.preview or args.full)
+    meta = register_pair(
+        args.pair,
+        do_export=args.export or args.force_export,
+        force_export=args.force_export,
+        keep_warped=keep_warped,
+    )
     print(json.dumps(meta, indent=2))
     if args.preview:
         from regWSI.make_preview import make_preview

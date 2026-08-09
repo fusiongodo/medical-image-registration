@@ -14,6 +14,7 @@ import json
 import re
 import sys
 import zipfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -354,11 +355,26 @@ def export_pair_tiffs(
     ) from last_err
 
 
+def _export_pair_job(pair: dict, force: bool) -> dict:
+    pair_id = int(pair["id"])
+    try:
+        meta = export_pair_tiffs(pair, force=force)
+        return {"ok": True, "pair_id": pair_id, "meta": meta}
+    except Exception as e:
+        return {
+            "ok": False,
+            "pair_id": pair_id,
+            "case_id": pair.get("case_id"),
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
 def ingest(
     *,
     unzip: bool = True,
     pair_ids: list[int] | None = None,
     force: bool = False,
+    workers: int = 1,
 ) -> dict:
     if unzip:
         ensure_unzipped()
@@ -374,29 +390,76 @@ def ingest(
         selected = [p for p in pairs if int(p["id"]) in want]
     metas = []
     errors: list[dict] = []
-    for p in selected:
-        pair_id = int(p["id"])
-        try:
+    n_workers = max(1, min(int(workers), len(selected) or 1))
+    print(
+        f"stage=export_start n={len(selected)} workers={n_workers} force={int(bool(force))}",
+        flush=True,
+    )
+
+    if n_workers <= 1:
+        for p in selected:
+            pair_id = int(p["id"])
             print(f"stage=export pair={pair_id}", flush=True)
-            metas.append(export_pair_tiffs(p, force=force))
-        except Exception as e:
-            print(
-                f"stage=export_skip pair={pair_id} err={type(e).__name__}:{e}",
-                flush=True,
-            )
-            errors.append(
-                {
-                    "pair_id": pair_id,
-                    "case_id": p.get("case_id"),
-                    "error": f"{type(e).__name__}: {e}",
-                }
-            )
+            result = _export_pair_job(p, force)
+            if result.get("ok"):
+                metas.append(result["meta"])
+            else:
+                print(
+                    f"stage=export_skip pair={pair_id} err={result.get('error', '')}",
+                    flush=True,
+                )
+                errors.append(
+                    {
+                        "pair_id": pair_id,
+                        "case_id": result.get("case_id"),
+                        "error": result.get("error"),
+                    }
+                )
+    else:
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            futures = {
+                pool.submit(_export_pair_job, p, force): int(p["id"]) for p in selected
+            }
+            for fut in as_completed(futures):
+                pair_id = futures[fut]
+                try:
+                    result = fut.result()
+                except Exception as e:
+                    print(
+                        f"stage=export_skip pair={pair_id} err={type(e).__name__}:{e}",
+                        flush=True,
+                    )
+                    errors.append(
+                        {
+                            "pair_id": pair_id,
+                            "case_id": None,
+                            "error": f"{type(e).__name__}: {e}",
+                        }
+                    )
+                    continue
+                if result.get("ok"):
+                    print(f"stage=export pair={pair_id}", flush=True)
+                    metas.append(result["meta"])
+                else:
+                    print(
+                        f"stage=export_skip pair={pair_id} err={result.get('error', '')}",
+                        flush=True,
+                    )
+                    errors.append(
+                        {
+                            "pair_id": pair_id,
+                            "case_id": result.get("case_id"),
+                            "error": result.get("error"),
+                        }
+                    )
+
     return {
         "ok": len(errors) == 0,
         "n_pairs": len(pairs),
         "exported": len(metas),
         "failed": len(errors),
         "errors": errors,
+        "workers": n_workers,
         "pairs_json": str(datasets.ACROBAT_PAIRS),
     }
 
@@ -407,6 +470,12 @@ def main() -> None:
     ap.add_argument("--no-unzip", action="store_true")
     ap.add_argument("--pairs", default=None, help="comma-separated pair ids")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="parallel pair exporters (unzip/repair stay single-process)",
+    )
     ap.add_argument("--repair-only", action="store_true", help="re-extract truncated raw files")
     args = ap.parse_args()
     if args.repair_only:
@@ -420,7 +489,12 @@ def main() -> None:
     pair_ids = None
     if args.pairs:
         pair_ids = [int(x) for x in args.pairs.split(",") if x.strip() != ""]
-    result = ingest(unzip=not args.no_unzip, pair_ids=pair_ids, force=args.force)
+    result = ingest(
+        unzip=not args.no_unzip,
+        pair_ids=pair_ids,
+        force=args.force,
+        workers=int(args.workers),
+    )
     print(json.dumps(result, indent=2))
     if result.get("failed"):
         sys.exit(2)
