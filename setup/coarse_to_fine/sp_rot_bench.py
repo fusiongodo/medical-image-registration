@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import time
@@ -18,6 +19,27 @@ SP_ROT_ROOT = conf.PROJECT_ROOT / "data" / "sp_rot_runs"
 DEFAULT_ANGLES = list(range(0, 360, 30))
 LABELS = ("pass", "fail", "unsure")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def json_safe(obj):
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    if isinstance(obj, (np.floating, float)):
+        f = float(obj)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, np.ndarray):
+        return json_safe(obj.tolist())
+    return obj
+
+
+def dumps(obj, *, indent: int | None = None) -> str:
+    return json.dumps(json_safe(obj), indent=indent, allow_nan=False, separators=None if indent else (",", ":"))
 
 
 def slugify(name: str) -> str:
@@ -87,7 +109,7 @@ def load_status(run_id: str) -> dict | None:
 
 
 def write_status(run_id: str, status: dict) -> None:
-    status_path(run_id).write_text(json.dumps(status, indent=2))
+    status_path(run_id).write_text(dumps(status, indent=2))
 
 
 def load_labels(run_id: str) -> dict:
@@ -122,8 +144,65 @@ def save_label(
     labels[label_key(pair_id, angle)] = entry
     store["updated_at"] = int(time.time())
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(store, indent=2))
+    path.write_text(dumps(store, indent=2))
     return entry
+
+
+def clear_labels(run_id: str) -> dict:
+    path = labels_path(run_id)
+    store = {
+        "run_id": run_id,
+        "labels": {},
+        "updated_at": int(time.time()),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dumps(store, indent=2))
+    return store
+
+
+def replace_labels(run_id: str, labels_in: dict) -> dict:
+    """Replace all labels. keys 'pair:angle' or values {pair_id,angle,label}."""
+    out: dict = {}
+    now = int(time.time())
+    if not isinstance(labels_in, dict):
+        raise ValueError("labels must be an object")
+    for key, val in labels_in.items():
+        if isinstance(val, str):
+            lab = val.strip().lower()
+            if lab not in LABELS:
+                raise ValueError(f"bad label {val!r} for {key}")
+            parts = str(key).split(":")
+            if len(parts) != 2:
+                raise ValueError(f"bad label key {key!r}")
+            pid, ang = int(parts[0]), int(parts[1])
+            out[label_key(pid, ang)] = {
+                "pair_id": pid,
+                "angle": ang,
+                "label": lab,
+                "labeled_at": now,
+            }
+        elif isinstance(val, dict):
+            lab = str(val.get("label") or "").strip().lower()
+            if lab not in LABELS:
+                raise ValueError(f"bad label entry for {key}")
+            pid = int(val.get("pair_id", str(key).split(":")[0]))
+            ang = int(val.get("angle", str(key).split(":")[1]))
+            entry = {
+                "pair_id": pid,
+                "angle": ang,
+                "label": lab,
+                "labeled_at": now,
+            }
+            if val.get("note") is not None:
+                entry["note"] = str(val["note"])
+            out[label_key(pid, ang)] = entry
+        else:
+            raise ValueError(f"bad label value for {key}")
+    store = {"run_id": run_id, "labels": out, "updated_at": now}
+    path = labels_path(run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dumps(store, indent=2))
+    return store
 
 
 def list_runs() -> list[dict]:
@@ -193,7 +272,7 @@ def create_run(
         "created_at": int(time.time()),
         "total_cells": total,
     }
-    manifest_path(rid).write_text(json.dumps(man, indent=2))
+    manifest_path(rid).write_text(dumps(man, indent=2))
     write_status(
         rid,
         {
@@ -208,7 +287,7 @@ def create_run(
         },
     )
     labels_path(rid).write_text(
-        json.dumps({"run_id": rid, "labels": {}, "updated_at": int(time.time())}, indent=2)
+        dumps({"run_id": rid, "labels": {}, "updated_at": int(time.time())}, indent=2)
     )
     return man
 
@@ -277,7 +356,7 @@ def ensure_gt_rigid(pair_id: int, dataset: str | None = None) -> dict:
         "saved_at": int(time.time()),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(store, indent=2))
+    path.write_text(dumps(store, indent=2))
     return store
 
 
@@ -467,7 +546,7 @@ def build_summary(run_id: str) -> dict:
         },
         "built_at": int(time.time()),
     }
-    summary_path(run_id).write_text(json.dumps(summary, indent=2))
+    summary_path(run_id).write_text(dumps(summary, indent=2))
     return summary
 
 

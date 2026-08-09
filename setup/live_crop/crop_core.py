@@ -114,20 +114,35 @@ def _image_path(image_id: int) -> Path:
     return conf.resolve(conf.image_relpath(image_id))
 
 
+def _pair_tiff_paths(pair_id: int) -> tuple[Path, Path]:
+    from setup import datasets as ds
+
+    d = ds.pair_dir(pair_id)
+    return d / "he.tiff", d / "ihc.tiff"
+
+
+def _muromi_wsi_available(pair_id: int) -> bool:
+    he_id, ihc_id = pair_image_ids(pair_id)
+    return _image_path(he_id).is_file() and _image_path(ihc_id).is_file()
+
+
+def _prefer_pair_tiffs(pair_id: int) -> bool:
+    he_tiff, ihc_tiff = _pair_tiff_paths(pair_id)
+    if not (he_tiff.is_file() and ihc_tiff.is_file()):
+        return False
+    if _dataset() == "acrobat":
+        return True
+    return not _muromi_wsi_available(pair_id)
+
+
 def choose_page(pair_id: int, level: int) -> tuple[int, int, int] | None:
     key = (pair_id, level)
     if key in _page_choice_cache:
         return _page_choice_cache[key]
 
     grid = 2 ** level
-    if _dataset() == "acrobat":
-        from setup import datasets as ds
-
-        he = ds.pair_dir(pair_id, "acrobat") / "he.tiff"
-        if he.is_file():
-            chosen = (0, CNN_H, CNN_W)
-        else:
-            chosen = None
+    if _prefer_pair_tiffs(pair_id):
+        chosen = (0, CNN_H, CNN_W)
         _page_choice_cache[key] = chosen
         return chosen
 
@@ -149,13 +164,13 @@ def choose_page(pair_id: int, level: int) -> tuple[int, int, int] | None:
     return chosen
 
 
-def _acrobat_compact(pair_id: int, level: int, side: str) -> np.ndarray:
+def _pair_tiff_compact(pair_id: int, level: int, side: str) -> np.ndarray:
     from setup import datasets as ds
 
-    path = ds.pair_dir(pair_id, "acrobat") / f"{side}.tiff"
+    path = ds.pair_dir(pair_id) / f"{side}.tiff"
     if not path.is_file():
         raise FileNotFoundError(path)
-    key = ("acrobat", pair_id, level, side)
+    key = ("pair_tiff", ds.active_dataset(), pair_id, level, side)
     compact = _page_cache.get(key)
     if compact is not None:
         _page_cache.move_to_end(key)
@@ -176,6 +191,10 @@ def _acrobat_compact(pair_id: int, level: int, side: str) -> np.ndarray:
     while _page_cache_bytes() > MAX_CACHE_BYTES and len(_page_cache) > 1:
         _page_cache.popitem(last=False)
     return compact
+
+
+def _acrobat_compact(pair_id: int, level: int, side: str) -> np.ndarray:
+    return _pair_tiff_compact(pair_id, level, side)
 
 
 def _pair_mask(pair_id: int) -> "np.ndarray | None":
@@ -432,8 +451,8 @@ def _crop_tile(pair_id: int, level: int, x: int, y: int, side: str, dx: float, d
         raise ValueError(f"no pyramid page for pair {pair_id} level {level}")
     page_idx = chosen[0]
     grid = 2 ** level
-    if _dataset() == "acrobat":
-        gpage = _acrobat_compact(pair_id, level, "he" if side == "he" else "ihc")
+    if _prefer_pair_tiffs(pair_id):
+        gpage = _pair_tiff_compact(pair_id, level, "he" if side == "he" else "ihc")
     else:
         he_id, ihc_id = pair_image_ids(pair_id)
         image_id = he_id if side == "he" else ihc_id
@@ -467,11 +486,14 @@ def whole_gray(pair_id: int, side: str, level: int) -> "np.ndarray | None":
     resolution: level 0 is 512x344, level 2 is 2048x1376 (4x). Returns None when
     no suitable pyramid page exists.
     """
-    he_id, ihc_id = pair_image_ids(pair_id)
-    image_id = he_id if side == "he" else ihc_id
     chosen = choose_page(pair_id, level)
     if chosen is None:
         return None
+    side_key = "he" if side == "he" else "ihc"
+    if _prefer_pair_tiffs(pair_id):
+        return _pair_tiff_compact(pair_id, level, side_key)
+    he_id, ihc_id = pair_image_ids(pair_id)
+    image_id = he_id if side_key == "he" else ihc_id
     return _compact_page(image_id, level, chosen[0], 2 ** level)
 
 

@@ -118,7 +118,7 @@
 				<img src={asset('matches.png')} alt="matches" />
 			{:else if view === 'overlay'}
 				<div class="overlay">
-					<img class="base" src={asset('he.png')} alt="he" />
+					<img class="base he" src={asset('he.png')} alt="he" />
 					<img class="move" src={asset('ihc_rigid.png')} alt="ihc rigid" />
 				</div>
 			{:else if view === 'prerot'}
@@ -262,10 +262,14 @@
 	.overlay img {
 		max-height: min(70vh, 720px);
 	}
+	.overlay .he {
+		filter: grayscale(1) contrast(1.05) brightness(0.95) sepia(1) hue-rotate(180deg) saturate(3);
+	}
 	.overlay .move {
 		position: absolute;
 		inset: 0;
-		opacity: 0.55;
+		opacity: 0.85;
+		filter: grayscale(1) contrast(1.05) brightness(0.95) sepia(1) hue-rotate(320deg) saturate(3.5);
 		mix-blend-mode: screen;
 	}
 	aside {

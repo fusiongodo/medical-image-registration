@@ -53,7 +53,7 @@ def parse_pairs_spec(spec: str) -> list[int]:
 
 
 def emit(obj: dict) -> None:
-    print(json.dumps(obj, separators=(",", ":")), flush=True)
+    print(bench.dumps(obj), flush=True)
 
 
 def progress(run_id: str, **kwargs) -> None:
@@ -131,11 +131,38 @@ def cmd_label(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_clear_labels(args: argparse.Namespace) -> None:
+    try:
+        store = bench.clear_labels(args.run_id)
+        emit({"ok": True, "labels": store})
+    except Exception as e:
+        emit({"ok": False, "error": str(e)})
+        sys.exit(1)
+
+
+def cmd_save_labels(args: argparse.Namespace) -> None:
+    try:
+        raw = args.labels_json
+        if not raw and not sys.stdin.isatty():
+            raw = sys.stdin.read()
+        payload = json.loads(raw or "{}")
+        labels = payload.get("labels", payload)
+        store = bench.replace_labels(args.run_id, labels)
+        try:
+            summary = bench.build_summary(args.run_id)
+        except Exception:
+            summary = None
+        emit({"ok": True, "labels": store, "summary": summary})
+    except Exception as e:
+        emit({"ok": False, "error": str(e)})
+        sys.exit(1)
+
+
 def _prepare_gt(run_id: str, pair_id: int, dataset: str) -> dict:
     store = bench.ensure_gt_rigid(pair_id, dataset)
     dest = bench.gt_copy_path(run_id, pair_id)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(store, indent=2))
+    dest.write_text(bench.dumps(store, indent=2))
     return store
 
 
@@ -190,7 +217,7 @@ def _run_cell(
             "ran_at": int(time.time()),
             "error": None,
         }
-        result_path.write_text(json.dumps(out, indent=2))
+        result_path.write_text(bench.dumps(out, indent=2))
         return out
     except Exception as e:
         out = {
@@ -203,7 +230,7 @@ def _run_cell(
             "ran_at": int(time.time()),
         }
         cell.mkdir(parents=True, exist_ok=True)
-        result_path.write_text(json.dumps(out, indent=2))
+        result_path.write_text(bench.dumps(out, indent=2))
         return out
 
 
@@ -257,7 +284,7 @@ def cmd_run(args: argparse.Namespace) -> None:
                 cell = bench.cell_dir(args.run_id, pid, ang)
                 cell.mkdir(parents=True, exist_ok=True)
                 (cell / "result.json").write_text(
-                    json.dumps(
+                    bench.dumps(
                         {
                             "pair_id": pid,
                             "angle": ang,
@@ -381,6 +408,17 @@ def build_parser() -> argparse.ArgumentParser:
     l.add_argument("--label", required=True, choices=list(bench.LABELS))
     l.add_argument("--note", default=None)
 
+    cl = sub.add_parser("clear-labels", help="wipe all human labels for a run")
+    cl.add_argument("run_id")
+
+    sl = sub.add_parser("save-labels", help="replace all labels from JSON")
+    sl.add_argument("run_id")
+    sl.add_argument(
+        "--labels-json",
+        default=None,
+        help='JSON object {"labels":{"0:30":"pass",...}} or bare map',
+    )
+
     return p
 
 
@@ -398,6 +436,10 @@ def main(argv: list[str] | None = None) -> None:
         cmd_summary(args)
     elif args.cmd == "label":
         cmd_label(args)
+    elif args.cmd == "clear-labels":
+        cmd_clear_labels(args)
+    elif args.cmd == "save-labels":
+        cmd_save_labels(args)
     else:
         raise SystemExit(f"unknown cmd {args.cmd}")
 

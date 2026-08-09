@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import { resolve } from 'path';
 import type { RequestHandler } from './$types';
 import { normalizeDataset, pairCount } from '$lib/server/datasets';
+import { listSpRotRuns } from '$lib/server/spRotStore';
 
 const REPO_ROOT = resolve('..');
 const PYTHON = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
@@ -36,8 +37,7 @@ function runJson(args: string[]): Promise<unknown> {
 
 export const GET: RequestHandler = async () => {
 	try {
-		const result = (await runJson(['list'])) as { runs?: unknown[] };
-		return json(result);
+		return json(listSpRotRuns());
 	} catch (e) {
 		error(500, `list runs failed: ${(e as Error).message}`);
 	}
