@@ -52,6 +52,20 @@
 
 	const dataset = $derived(data.dataset ?? 'muromi');
 	const selectedBatch = $derived(batches.find((b) => b.id === batchId) ?? null);
+	const batchRunning = $derived(
+		!!runJob?.running || (selectedBatch?.status?.state || '').toLowerCase() === 'running'
+	);
+	const progressDone = $derived(
+		runJob?.running ? runJob.done : (selectedBatch?.status?.done ?? runJob?.done ?? 0)
+	);
+	const progressTotal = $derived(
+		runJob?.running ? runJob.total : (selectedBatch?.status?.total ?? runJob?.total ?? 0)
+	);
+	const progressDetail = $derived(
+		runJob?.running
+			? runJob.detail
+			: (selectedBatch?.status?.detail || runJob?.detail || null)
+	);
 	const listPairs = $derived.by(() => {
 		if (selectedBatch?.pairs?.length) {
 			const set = new Set(selectedBatch.pairs);
@@ -207,19 +221,36 @@
 		startRunPoll();
 	}
 
+	function stopRunPoll() {
+		if (runPoll) {
+			clearInterval(runPoll);
+			runPoll = null;
+		}
+	}
+
 	function startRunPoll() {
 		if (runPoll || !batchId) return;
 		runPoll = setInterval(async () => {
 			if (!batchId) return;
 			const r = await fetch(`/api/eval/batches/progress?batch=${encodeURIComponent(batchId)}`);
-			runJob = r.ok ? await r.json() : null;
-			if (runJob && !runJob.running) {
-				if (runPoll) {
-					clearInterval(runPoll);
-					runPoll = null;
-				}
+			const j = r.ok ? await r.json() : null;
+			runJob = j;
+			if (j && !j.running) {
+				stopRunPoll();
 				await loadBatches();
 				if (selectedPair != null) void fetchTre(selectedPair);
+			} else if (j?.running) {
+				const b = batches.find((x) => x.id === batchId);
+				if (b) {
+					b.status = {
+						state: 'running',
+						done: j.done,
+						total: j.total,
+						detail: j.detail ?? '',
+						error: j.error
+					};
+					batches = [...batches];
+				}
 			}
 		}, 1000);
 	}
@@ -230,7 +261,25 @@
 			treErr = e instanceof Error ? e.message : 'failed to load batches';
 		});
 		return () => {
-			if (runPoll) clearInterval(runPoll);
+			stopRunPoll();
+		};
+	});
+
+	$effect(() => {
+		const id = batchId;
+		stopRunPoll();
+		runJob = null;
+		if (!id) return;
+		let cancelled = false;
+		void fetch(`/api/eval/batches/progress?batch=${encodeURIComponent(id)}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((j) => {
+				if (cancelled || !j) return;
+				runJob = j;
+				if (j.running) startRunPoll();
+			});
+		return () => {
+			cancelled = true;
 		};
 	});
 
@@ -269,18 +318,21 @@
 			</select>
 		</label>
 		<button type="button" class="btn" onclick={openNewModal}>New batch</button>
-		<button type="button" class="btn primary" disabled={!batchId || !!runJob?.running} onclick={runBatch}>
-			{runJob?.running ? 'Running…' : 'Run batch'}
+		<button type="button" class="btn primary" disabled={!batchId || batchRunning} onclick={runBatch}>
+			{batchRunning ? 'Running…' : 'Run batch'}
 		</button>
-		{#if runJob?.running}
+		{#if batchRunning}
 			<span class="prog">
-				{runJob.done}/{runJob.total || '?'}{#if runJob.detail}
-					· {runJob.detail}{/if}
+				{progressDone}/{progressTotal || '?'}{#if progressDetail}
+					· {progressDetail}{/if}
 			</span>
-		{:else if runJob?.error}
-			<span class="err">{runJob.error}</span>
+		{:else if runJob?.error || selectedBatch?.status?.error}
+			<span class="err">{runJob?.error || selectedBatch?.status?.error}</span>
 		{:else if selectedBatch?.status?.state}
-			<span class="prog muted">status: {selectedBatch.status.state}</span>
+			<span class="prog muted">
+				status: {selectedBatch.status.state}{#if (selectedBatch.status.done ?? 0) > 0 || (selectedBatch.status.total ?? 0) > 0}
+					· {selectedBatch.status.done ?? 0}/{selectedBatch.status.total || '?'}{/if}
+			</span>
 		{/if}
 		<a class="link" href={`/eval/0/annotate?dataset=${dataset}`}>Annotate landmarks</a>
 	</div>
