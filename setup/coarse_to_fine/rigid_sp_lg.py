@@ -288,8 +288,11 @@ def run(
     preview_level: int = DEFAULT_PREVIEW_LEVEL,
     pre_rotation_deg: float = 0.0,
     hyperparams: dict | None = None,
+    extract_resize: int | None = None,
+    write_artifacts: bool = True,
 ) -> dict:
     hp = {**DEFAULT_HYPERPARAMS, **(hyperparams or {})}
+    resize = RIGID_EXTRACT_RESIZE if extract_resize is None else int(extract_resize)
     rd = run_dir(pair_id)
     if rd.exists():
         shutil.rmtree(rd)
@@ -303,19 +306,21 @@ def run(
     if he is None or ihc is None:
         raise RuntimeError(f"no whole preview for pair {pair_id} level {preview_level}")
 
-    cv2.imwrite(str(rd / "he.png"), he)
-    cv2.imwrite(str(rd / "ihc.png"), ihc)
+    if write_artifacts:
+        cv2.imwrite(str(rd / "he.png"), he)
+        cv2.imwrite(str(rd / "ihc.png"), ihc)
 
     _progress(pair_id, "prerot", f"pre_rotation_deg={pre_rotation_deg}")
     ihc_prerot, pre_M = _rotate_gray(ihc, float(pre_rotation_deg))
-    cv2.imwrite(str(rd / "ihc_prerot.png"), ihc_prerot)
+    if write_artifacts:
+        cv2.imwrite(str(rd / "ihc_prerot.png"), ihc_prerot)
 
     _progress(pair_id, "superpoint", "loading models")
     extractor, matcher, device, _ = lam_sp_lg.build_models(hp)
     _progress(pair_id, "superpoint", f"device={device}")
     _progress(pair_id, "lightglue", "matching")
     raw = lam_sp_lg.extract_and_match(
-        he, ihc_prerot, extractor, matcher, device, resize=RIGID_EXTRACT_RESIZE
+        he, ihc_prerot, extractor, matcher, device, resize=resize
     )
     he_pts = raw["he_pts"]
     ihc_pts = raw["ihc_pts"]
@@ -340,27 +345,25 @@ def run(
             np.degrees(np.arctan2(float(R_px[1, 0]), float(R_px[0, 0])))
         ),
     }
-    # Final rotation after composing pre-rotation (pixel space).
     A_px = pre_M[:, :2].astype(float)
     R_final_px = R_px @ A_px
     stats["final_rotation_deg"] = float(
         np.degrees(np.arctan2(float(R_final_px[1, 0]), float(R_final_px[0, 0])))
     )
 
-    matches_payload = {
-        "he": he_pts.tolist(),
-        "ihc": ihc_pts.tolist(),
-        "scores": [float(s) for s in match_scores],
-        "inliers": [bool(x) for x in inlier_mask],
-    }
-    (rd / "matches.json").write_text(json.dumps(matches_payload, separators=(",", ":")))
-
-    match_viz = _draw_matches(he, ihc_prerot, he_pts, ihc_pts, inlier_mask)
-    cv2.imwrite(str(rd / "matches.png"), match_viz)
-
-    _progress(pair_id, "preview", "warping IHC with rigid")
-    ihc_rigid = _apply_rigid_preview(ihc, rigid_final)
-    cv2.imwrite(str(rd / "ihc_rigid.png"), ihc_rigid)
+    if write_artifacts:
+        matches_payload = {
+            "he": he_pts.tolist(),
+            "ihc": ihc_pts.tolist(),
+            "scores": [float(s) for s in match_scores],
+            "inliers": [bool(x) for x in inlier_mask],
+        }
+        (rd / "matches.json").write_text(json.dumps(matches_payload, separators=(",", ":")))
+        match_viz = _draw_matches(he, ihc_prerot, he_pts, ihc_pts, inlier_mask)
+        cv2.imwrite(str(rd / "matches.png"), match_viz)
+        _progress(pair_id, "preview", "warping IHC with rigid")
+        ihc_rigid = _apply_rigid_preview(ihc, rigid_final)
+        cv2.imwrite(str(rd / "ihc_rigid.png"), ihc_rigid)
 
     result = {
         "pair_id": pair_id,
@@ -369,6 +372,7 @@ def run(
         "method": "superpoint_lightglue",
         "preview_level": int(preview_level),
         "pre_rotation_deg": float(pre_rotation_deg),
+        "extract_resize": int(resize),
         "hyperparams": hp,
         "n_matches": int(len(he_pts)),
         "n_inliers": int(stats["n_inliers"]),
@@ -377,7 +381,8 @@ def run(
         "stats": stats,
         "ran_at": int(time.time()),
     }
-    (rd / "result.json").write_text(json.dumps(result, separators=(",", ":")))
+    if write_artifacts:
+        (rd / "result.json").write_text(json.dumps(result, separators=(",", ":")))
     _progress(pair_id, "done", f"inliers={stats['n_inliers']}")
     return result
 
