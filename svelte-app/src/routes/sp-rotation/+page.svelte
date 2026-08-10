@@ -33,12 +33,28 @@
 		angle: number;
 		state: string;
 		label: string | null;
+		heuristic_label?: 'pass' | 'fail' | null;
+		heuristic_agree?: boolean | null;
 		n_inliers: number | null;
+		n_matches?: number | null;
+		inlier_frac?: number | null;
+		translation_px?: number | null;
 		rmse_px: number | null;
 		rot_err_deg: number | null;
 		trans_err_px: number | null;
 		error: string | null;
 	};
+
+	type HeuristicInfo = {
+		min_inliers: number;
+		max_translation_px?: number;
+		rule: string;
+		n_pass?: number;
+		n_fail?: number;
+		n_disagree_human?: number;
+	};
+
+	type LabelView = 'human' | 'heuristic' | 'diff';
 
 	type PageData = {
 		pairs: { pairId: number; ready: boolean }[];
@@ -50,6 +66,7 @@
 		initialMatrix?: {
 			cells?: Cell[];
 			manifest?: { angles?: number[]; pairs?: number[] };
+			heuristic?: HeuristicInfo;
 		} | null;
 		initialSummary?: {
 			by_angle?: Record<
@@ -94,6 +111,8 @@
 			{ fail_rate: number | null; labeled: number; counts: Record<string, number> }
 		>;
 	} | null>(data.initialSummary ?? null);
+	let heuristic = $state<HeuristicInfo | null>(data.initialMatrix?.heuristic ?? null);
+	let labelView = $state<LabelView>('heuristic');
 
 	let selected = $state<{ pair: number; angle: number } | null>(null);
 	let panelMode = $state<'overlay' | 'matches'>('overlay');
@@ -168,6 +187,7 @@
 			cells = Array.isArray(j.cells) ? j.cells : [];
 			angles = (j.manifest?.angles as number[]) || [];
 			pairs = (j.manifest?.pairs as number[]) || [];
+			heuristic = (j.heuristic as HeuristicInfo) || null;
 			const fromDisk = labelsFromCells(cells);
 			savedLabels = fromDisk;
 			draftLabels = { ...fromDisk };
@@ -322,21 +342,60 @@
 
 	function cellClass(c: Cell | null): string {
 		if (!c || c.state === 'missing') return 'miss';
-		if (c.state === 'error') return 'err';
-		const lab = draftOf(c.pair_id, c.angle);
+		if (c.state === 'error' && labelView === 'human') return 'err';
+		const human = draftOf(c.pair_id, c.angle);
+		const heur = c.heuristic_label ?? null;
+		if (labelView === 'diff') {
+			if (human && heur && human !== heur) return `disagree ${human}`;
+			if (heur === 'pass') return 'pass dim';
+			if (heur === 'fail') return 'fail dim';
+			if (c.state === 'error') return 'err';
+			return 'done';
+		}
+		const lab = labelView === 'heuristic' ? heur : human;
 		if (lab === 'pass') return 'pass';
 		if (lab === 'fail') return 'fail';
 		if (lab === 'unsure') return 'unsure';
+		if (c.state === 'error') return 'err';
 		return 'done';
+	}
+
+	function cellGlyph(c: Cell | null): string {
+		if (!c) return '–';
+		if (labelView === 'heuristic') {
+			if (c.heuristic_label === 'pass') return 'P';
+			if (c.heuristic_label === 'fail') return 'F';
+			if (c.state === 'error') return '!';
+			if (c.state === 'done') return '·';
+			return '–';
+		}
+		if (labelView === 'diff') {
+			const human = draftOf(c.pair_id, c.angle);
+			const heur = c.heuristic_label;
+			if (human && heur && human !== heur) return `${human[0]!.toUpperCase()}≠${heur[0]!.toUpperCase()}`;
+			if (heur === 'pass') return 'p';
+			if (heur === 'fail') return 'f';
+			if (c.state === 'error') return '!';
+			return '·';
+		}
+		const human = draftOf(c.pair_id, c.angle);
+		if (human) return human[0]!.toUpperCase();
+		if (c.state === 'done') return '·';
+		if (c.state === 'error') return '!';
+		return '–';
 	}
 
 	function cellTitle(c: Cell | null): string {
 		if (!c) return 'missing';
 		const bits = [c.state];
 		const lab = draftOf(c.pair_id, c.angle);
-		if (lab) bits.push(`draft=${lab}`);
+		if (lab) bits.push(`human=${lab}`);
+		if (c.heuristic_label) bits.push(`heur=${c.heuristic_label}`);
 		if (c.n_inliers != null) bits.push(`inliers=${c.n_inliers}`);
+		if (c.translation_px != null) bits.push(`||t||=${c.translation_px.toFixed(0)}px`);
+		if (c.inlier_frac != null) bits.push(`inl%=${(100 * c.inlier_frac).toFixed(1)}`);
 		if (c.rot_err_deg != null) bits.push(`rotΔ=${c.rot_err_deg.toFixed(1)}°`);
+		if (c.trans_err_px != null) bits.push(`tΔ=${c.trans_err_px.toFixed(0)}px`);
 		if (c.rmse_px != null) bits.push(`rmse=${c.rmse_px.toFixed(2)}`);
 		if (c.error) bits.push(c.error);
 		return bits.join(' · ');
@@ -801,6 +860,30 @@
 		{/if}
 		<div class="workspace">
 			<section class="matrix-wrap">
+				<div class="view-bar">
+					<div class="view-pills">
+						<button type="button" class:on={labelView === 'heuristic'} onclick={() => (labelView = 'heuristic')}
+							>Heuristic</button
+						>
+						<button type="button" class:on={labelView === 'human'} onclick={() => (labelView = 'human')}
+							>Human</button
+						>
+						<button type="button" class:on={labelView === 'diff'} onclick={() => (labelView = 'diff')}
+							>Diff</button
+						>
+					</div>
+					{#if heuristic}
+						<p class="heur-rule">
+							{heuristic.rule}
+							{#if heuristic.n_pass != null}
+								· H {heuristic.n_pass}P/{heuristic.n_fail}F
+							{/if}
+							{#if heuristic.n_disagree_human != null}
+								· {heuristic.n_disagree_human} disagree
+							{/if}
+						</p>
+					{/if}
+				</div>
 				<table>
 					<thead>
 						<tr>
@@ -823,17 +906,10 @@
 										<button
 											type="button"
 											class="cell-btn"
+											class:tiny={labelView === 'diff'}
 											onclick={() => selectCell(pid, a, c)}
 										>
-											{#if draftOf(pid, a)}
-												{draftOf(pid, a)![0].toUpperCase()}
-											{:else if c?.state === 'done'}
-												·
-											{:else if c?.state === 'error'}
-												!
-											{:else}
-												–
-											{/if}
+											{cellGlyph(c)}
 										</button>
 									</td>
 								{/each}
@@ -848,6 +924,7 @@
 					<span class="swatch done"></span> done unlabeled
 					<span class="swatch miss"></span> missing
 					<span class="swatch err"></span> error
+					<span class="swatch disagree"></span> human≠heur
 				</p>
 
 				{#if summary?.by_angle}
@@ -960,10 +1037,21 @@
 					{/if}
 
 					<p class="metrics">
-						inliers {selectedCell?.n_inliers ?? '—'} · rmse {fmt(selectedCell?.rmse_px, 2)} · rotΔ
-						{fmt(selectedCell?.rot_err_deg)}° · tΔ {fmt(selectedCell?.trans_err_px, 0)}px
-						{#if selectedDraft}
-							· <span class="lab">{selectedDraft}</span>
+						inliers {selectedCell?.n_inliers ?? '—'}
+						{#if selectedCell?.n_matches != null}
+							/{selectedCell.n_matches}
+						{/if}
+						· ||t|| {fmt(selectedCell?.translation_px, 0)}px · rmse {fmt(selectedCell?.rmse_px, 2)} ·
+						rotΔ {fmt(selectedCell?.rot_err_deg)}° · tΔGT {fmt(selectedCell?.trans_err_px, 0)}px
+					</p>
+					<p class="metrics">
+						human {selectedDraft ?? '—'} · heuristic {selectedCell?.heuristic_label ?? '—'}
+						{#if selectedDraft && selectedCell?.heuristic_label}
+							{#if selectedDraft === selectedCell.heuristic_label}
+								· <span class="lab ok">agree</span>
+							{:else}
+								· <span class="lab bad">disagree</span>
+							{/if}
 						{/if}
 					</p>
 					{#if selectedCell?.error}
@@ -1318,6 +1406,61 @@
 		background: #451a1a;
 		color: #fb7185;
 	}
+	td.disagree.pass,
+	td.disagree.fail {
+		background: #3a2a12;
+		color: #fde68a;
+		outline: 1px solid #f59e0b;
+		outline-offset: -1px;
+	}
+	td.pass.dim {
+		background: #16241c;
+		color: #4b7c5c;
+	}
+	td.fail.dim {
+		background: #241616;
+		color: #7c4b4b;
+	}
+	.cell-btn.tiny {
+		font-size: 0.62rem;
+		letter-spacing: -0.02em;
+	}
+	.view-bar {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px 16px;
+		align-items: center;
+		margin-bottom: 10px;
+	}
+	.view-pills {
+		display: flex;
+		gap: 4px;
+	}
+	.view-pills button {
+		border: 1px solid #2a2d3a;
+		background: #14161c;
+		color: #9ca3af;
+		border-radius: 6px;
+		padding: 4px 10px;
+		font-size: 0.78rem;
+		cursor: pointer;
+	}
+	.view-pills button.on {
+		background: #1e293b;
+		color: #e5e7eb;
+		border-color: #475569;
+	}
+	.heur-rule {
+		margin: 0;
+		font-size: 0.75rem;
+		color: #9ca3af;
+	}
+	.lab.ok {
+		color: #86efac;
+	}
+	.lab.bad {
+		color: #fbbf24;
+	}
 	.legend {
 		display: flex;
 		flex-wrap: wrap;
@@ -1352,6 +1495,10 @@
 	}
 	.swatch.err {
 		background: #451a1a;
+	}
+	.swatch.disagree {
+		background: #3a2a12;
+		outline: 1px solid #f59e0b;
 	}
 	.summary h2 {
 		font-size: 0.95rem;

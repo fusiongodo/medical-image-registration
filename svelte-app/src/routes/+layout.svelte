@@ -91,6 +91,7 @@
 				<a href="/live" class:active={$page.url.pathname === '/live'}>Live crop</a>
 				<a href="/eval" class:active={$page.url.pathname.startsWith('/eval')}>Eval</a>
 				<a href="/sp-rotation" class:active={$page.url.pathname.startsWith('/sp-rotation')}>SP rot</a>
+				<a href="/sp-rot-train" class:active={$page.url.pathname.startsWith('/sp-rot-train')}>SP train</a>
 			</nav>
 			<h2>Pairs</h2>
 			<ul>

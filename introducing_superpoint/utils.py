@@ -272,7 +272,53 @@ def compute_keypoint_kpis(
         "fn": fn,
     }
 
-def descriptor_loss(descriptors, other_descriptors, config, valid_mask=None):
+def _identity_correspondence(Hc, Wc, device):
+    r = torch.arange(Hc, device=device)
+    c = torch.arange(Wc, device=device)
+    return (
+        (r.view(Hc, 1, 1, 1) == r.view(1, 1, Hc, 1))
+        & (c.view(1, Wc, 1, 1) == c.view(1, 1, 1, Wc))
+    ).float()
+
+
+def warp_correspondence(homographies, Hc, Wc, grid_size, device):
+    """
+    homographies: (B, 3, 3) mapping pixel coords in descriptors → other_descriptors.
+    Returns s: (B, Hc, Wc, Hc, Wc) with 1 at the destination cell of each source cell centre.
+    """
+    B = homographies.shape[0]
+    gs = float(grid_size)
+    yy, xx = torch.meshgrid(
+        (torch.arange(Hc, device=device, dtype=torch.float32) + 0.5) * gs,
+        (torch.arange(Wc, device=device, dtype=torch.float32) + 0.5) * gs,
+        indexing="ij",
+    )
+    ones = torch.ones(Hc, Wc, device=device, dtype=torch.float32)
+    pts = torch.stack([xx, yy, ones], dim=-1).view(1, Hc * Wc, 3).expand(B, -1, -1)
+    H = homographies.to(device=device, dtype=torch.float32)
+    mapped = torch.bmm(pts, H.transpose(1, 2))
+    denom = mapped[..., 2:].clamp(min=1e-6)
+    xy = mapped[..., :2] / denom
+    col = (xy[..., 0] / gs).long()
+    row = (xy[..., 1] / gs).long()
+    inside = (row >= 0) & (row < Hc) & (col >= 0) & (col < Wc)
+    row = row.clamp(0, Hc - 1)
+    col = col.clamp(0, Wc - 1)
+    s = torch.zeros(B, Hc * Wc, Hc * Wc, device=device, dtype=torch.float32)
+    src = torch.arange(Hc * Wc, device=device).view(1, -1).expand(B, -1)
+    dst = row * Wc + col
+    b_idx = torch.arange(B, device=device).unsqueeze(1).expand_as(src)
+    s[b_idx[inside], src[inside], dst[inside]] = 1.0
+    return s.view(B, Hc, Wc, Hc, Wc)
+
+
+def descriptor_loss(
+    descriptors,
+    other_descriptors,
+    config,
+    valid_mask=None,
+    homographies=None,
+):
     batch_size, _, Hc, Wc = descriptors.shape
     device = descriptors.device
     desc = F.normalize(descriptors, p=2, dim=1)
@@ -287,12 +333,14 @@ def descriptor_loss(descriptors, other_descriptors, config, valid_mask=None):
     dot_product_desc = F.normalize(dot_product_desc, p=2, dim=1)
     dot_product_desc = dot_product_desc.view(batch_size, Hc, Wc, Hc, Wc)
 
-    # Original SuperPoint correspondence mask s under an identity warp (the
-    # tiles are pre-aligned, no homographies): positive iff same cell.
-    r = torch.arange(Hc, device=device)
-    c = torch.arange(Wc, device=device)
-    s = ((r.view(Hc, 1, 1, 1) == r.view(1, 1, Hc, 1))
-         & (c.view(1, Wc, 1, 1) == c.view(1, 1, 1, Wc))).float()
+    if homographies is None:
+        s = _identity_correspondence(Hc, Wc, device)
+        if s.dim() == 4:
+            s = s.unsqueeze(0).expand(batch_size, -1, -1, -1, -1)
+    else:
+        s = warp_correspondence(
+            homographies, Hc, Wc, int(config["grid_size"]), device
+        )
 
     positive_dist = torch.clamp(config['positive_margin'] - dot_product_desc, min=0.0)
     negative_dist = torch.clamp(dot_product_desc - config['negative_margin'], min=0.0)

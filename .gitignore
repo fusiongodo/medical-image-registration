@@ -5,13 +5,21 @@ venv/
 data/exact/
 *.DS_Store
 *.pyc
+*.log
+*_stdout.log
+*_monitor.log
 
 .idea/
+.cursor/
 data/cropped/
 data/cropped_smooth/
 data/*
 !data/acrobat/
 !data/acrobat/acrobat_validation_points_public_1_of_1.csv
+data/acrobat/regwsi/
+data/acrobat/rigid/
+data/acrobat/valid/
+data/acrobat/pairs.json
 introducing_superpoint/runs/
 remote/logs/
 remote/runpodKey

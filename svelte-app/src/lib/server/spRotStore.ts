@@ -55,6 +55,49 @@ export function listSpRotRuns() {
 	return { runs };
 }
 
+export const RIGID_HEURISTIC = {
+	min_inliers: 17,
+	max_translation_px: 50,
+	rule: 'pass if n_inliers ≥ 17 and ||t||_px ≤ 50 (else fail); hard errors → fail'
+} as const;
+
+function num(v: unknown): number | null {
+	if (v == null) return null;
+	const n = Number(v);
+	return Number.isFinite(n) ? n : null;
+}
+
+export function rigidTranslationPx(res: Record<string, unknown> | null | undefined): number | null {
+	if (!res) return null;
+	const rigid = res.rigid;
+	if (!Array.isArray(rigid) || rigid.length < 2) return null;
+	const row0 = rigid[0];
+	const row1 = rigid[1];
+	if (!Array.isArray(row0) || !Array.isArray(row1) || row0.length < 3 || row1.length < 3) return null;
+	const stats = (res.stats as Record<string, unknown>) || {};
+	const w = num(res.width) ?? num(stats.width);
+	const h = num(res.height) ?? num(stats.height);
+	if (w == null || h == null || w <= 0 || h <= 0) return null;
+	const tx = num(row0[2]);
+	const ty = num(row1[2]);
+	if (tx == null || ty == null) return null;
+	return Math.hypot(tx * w, ty * h);
+}
+
+export function heuristicLabel(
+	nInliers: unknown,
+	translationPx: unknown,
+	hasError: boolean
+): 'pass' | 'fail' | null {
+	if (hasError) return 'fail';
+	const n = num(nInliers);
+	const t = num(translationPx);
+	if (n == null || t == null) return null;
+	return n >= RIGID_HEURISTIC.min_inliers && t <= RIGID_HEURISTIC.max_translation_px
+		? 'pass'
+		: 'fail';
+}
+
 export function matrixStatus(runId: string) {
 	const dir = resolve(SP_ROT_ROOT, runId);
 	const man = readJson(resolve(dir, 'manifest.json'));
@@ -69,6 +112,9 @@ export function matrixStatus(runId: string) {
 	const pairs = ((man.pairs as number[]) || []).map(Number);
 	const angles = ((man.angles as number[]) || []).map(Number);
 	const cells = [];
+	let heur_pass = 0;
+	let heur_fail = 0;
+	let disagree = 0;
 	for (const pid of pairs) {
 		for (const ang of angles) {
 			const resultPath = resolve(dir, String(pid), String(ang), 'result.json');
@@ -80,7 +126,12 @@ export function matrixStatus(runId: string) {
 				angle: ang,
 				state: 'missing',
 				label: lab,
+				heuristic_label: null as string | null,
+				heuristic_agree: null as boolean | null,
 				n_inliers: null,
+				n_matches: null,
+				inlier_frac: null,
+				translation_px: null,
 				rmse_px: null,
 				rot_err_deg: null,
 				trans_err_px: null,
@@ -90,19 +141,49 @@ export function matrixStatus(runId: string) {
 				if (res.error) {
 					entry.state = 'error';
 					entry.error = res.error;
+					entry.heuristic_label = heuristicLabel(null, null, true);
 				} else {
 					entry.state = 'done';
 					entry.n_inliers = res.n_inliers ?? null;
+					entry.n_matches = res.n_matches ?? null;
+					const ni = num(entry.n_inliers);
+					const nm = num(entry.n_matches);
+					entry.inlier_frac = ni != null && nm != null && nm > 0 ? ni / nm : null;
+					entry.translation_px = rigidTranslationPx(res);
 					const stats = (res.stats as Record<string, unknown>) || {};
 					entry.rmse_px = stats.rmse_px ?? null;
 					entry.rot_err_deg = res.rot_err_deg ?? null;
 					entry.trans_err_px = res.trans_err_px ?? null;
+					entry.heuristic_label = heuristicLabel(
+						entry.n_inliers,
+						entry.translation_px,
+						false
+					);
 				}
+			}
+			const h = entry.heuristic_label as string | null;
+			if (h === 'pass') heur_pass += 1;
+			else if (h === 'fail') heur_fail += 1;
+			if (lab === 'pass' || lab === 'fail') {
+				const agree = h != null && lab === h;
+				entry.heuristic_agree = agree;
+				if (!agree) disagree += 1;
 			}
 			cells.push(entry);
 		}
 	}
-	return { run_id: runId, manifest: man, status, cells };
+	return {
+		run_id: runId,
+		manifest: man,
+		status,
+		cells,
+		heuristic: {
+			...RIGID_HEURISTIC,
+			n_pass: heur_pass,
+			n_fail: heur_fail,
+			n_disagree_human: disagree
+		}
+	};
 }
 
 const LABELS = ['pass', 'fail', 'unsure'] as const;
