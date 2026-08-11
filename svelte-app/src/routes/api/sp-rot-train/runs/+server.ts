@@ -16,19 +16,25 @@ function runJson(args: string[]): Promise<unknown> {
 		child.stderr.on('data', (c: Buffer) => (stderr += c.toString()));
 		child.on('error', rejectP);
 		child.on('close', (code) => {
+			const text = stdout.trim();
+			const start = text.indexOf('{');
+			const end = text.lastIndexOf('}');
+			if (start >= 0 && end >= start) {
+				try {
+					const obj = JSON.parse(text.slice(start, end + 1)) as {
+						ok?: boolean;
+						error?: string;
+					};
+					if (code === 0 || obj.ok === false) return resolveP(obj);
+				} catch {
+					/* fall through */
+				}
+			}
 			if (code !== 0) {
 				const last = stderr.trim().split('\n').filter(Boolean).pop();
 				return rejectP(new Error(last || stderr || `exited ${code}`));
 			}
-			try {
-				const text = stdout.trim();
-				const start = text.indexOf('{');
-				const end = text.lastIndexOf('}');
-				if (start < 0 || end < start) throw new Error('no JSON');
-				resolveP(JSON.parse(text.slice(start, end + 1)));
-			} catch (e) {
-				rejectP(new Error(`bad output: ${(e as Error).message}`));
-			}
+			rejectP(new Error('no JSON'));
 		});
 	});
 }
@@ -49,15 +55,22 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (typeof body.pairs === 'string' && body.pairs) args.push('--pairs', body.pairs);
 	if (typeof body.batch_size === 'number') args.push('--batch-size', String(body.batch_size));
 	if (typeof body.lr === 'number') args.push('--lr', String(body.lr));
-	if (typeof body.max_steps === 'number') args.push('--max-steps', String(body.max_steps));
-	if (typeof body.ckpt_every === 'number') args.push('--ckpt-every', String(body.ckpt_every));
-	if (typeof body.smoke_every === 'number') args.push('--smoke-every', String(body.smoke_every));
-	if (typeof body.full_every === 'number') args.push('--full-every', String(body.full_every));
+	if (typeof body.max_epochs === 'number') args.push('--max-epochs', String(body.max_epochs));
+	if (typeof body.ckpt_every_epochs === 'number')
+		args.push('--ckpt-every-epochs', String(body.ckpt_every_epochs));
+	if (typeof body.eval_every_epochs === 'number')
+		args.push('--eval-every-epochs', String(body.eval_every_epochs));
+	if (typeof body.log_every === 'number') args.push('--log-every', String(body.log_every));
+	if (typeof body.split_seed === 'number') args.push('--split-seed', String(body.split_seed));
+	if (typeof body.eval_max_tiles === 'number')
+		args.push('--eval-max-tiles', String(body.eval_max_tiles));
+	if (body.run_baseline === true) args.push('--run-baseline');
+	let result: { ok?: boolean; error?: string };
 	try {
-		const result = (await runJson(args)) as { ok?: boolean; error?: string };
-		if (result?.ok === false) error(409, result.error || 'create failed');
-		return json(result);
+		result = (await runJson(args)) as { ok?: boolean; error?: string };
 	} catch (e) {
 		error(500, (e as Error).message);
 	}
+	if (result?.ok === false) error(409, result.error || 'create failed');
+	return json(result);
 };

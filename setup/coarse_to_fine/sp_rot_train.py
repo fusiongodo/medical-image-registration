@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import json
-import math
 import sys
 import time
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -17,6 +15,7 @@ sys.path.insert(0, str(REPO_ROOT / "introducing_superpoint"))
 
 import conf
 from setup.coarse_to_fine import sp_rot_bench as bench
+from setup.coarse_to_fine import sp_rot_train_data as data
 
 TRAIN_ROOT = conf.PROJECT_ROOT / "data" / "sp_rot_train"
 
@@ -28,12 +27,18 @@ DEFAULT_CONFIG = {
     "out_size": 512,
     "extract_resize": 512,
     "sp_nms_dist": 8,
-    "batch_size": 4,
+    "batch_size": 8,
     "lr": 0.0001,
-    "max_steps": 100000,
-    "ckpt_every": 5000,
-    "smoke_every": 5000,
-    "full_every": 20000,
+    "max_epochs": 50,
+    "ckpt_every_epochs": 1,
+    "eval_every_epochs": 1,
+    "log_every": 50,
+    "split_seed": 0,
+    "split_ratios": [0.8, 0.1, 0.1],
+    "eval_max_tiles": 12,
+    "eval_angles": [0, 90, 180, 270],
+    "num_workers": 4,
+    "desc_max_cells": 576,
     "w_kp": 1.0,
     "desc_lambda": 250.0,
     "desc_positive_margin": 1.0,
@@ -46,7 +51,7 @@ DEFAULT_CONFIG = {
     "match_epsilon": 1.0,
     "dataset": "muromi",
     "init_weights": str(conf.resolve("introducing_superpoint/superpoint_v6_from_tf.pth")),
-    "skip_baseline": False,
+    "skip_baseline": True,
 }
 
 
@@ -62,12 +67,20 @@ def status_path(run_id: str) -> Path:
     return run_dir(run_id) / "status.json"
 
 
+def split_path(run_id: str) -> Path:
+    return run_dir(run_id) / "split.json"
+
+
 def loss_log_path(run_id: str) -> Path:
     return run_dir(run_id) / "logs" / "loss.jsonl"
 
 
 def eval_log_path(run_id: str) -> Path:
     return run_dir(run_id) / "logs" / "eval.jsonl"
+
+
+def epoch_log_path(run_id: str) -> Path:
+    return run_dir(run_id) / "logs" / "epoch.jsonl"
 
 
 def ckpt_dir(run_id: str) -> Path:
@@ -102,8 +115,22 @@ def append_jsonl(path: Path, obj: dict) -> None:
         f.write(json.dumps(bench.json_safe(obj), separators=(",", ":")) + "\n")
 
 
+def _migrate_config(cfg: dict) -> dict:
+    aliases = {
+        "b1_every_epochs": "eval_every_epochs",
+        "b1_max_tiles": "eval_max_tiles",
+        "b1_angles": "eval_angles",
+    }
+    out = dict(cfg)
+    for old, new in aliases.items():
+        if old in out and new not in out:
+            out[new] = out[old]
+        out.pop(old, None)
+    return out
+
+
 def create_run(name: str, config: dict | None = None, run_id: str | None = None) -> dict:
-    cfg = {**DEFAULT_CONFIG, **(config or {})}
+    cfg = {**DEFAULT_CONFIG, **_migrate_config(config or {})}
     rid = bench.slugify(run_id or name)
     root = run_dir(rid)
     if root.exists():
@@ -111,11 +138,23 @@ def create_run(name: str, config: dict | None = None, run_id: str | None = None)
     root.mkdir(parents=True)
     (root / "logs").mkdir()
     ckpt_dir(rid).mkdir()
+
+    tiles = data.scan_tiles(list(cfg["pairs"]), int(cfg["depth"]))
+    if not tiles:
+        raise RuntimeError(f"no unmasked tiles for pairs={cfg['pairs']} depth={cfg['depth']}")
+    ratios = tuple(float(x) for x in cfg.get("split_ratios") or DEFAULT_CONFIG["split_ratios"])
+    split = data.split_tiles(tiles, ratios=ratios, seed=int(cfg.get("split_seed") or 0))
+    write_json(split_path(rid), split)
+
     man = {
         "id": rid,
         "name": name.strip() or rid,
         "created_at": int(time.time()),
         **cfg,
+        "n_total": split["n_total"],
+        "n_train": split["n_train"],
+        "n_val": split["n_val"],
+        "n_test": split["n_test"],
     }
     write_json(config_path(rid), man)
     write_json(
@@ -127,6 +166,7 @@ def create_run(name: str, config: dict | None = None, run_id: str | None = None)
             "detail": None,
             "error": None,
             "last_eval": None,
+            "last_epoch_s": None,
             "updated_at": int(time.time()),
         },
     )
@@ -137,7 +177,14 @@ def load_config(run_id: str) -> dict:
     cfg = read_json(config_path(run_id))
     if not cfg:
         raise FileNotFoundError(run_id)
-    return {**DEFAULT_CONFIG, **cfg}
+    return {**DEFAULT_CONFIG, **_migrate_config(cfg)}
+
+
+def load_split(run_id: str) -> dict:
+    sp = read_json(split_path(run_id))
+    if not sp:
+        raise FileNotFoundError(f"split missing for {run_id}")
+    return sp
 
 
 def update_status(run_id: str, **kwargs) -> dict:
@@ -160,7 +207,7 @@ def list_runs() -> list[dict]:
     return out
 
 
-def save_checkpoint(run_id: str, model: torch.nn.Module, step: int) -> Path:
+def save_checkpoint(run_id: str, model: torch.nn.Module, step: int, epoch: int = 0) -> Path:
     d = ckpt_dir(run_id)
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"step_{step}.pt"
@@ -168,7 +215,7 @@ def save_checkpoint(run_id: str, model: torch.nn.Module, step: int) -> Path:
     sd = model.state_dict()
     torch.save(sd, path)
     torch.save(sd, latest)
-    meta = {"step": step, "path": str(path), "saved_at": int(time.time())}
+    meta = {"step": step, "epoch": epoch, "path": str(path), "saved_at": int(time.time())}
     write_json(d / "latest.json", meta)
     return path
 
@@ -179,11 +226,11 @@ def load_checkpoint(model: torch.nn.Module, path: Path, device: torch.device) ->
 
 
 def detect_pseudo_gt(model, images: torch.Tensor, device: torch.device, max_kpts: int = 512):
-    """Detached inference keypoints as (x,y,score) lists for KP loss."""
+    was_training = model.training
     model.eval()
     with torch.no_grad():
         out = model({"image": images.to(device)}, training=False)
-    model.train()
+    model.train(was_training)
     gts = []
     for kpts, scores in zip(out["keypoints"], out["keypoint_scores"]):
         if kpts.numel() == 0:
@@ -228,7 +275,7 @@ def filter_gt_in_frame(gts: list[torch.Tensor], size: int) -> list[torch.Tensor]
     return out
 
 
-def train_step(model, batch, optimizer, device, cfg: dict) -> dict:
+def _forward_losses(model, batch, device, cfg: dict) -> dict:
     import utils
     from superpoint_pytorch import default_config
 
@@ -241,7 +288,6 @@ def train_step(model, batch, optimizer, device, cfg: dict) -> dict:
     gt_base = filter_gt_in_frame(pseudo, int(cfg["out_size"]))
     gt_warp = filter_gt_in_frame(warp_gt_points(pseudo, H), int(cfg["out_size"]))
 
-    model.train()
     out0 = model({"image": images}, training=True)
     out1 = model({"image": warped}, training=True)
 
@@ -261,6 +307,7 @@ def train_step(model, batch, optimizer, device, cfg: dict) -> dict:
         "lambda_d": float(cfg["desc_lambda"]),
         "positive_margin": float(cfg["desc_positive_margin"]),
         "negative_margin": float(cfg["desc_negative_margin"]),
+        "desc_max_cells": int(cfg.get("desc_max_cells") or 576),
     }
     desc = utils.descriptor_loss(
         out0["descriptors_raw"],
@@ -271,12 +318,40 @@ def train_step(model, batch, optimizer, device, cfg: dict) -> dict:
     )
     loss_kp = kp0["loss"] + kp1["loss"]
     loss = float(cfg["w_kp"]) * loss_kp + desc
+    return {
+        "loss": loss,
+        "loss_kp": loss_kp,
+        "loss_desc": desc,
+        "theta_mean": float(sum(batch["theta_deg"]) / max(1, len(batch["theta_deg"]))),
+    }
+
+
+def train_step(model, batch, optimizer, device, cfg: dict) -> dict:
+    model.train()
+    parts = _forward_losses(model, batch, device, cfg)
+    loss = parts["loss"]
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
     return {
         "loss_total": float(loss.detach().cpu()),
-        "loss_kp": float(loss_kp.detach().cpu()),
-        "loss_desc": float(desc.detach().cpu()),
-        "theta_mean": float(sum(batch["theta_deg"]) / max(1, len(batch["theta_deg"]))),
+        "loss_kp": float(parts["loss_kp"].detach().cpu()),
+        "loss_desc": float(parts["loss_desc"].detach().cpu()),
+        "theta_mean": parts["theta_mean"],
     }
+
+
+@torch.no_grad()
+def eval_loss(model, loader, device, cfg: dict) -> dict:
+    model.eval()
+    totals = {"loss_total": 0.0, "loss_kp": 0.0, "loss_desc": 0.0}
+    n = 0
+    for batch in loader:
+        parts = _forward_losses(model, batch, device, cfg)
+        totals["loss_total"] += float(parts["loss"].detach().cpu())
+        totals["loss_kp"] += float(parts["loss_kp"].detach().cpu())
+        totals["loss_desc"] += float(parts["loss_desc"].detach().cpu())
+        n += 1
+    if n == 0:
+        return {"loss_total": None, "loss_kp": None, "loss_desc": None, "n_batches": 0}
+    return {k: v / n for k, v in totals.items()} | {"n_batches": n}

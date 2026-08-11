@@ -319,17 +319,66 @@ def descriptor_loss(
     valid_mask=None,
     homographies=None,
 ):
+    """
+    Dense Magicleap descriptor loss. For large maps (e.g. 512px → 64×64 cells)
+    randomly subsample cells so the BxNxN similarity stays tractable.
+    """
     batch_size, _, Hc, Wc = descriptors.shape
     device = descriptors.device
+    gs = int(config["grid_size"])
+    max_cells = int(config.get("desc_max_cells") or 0)
+    N = Hc * Wc
     desc = F.normalize(descriptors, p=2, dim=1)
     other_desc = F.normalize(other_descriptors, p=2, dim=1)
-    desc_flat = desc.view(batch_size, -1, Hc * Wc)
-    other_desc_flat = other_desc.view(batch_size, -1, Hc * Wc)
+
+    if max_cells > 0 and N > max_cells:
+        idx = torch.randperm(N, device=device)[:max_cells]
+        desc_flat = desc.view(batch_size, -1, N)[:, :, idx]
+        other_desc_flat = other_desc.view(batch_size, -1, N)[:, :, idx]
+        M = max_cells
+        rows = torch.div(idx, Wc, rounding_mode="floor")
+        cols = idx % Wc
+        if valid_mask is None:
+            cell_valid = torch.ones(batch_size, M, device=device, dtype=torch.float32)
+        else:
+            vm = valid_mask.unsqueeze(1).float() if valid_mask.dim() == 3 else valid_mask.float()
+            vm = F.pixel_unshuffle(vm, gs)
+            vm = torch.prod(vm, dim=1).view(batch_size, N)
+            cell_valid = vm[:, idx]
+        if homographies is None:
+            s = torch.eye(M, device=device, dtype=torch.float32).unsqueeze(0).expand(batch_size, -1, -1)
+        else:
+            yy = (rows.float() + 0.5) * gs
+            xx = (cols.float() + 0.5) * gs
+            ones = torch.ones_like(xx)
+            pts = torch.stack([xx, yy, ones], dim=-1).unsqueeze(0).expand(batch_size, -1, -1)
+            H = homographies.to(device=device, dtype=torch.float32)
+            mapped = torch.bmm(pts, H.transpose(1, 2))
+            xy = mapped[..., :2] / mapped[..., 2:].clamp(min=1e-6)
+            dcol = (xy[..., 0] / gs).long()
+            drow = (xy[..., 1] / gs).long()
+            dest = drow * Wc + dcol
+            inside = (drow >= 0) & (drow < Hc) & (dcol >= 0) & (dcol < Wc)
+            pos = idx.view(1, 1, M) == dest.unsqueeze(-1)
+            s = (pos & inside.unsqueeze(-1)).float()
+        dots = torch.bmm(desc_flat.transpose(1, 2), other_desc_flat)
+        dots = F.relu(dots)
+        dots = F.normalize(dots, p=2, dim=2)
+        dots = F.normalize(dots, p=2, dim=1)
+        positive_dist = torch.clamp(config["positive_margin"] - dots, min=0.0)
+        negative_dist = torch.clamp(dots - config["negative_margin"], min=0.0)
+        loss = config["lambda_d"] * s * positive_dist + (1 - s) * negative_dist
+        mask = cell_valid.unsqueeze(2) * cell_valid.unsqueeze(1)
+        normalization = torch.sum(mask) * M
+        return torch.sum(mask * loss) / (normalization + 1e-8)
+
+    desc_flat = desc.view(batch_size, -1, N)
+    other_desc_flat = other_desc.view(batch_size, -1, N)
     dot_product_desc = torch.bmm(desc_flat.transpose(1, 2), other_desc_flat)
     dot_product_desc = F.relu(dot_product_desc)
-    dot_product_desc = dot_product_desc.view(batch_size, Hc, Wc, Hc * Wc)
+    dot_product_desc = dot_product_desc.view(batch_size, Hc, Wc, N)
     dot_product_desc = F.normalize(dot_product_desc, p=2, dim=3)
-    dot_product_desc = dot_product_desc.view(batch_size, Hc * Wc, Hc, Wc)
+    dot_product_desc = dot_product_desc.view(batch_size, N, Hc, Wc)
     dot_product_desc = F.normalize(dot_product_desc, p=2, dim=1)
     dot_product_desc = dot_product_desc.view(batch_size, Hc, Wc, Hc, Wc)
 
@@ -338,21 +387,18 @@ def descriptor_loss(
         if s.dim() == 4:
             s = s.unsqueeze(0).expand(batch_size, -1, -1, -1, -1)
     else:
-        s = warp_correspondence(
-            homographies, Hc, Wc, int(config["grid_size"]), device
-        )
+        s = warp_correspondence(homographies, Hc, Wc, gs, device)
 
-    positive_dist = torch.clamp(config['positive_margin'] - dot_product_desc, min=0.0)
-    negative_dist = torch.clamp(dot_product_desc - config['negative_margin'], min=0.0)
-    loss = config['lambda_d'] * s * positive_dist + (1 - s) * negative_dist
+    positive_dist = torch.clamp(config["positive_margin"] - dot_product_desc, min=0.0)
+    negative_dist = torch.clamp(dot_product_desc - config["negative_margin"], min=0.0)
+    loss = config["lambda_d"] * s * positive_dist + (1 - s) * negative_dist
     if valid_mask is None:
-        mask_h, mask_w = Hc * config['grid_size'], Wc * config['grid_size']
+        mask_h, mask_w = Hc * gs, Wc * gs
         valid_mask = torch.ones((batch_size, 1, mask_h, mask_w), dtype=torch.float32, device=device)
     elif valid_mask.dim() == 3:
         valid_mask = valid_mask.unsqueeze(1).float()
-    valid_mask = F.pixel_unshuffle(valid_mask, config['grid_size'])
+    valid_mask = F.pixel_unshuffle(valid_mask, gs)
     valid_mask = torch.prod(valid_mask, dim=1, keepdim=True)
     valid_mask = valid_mask.view(batch_size, 1, 1, Hc, Wc)
-    normalization = torch.sum(valid_mask) * (Hc * Wc)
-    loss = torch.sum(valid_mask * loss) / (normalization + 1e-8)
-    return loss
+    normalization = torch.sum(valid_mask) * N
+    return torch.sum(valid_mask * loss) / (normalization + 1e-8)

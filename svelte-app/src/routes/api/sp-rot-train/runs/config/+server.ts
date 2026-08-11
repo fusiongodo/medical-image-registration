@@ -13,7 +13,18 @@ export const PATCH: RequestHandler = async ({ request }) => {
 	const path = resolve(REPO_ROOT, 'data', 'sp_rot_train', body.run_id, 'config.json');
 	if (!existsSync(path)) error(404, 'run not found');
 	const cur = JSON.parse(readFileSync(path, 'utf-8'));
-	const next = { ...cur, ...body.config, id: cur.id };
+	const patch = { ...body.config } as Record<string, unknown>;
+	const aliases: Record<string, string> = {
+		b1_every_epochs: 'eval_every_epochs',
+		b1_max_tiles: 'eval_max_tiles',
+		b1_angles: 'eval_angles'
+	};
+	for (const [oldK, newK] of Object.entries(aliases)) {
+		if (oldK in patch && !(newK in patch)) patch[newK] = patch[oldK];
+		delete patch[oldK];
+		delete cur[oldK];
+	}
+	const next = { ...cur, ...patch, id: cur.id };
 	writeFileSync(path, JSON.stringify(next, null, 2));
 	return json({ ok: true, config: next });
 };

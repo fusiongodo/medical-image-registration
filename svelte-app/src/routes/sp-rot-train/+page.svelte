@@ -5,22 +5,30 @@
 		pairs?: number[];
 		lr?: number;
 		batch_size?: number;
-		max_steps?: number;
-		ckpt_every?: number;
-		smoke_every?: number;
-		full_every?: number;
+		max_epochs?: number;
+		ckpt_every_epochs?: number;
+		eval_every_epochs?: number;
+		log_every?: number;
+		eval_max_tiles?: number;
+		n_train?: number;
+		n_val?: number;
+		n_test?: number;
+		n_total?: number;
 		status?: {
 			state?: string;
 			step?: number;
 			epoch?: number;
 			detail?: string | null;
 			error?: string | null;
+			last_epoch_s?: number | null;
 			last_eval?: {
 				kind?: string;
 				pass_rate?: number | null;
 				n_pass?: number;
 				n_total?: number;
+				n_tiles?: number;
 				step?: number;
+				epoch?: number;
 			} | null;
 		};
 	};
@@ -31,23 +39,62 @@
 	let live = $state<{ running?: boolean; detail?: string | null; error?: string | null } | null>(
 		null
 	);
-	let lossTail = $state<{ step?: number; loss_total?: number; loss_kp?: number; loss_desc?: number }[]>(
-		[]
-	);
+	let lossTail = $state<
+		{ step?: number; epoch?: number; loss_total?: number; loss_kp?: number; loss_desc?: number }[]
+	>([]);
 	let evalTail = $state<Record<string, unknown>[]>([]);
+	let epochTail = $state<
+		{
+			epoch?: number;
+			epoch_s?: number;
+			train_loss?: number | null;
+			val_loss?: number | null;
+			val_loss_kp?: number | null;
+			val_loss_desc?: number | null;
+			step?: number;
+		}[]
+	>([]);
 	let err = $state<string | null>(null);
 	let busy = $state(false);
 
 	let newName = $state(`rot-train-${Date.now()}`);
 	let pairs = $state('0,1,3,16');
 	let lr = $state(0.0001);
-	let batchSize = $state(4);
-	let maxSteps = $state(100000);
-	let ckptEvery = $state(5000);
-	let smokeEvery = $state(5000);
-	let fullEvery = $state(20000);
+	let batchSize = $state(8);
+	let maxEpochs = $state(50);
+	let ckptEveryEpochs = $state(1);
+	let evalEveryEpochs = $state(1);
+	let logEvery = $state(50);
+	let evalMaxTiles = $state(12);
 
 	const selected = $derived(runs.find((r) => r.id === runId) ?? null);
+
+	function editableConfig() {
+		return {
+			pairs: pairs
+				.split(',')
+				.map((x) => Number(x.trim()))
+				.filter((n) => !Number.isNaN(n)),
+			lr,
+			batch_size: batchSize,
+			max_epochs: maxEpochs,
+			ckpt_every_epochs: ckptEveryEpochs,
+			eval_every_epochs: evalEveryEpochs,
+			log_every: logEvery,
+			eval_max_tiles: evalMaxTiles
+		};
+	}
+
+	function syncFormFromRun(cfg: Run) {
+		if (cfg.pairs?.length) pairs = cfg.pairs.join(',');
+		if (cfg.lr != null) lr = cfg.lr;
+		if (cfg.batch_size != null) batchSize = cfg.batch_size;
+		if (cfg.max_epochs != null) maxEpochs = cfg.max_epochs;
+		if (cfg.ckpt_every_epochs != null) ckptEveryEpochs = cfg.ckpt_every_epochs;
+		if (cfg.eval_every_epochs != null) evalEveryEpochs = cfg.eval_every_epochs;
+		if (cfg.log_every != null) logEvery = cfg.log_every;
+		if (cfg.eval_max_tiles != null) evalMaxTiles = cfg.eval_max_tiles;
+	}
 
 	async function loadRuns() {
 		const r = await fetch('/api/sp-rot-train/runs');
@@ -66,11 +113,13 @@
 		live = j.live ?? null;
 		lossTail = Array.isArray(j.logs?.loss) ? j.logs.loss : [];
 		evalTail = Array.isArray(j.logs?.eval) ? j.logs.eval : [];
+		epochTail = Array.isArray(j.logs?.epoch) ? j.logs.epoch : [];
 		const cfg = j.config as Run | undefined;
 		if (cfg?.id) {
 			const i = runs.findIndex((x) => x.id === cfg.id);
 			if (i >= 0) runs[i] = { ...runs[i], ...cfg, status: status ?? undefined };
 			else runs = [cfg, ...runs];
+			if (!live?.running) syncFormFromRun(cfg);
 		}
 	}
 
@@ -86,19 +135,46 @@
 					pairs,
 					lr,
 					batch_size: batchSize,
-					max_steps: maxSteps,
-					ckpt_every: ckptEvery,
-					smoke_every: smokeEvery,
-					full_every: fullEvery
+					max_epochs: maxEpochs,
+					ckpt_every_epochs: ckptEveryEpochs,
+					eval_every_epochs: evalEveryEpochs,
+					log_every: logEvery,
+					eval_max_tiles: evalMaxTiles
 				})
 			});
-			if (!r.ok) throw new Error(await r.text());
-			const j = await r.json();
+			const bodyText = await r.text();
+			let j: { run?: { id?: string }; message?: string; error?: string } = {};
+			try {
+				j = JSON.parse(bodyText);
+			} catch {
+				throw new Error(bodyText || `create failed (${r.status})`);
+			}
+			if (!r.ok) throw new Error(j.message || j.error || bodyText || `create failed (${r.status})`);
 			await loadRuns();
 			runId = j.run?.id ?? runId;
+			newName = `rot-train-${Date.now()}`;
 			await loadStatus();
 		} catch (e) {
 			err = e instanceof Error ? e.message : 'create failed';
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function saveConfig() {
+		if (!runId) return;
+		busy = true;
+		err = null;
+		try {
+			const r = await fetch('/api/sp-rot-train/runs/config', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ run_id: runId, config: editableConfig() })
+			});
+			if (!r.ok) throw new Error(await r.text());
+			await loadStatus();
+		} catch (e) {
+			err = e instanceof Error ? e.message : 'save config failed';
 		} finally {
 			busy = false;
 		}
@@ -113,18 +189,7 @@
 				await fetch('/api/sp-rot-train/runs/config', {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						run_id: runId,
-						config: {
-							pairs: pairs.split(',').map((x) => Number(x.trim())).filter((n) => !Number.isNaN(n)),
-							lr,
-							batch_size: batchSize,
-							max_steps: maxSteps,
-							ckpt_every: ckptEvery,
-							smoke_every: smokeEvery,
-							full_every: fullEvery
-						}
-					})
+					body: JSON.stringify({ run_id: runId, config: editableConfig() })
 				});
 			}
 			const r = await fetch('/api/sp-rot-train/runs/control', {
@@ -164,33 +229,54 @@
 		};
 	});
 
+	function fmtLoss(v: number | null | undefined, digits = 4) {
+		if (v == null || Number.isNaN(v)) return '—';
+		const a = Math.abs(v);
+		if (a > 0 && a < 1e-3) return v.toExponential(2);
+		return v.toFixed(digits);
+	}
+
 	function pct(v: number | null | undefined) {
 		if (v == null || Number.isNaN(v)) return '—';
 		return `${(100 * v).toFixed(1)}%`;
+	}
+
+	function fmtS(v: number | null | undefined) {
+		if (v == null || Number.isNaN(v)) return '—';
+		return `${v.toFixed(1)}s`;
 	}
 </script>
 
 <div class="page">
 	<header>
 		<h1>SP rot-inv train</h1>
-		<p class="sub">Self-warp fine-tune · B1 gate |rot|≤1° ∧ t_rel≤5.5% · extract 512 / NMS 8</p>
+		<p class="sub">
+			Self-warp · 80/10/10 tiles · eval on val tiles (|rot|≤1° ∧ t_rel≤5.5%) · 512 / NMS 8
+		</p>
 	</header>
 
 	{#if err}<p class="err">{err}</p>{/if}
 
 	<section class="card">
-		<h2>New run</h2>
+		<h2>Config</h2>
 		<div class="grid">
 			<label>Name <input bind:value={newName} /></label>
 			<label>Pairs <input bind:value={pairs} /></label>
 			<label>LR <input type="number" step="0.00001" bind:value={lr} /></label>
 			<label>Batch <input type="number" bind:value={batchSize} /></label>
-			<label>Max steps <input type="number" bind:value={maxSteps} /></label>
-			<label>Ckpt every <input type="number" bind:value={ckptEvery} /></label>
-			<label>Smoke every <input type="number" bind:value={smokeEvery} /></label>
-			<label>Full B1 every <input type="number" bind:value={fullEvery} /></label>
+			<label>Max epochs <input type="number" bind:value={maxEpochs} /></label>
+			<label>Ckpt every epochs <input type="number" bind:value={ckptEveryEpochs} /></label>
+			<label>Eval every epochs <input type="number" bind:value={evalEveryEpochs} /></label>
+			<label>Log every steps <input type="number" bind:value={logEvery} /></label>
+			<label>Eval max val tiles <input type="number" bind:value={evalMaxTiles} /></label>
 		</div>
-		<button class="btn primary" disabled={busy} onclick={() => void createRun()}>Create</button>
+		<div class="actions">
+			<button class="btn primary" disabled={busy} onclick={() => void createRun()}>Create</button>
+			<button class="btn" disabled={busy || !runId} onclick={() => void saveConfig()}
+				>Save config</button
+			>
+		</div>
+		<p class="muted">Pause → edit (e.g. log every) → Save / Resume. Config reloads each batch.</p>
 	</section>
 
 	<section class="card">
@@ -218,72 +304,128 @@
 				<button class="btn danger" disabled={busy} onclick={() => void control('stop')}>Stop</button>
 			</div>
 			<p class="meta">
-				state: {status?.state ?? '—'} · step {status?.step ?? 0} · epoch {status?.epoch ?? 0}
-				{#if status?.detail}<br />{status.detail}{/if}
-				{#if live?.running}<br /><span class="live">job running… {live.detail ?? ''}</span>{/if}
-				{#if status?.error || live?.error}<br /><span class="err">{status?.error || live?.error}</span>{/if}
+				split: {selected.n_train ?? '—'}/{selected.n_val ?? '—'}/{selected.n_test ?? '—'}
+				(train/val/test of {selected.n_total ?? '—'})
+				<br />
+				state: {status?.state ?? '—'} · completed epochs {status?.epoch ?? 0} · step {status?.step ?? 0}
+				· last epoch {fmtS(status?.last_epoch_s)}
+				{#if live?.running}
+					<br /><span class="live">job running… {status?.detail || live.detail || ''}</span>
+				{:else if status?.detail}
+					<br />{status.detail}
+				{/if}
+				{#if status?.error || live?.error}<br /><span class="err">{status?.error || live?.error}</span
+					>{/if}
 			</p>
 			{#if status?.last_eval}
 				<p class="meta">
-					last eval ({status.last_eval.kind ?? '?'} @ step {status.last_eval.step ?? '?'}):
+					last eval ({status.last_eval.kind ?? '?'} @ epoch {status.last_eval.epoch ?? '?'}):
 					<strong>{pct(status.last_eval.pass_rate)}</strong>
-					({status.last_eval.n_pass ?? '?'}/{status.last_eval.n_total ?? '?'})
+					({status.last_eval.n_pass ?? '?'}/{status.last_eval.n_total ?? '?'} cells,
+					{status.last_eval.n_tiles ?? '?'} tiles)
 				</p>
 			{/if}
 		{/if}
 	</section>
 
 	<section class="card">
-		<h2>Loss (tail)</h2>
-		{#if !lossTail.length}
-			<p class="muted">No loss lines yet.</p>
+		<h2>Epochs</h2>
+		{#if !epochTail.length}
+			<p class="muted">No epoch lines yet.</p>
 		{:else}
-			<table>
-				<thead>
-					<tr><th>step</th><th>total</th><th>kp</th><th>desc</th></tr>
-				</thead>
-				<tbody>
-					{#each lossTail.slice().reverse().slice(0, 20) as row}
+			<div class="scroll">
+				<table>
+					<thead>
 						<tr>
-							<td>{row.step}</td>
-							<td>{row.loss_total?.toFixed?.(4) ?? row.loss_total}</td>
-							<td>{row.loss_kp?.toFixed?.(4) ?? row.loss_kp}</td>
-							<td>{row.loss_desc?.toFixed?.(4) ?? row.loss_desc}</td>
+							<th>epoch</th>
+							<th>time</th>
+							<th>train loss</th>
+							<th>val loss</th>
+							<th>val kp</th>
+							<th>val desc</th>
+							<th>step</th>
 						</tr>
-					{/each}
-				</tbody>
-			</table>
+					</thead>
+					<tbody>
+						{#each epochTail.slice().reverse() as row}
+							<tr>
+								<td>{row.epoch}</td>
+								<td>{fmtS(row.epoch_s)}</td>
+								<td>{fmtLoss(row.train_loss)}</td>
+								<td>{fmtLoss(row.val_loss)}</td>
+								<td>{fmtLoss(row.val_loss_kp)}</td>
+								<td>{fmtLoss(row.val_loss_desc)}</td>
+								<td>{row.step}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
 		{/if}
 	</section>
 
 	<section class="card">
-		<h2>Eval (tail)</h2>
-		{#if !evalTail.length}
-			<p class="muted">No eval yet.</p>
+		<h2>Loss</h2>
+		{#if !lossTail.length}
+			<p class="muted">No loss lines yet (logged every N steps).</p>
 		{:else}
-			<table>
-				<thead>
-					<tr><th>kind</th><th>step</th><th>pass</th><th>n</th></tr>
-				</thead>
-				<tbody>
-					{#each evalTail.slice().reverse() as row}
-						<tr>
-							<td>{row.kind}</td>
-							<td>{row.step}</td>
-							<td>{pct(row.pass_rate as number)}</td>
-							<td>{row.n_pass}/{row.n_total}</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
+			<p class="muted">{lossTail.length} steps (newest first)</p>
+			<div class="scroll">
+				<table>
+					<thead>
+						<tr><th>step</th><th>epoch</th><th>total</th><th>kp</th><th>desc</th></tr>
+					</thead>
+					<tbody>
+						{#each lossTail.slice().reverse() as row}
+							<tr>
+								<td>{row.step}</td>
+								<td>{row.epoch ?? '—'}</td>
+								<td>{fmtLoss(row.loss_total)}</td>
+								<td>{fmtLoss(row.loss_kp)}</td>
+								<td>{fmtLoss(row.loss_desc)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
+
+	<section class="card">
+		<h2>Eval</h2>
+		{#if !evalTail.length}
+			<p class="muted">No eval yet (val tiles × angles; test at end).</p>
+		{:else}
+			<div class="scroll">
+				<table>
+					<thead>
+						<tr><th>kind</th><th>epoch</th><th>pass</th><th>cells</th><th>tiles</th></tr>
+					</thead>
+					<tbody>
+						{#each evalTail.slice().reverse() as row}
+							<tr>
+								<td>{row.kind}</td>
+								<td>{row.epoch}</td>
+								<td>{pct(row.pass_rate as number)}</td>
+								<td>{row.n_pass}/{row.n_total}</td>
+								<td>{row.n_tiles ?? '—'}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
 		{/if}
 	</section>
 </div>
 
 <style>
 	.page {
+		flex: 1;
+		min-height: 0;
+		overflow: auto;
 		padding: 20px 24px 48px;
 		max-width: 960px;
+		width: 100%;
 		color: #e8e8ef;
 	}
 	h1 {
@@ -301,6 +443,11 @@
 		padding: 14px 16px;
 		border: 1px solid #2a2d3a;
 		background: #12141c;
+	}
+	.scroll {
+		max-height: 420px;
+		overflow: auto;
+		margin-top: 8px;
 	}
 	.grid {
 		display: grid;

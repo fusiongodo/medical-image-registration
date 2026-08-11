@@ -1,4 +1,4 @@
-"""B1 rigid eval using introducing_superpoint weights + LightGlue matcher."""
+"""Rigid rotational eval using introducing_superpoint weights + LightGlue matcher."""
 
 from __future__ import annotations
 
@@ -77,11 +77,11 @@ def extract_feats(model, gray: np.ndarray, device: torch.device, resize: int | N
     return feats, (w, h)
 
 
-def match_lg(feats0, feats1, device: torch.device, hp: dict | None = None):
+def build_lg_matcher(device: torch.device, hp: dict | None = None):
     from lightglue import LightGlue
 
     hp = hp or {}
-    matcher = (
+    return (
         LightGlue(
             features="superpoint",
             depth_confidence=float(hp.get("lg_depth_confidence", -1.0)),
@@ -90,6 +90,11 @@ def match_lg(feats0, feats1, device: torch.device, hp: dict | None = None):
         .eval()
         .to(device)
     )
+
+
+def match_lg(feats0, feats1, device: torch.device, hp: dict | None = None, matcher=None):
+    if matcher is None:
+        matcher = build_lg_matcher(device, hp)
     with torch.no_grad():
         m = matcher({"image0": feats0, "image1": feats1})
     from lightglue.utils import rbd
@@ -162,7 +167,7 @@ def run_cell(
     }
 
 
-def evaluate_b1(
+def evaluate_slides(
     weights_path: Path | str | None,
     *,
     pairs: list[int],
@@ -228,7 +233,7 @@ def evaluate_b1(
 
 
 def smoke_eval(weights_path: Path | str | None, **kw) -> dict:
-    return evaluate_b1(
+    return evaluate_slides(
         weights_path,
         pairs=kw.get("pairs") or SMOKE_PAIRS,
         angles=kw.get("angles") or SMOKE_ANGLES,
@@ -238,10 +243,190 @@ def smoke_eval(weights_path: Path | str | None, **kw) -> dict:
 
 
 def full_eval(weights_path: Path | str | None, **kw) -> dict:
-    return evaluate_b1(
+    return evaluate_slides(
         weights_path,
         pairs=kw.get("pairs") or FULL_PAIRS,
         angles=kw.get("angles") or FULL_ANGLES,
         extract_resize=int(kw.get("extract_resize") or DEFAULT_EXTRACT),
         nms=int(kw.get("nms") or DEFAULT_NMS),
     )
+
+
+def _angle_from_R(R: np.ndarray) -> float:
+    return float(math.degrees(math.atan2(float(R[1, 0]), float(R[0, 0]))))
+
+
+def _angle_err_deg(a: float, b: float) -> float:
+    return abs(((a - b) + 180.0) % 360.0 - 180.0)
+
+
+def run_tile_cell(
+    model,
+    matcher_hp: dict,
+    device: torch.device,
+    page: np.ndarray,
+    tile: dict,
+    angle: float,
+    *,
+    depth: int,
+    preview_level: int,
+    src_size: int,
+    out_size: int,
+    extract_resize: int,
+    matcher=None,
+) -> dict:
+    from setup.coarse_to_fine import sp_rot_train_data as tdata
+
+    base, warped, _valid, _H = tdata.make_warp_pair(
+        page,
+        tile,
+        depth=depth,
+        preview_level=preview_level,
+        src_size=src_size,
+        out_size=out_size,
+        theta_deg=float(angle),
+    )
+    f0, (w, h) = extract_feats(model, base, device, extract_resize)
+    f1, _ = extract_feats(model, warped, device, extract_resize)
+    pts0, pts1, _scores = match_lg(f0, f1, device, matcher_hp, matcher=matcher)
+    if len(pts0) < 2:
+        raise RuntimeError("need at least 2 matches")
+    R_px, t_px, _inl, stats = rigid_sp_lg.fit_rigid_kabsch(
+        pts0, pts1, float(matcher_hp.get("rigid_inlier_px", 3.0))
+    )
+    pred_ang = _angle_from_R(R_px)
+    rot_err = _angle_err_deg(pred_ang, float(angle))
+    min_wh = min(float(w), float(h))
+    trans_rel = float(np.linalg.norm(t_px)) / min_wh if min_wh > 0 else None
+    ok = (
+        trans_rel is not None
+        and rot_err <= MAX_ROT_ERR_DEG
+        and float(trans_rel) <= MAX_TRANS_ERR_REL
+    )
+    return {
+        "pair_id": int(tile["pair_id"]),
+        "loc": tile.get("loc"),
+        "angle": float(angle),
+        "n_inliers": int(stats.get("n_inliers") or 0),
+        "rot_err_deg": rot_err,
+        "trans_err_rel": trans_rel,
+        "auto_pass": bool(ok),
+        "error": None,
+    }
+
+
+def evaluate_tiles(
+    weights_path: Path | str | None,
+    tiles: list[dict],
+    *,
+    angles: list[float] | None = None,
+    extract_resize: int = DEFAULT_EXTRACT,
+    nms: int = DEFAULT_NMS,
+    depth: int = 5,
+    preview_level: int = 2,
+    src_size: int = 768,
+    out_size: int = 512,
+    max_tiles: int | None = 24,
+    split_seed: int = 0,
+    dataset: str = "muromi",
+    model=None,
+    device: torch.device | None = None,
+    on_progress=None,
+) -> dict:
+    from setup import datasets
+    from setup.coarse_to_fine import sp_rot_train_data as tdata
+
+    datasets.set_active_dataset(dataset)
+    angles = list(angles if angles is not None else FULL_ANGLES)
+    use_tiles = tdata.subsample_tiles(tiles, max_tiles, split_seed)
+    if device is None:
+        device = lam_sp_lg.device_auto()
+    if model is None:
+        model = load_sp_model(
+            weights_path or conf.resolve("introducing_superpoint/superpoint_v6_from_tf.pth"),
+            device,
+            nms,
+        )
+    else:
+        model = model.to(device).eval()
+    hp = {**rigid_sp_lg.DEFAULT_HYPERPARAMS, "sp_nms_dist": int(nms)}
+    matcher = build_lg_matcher(device, hp)
+    page_cache: dict[tuple[int, str], np.ndarray] = {}
+    cells = []
+    n_pass = 0
+    n_err = 0
+    by_angle: dict[str, dict] = {str(a): {"n": 0, "n_pass": 0} for a in angles}
+    n_total_plan = max(1, len(use_tiles) * len(angles))
+
+    import crop_core
+
+    for ti, tile in enumerate(use_tiles):
+        pid = int(tile["pair_id"])
+        side = "he"
+        key = (pid, side)
+        if key not in page_cache:
+            g = crop_core.whole_gray(pid, side, preview_level)
+            if g is None:
+                for ang in angles:
+                    cells.append(
+                        {
+                            "pair_id": pid,
+                            "loc": tile.get("loc"),
+                            "angle": float(ang),
+                            "auto_pass": False,
+                            "error": "missing page",
+                        }
+                    )
+                    n_err += 1
+                    by_angle[str(ang)]["n"] += 1
+                continue
+            page_cache[key] = g
+        page = page_cache[key]
+        for ang in angles:
+            try:
+                cell = run_tile_cell(
+                    model,
+                    hp,
+                    device,
+                    page,
+                    tile,
+                    float(ang),
+                    depth=depth,
+                    preview_level=preview_level,
+                    src_size=src_size,
+                    out_size=out_size,
+                    extract_resize=extract_resize,
+                    matcher=matcher,
+                )
+            except Exception as e:
+                cell = {
+                    "pair_id": pid,
+                    "loc": tile.get("loc"),
+                    "angle": float(ang),
+                    "auto_pass": False,
+                    "error": str(e),
+                }
+                n_err += 1
+            cells.append(cell)
+            by_angle[str(ang)]["n"] += 1
+            if cell.get("auto_pass"):
+                n_pass += 1
+                by_angle[str(ang)]["n_pass"] += 1
+            if on_progress is not None and len(cells) % 12 == 0:
+                on_progress(len(cells), n_total_plan, n_pass)
+    n_total = len(cells)
+    for st in by_angle.values():
+        st["pass_rate"] = (st["n_pass"] / st["n"]) if st["n"] else None
+    return {
+        "n_pass": n_pass,
+        "n_total": n_total,
+        "n_error": n_err,
+        "pass_rate": (n_pass / n_total) if n_total else None,
+        "by_angle": by_angle,
+        "n_tiles": len(use_tiles),
+        "angles": angles,
+        "extract_resize": extract_resize,
+        "sp_nms_dist": nms,
+        "gate": {"max_rot_err_deg": MAX_ROT_ERR_DEG, "max_trans_err_rel": MAX_TRANS_ERR_REL},
+        "cells": cells,
+    }

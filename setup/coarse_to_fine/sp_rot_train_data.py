@@ -23,13 +23,15 @@ DEFAULT_DEPTH = 5
 DEFAULT_PREVIEW_LEVEL = 2
 SRC_SIZE = 768
 OUT_SIZE = 512
+DEFAULT_SPLIT_RATIOS = (0.8, 0.1, 0.1)
+DEFAULT_SPLIT_SEED = 0
 
 
-def _scan_tiles(pairs: list[int], depth: int) -> list[tuple[int, int, int, str]]:
+def scan_tiles(pairs: list[int], depth: int) -> list[dict]:
     """Prefer live tissue_tiles; fall back to data/cropped index."""
     import crop_core
 
-    out: list[tuple[int, int, int, str]] = []
+    out: list[dict] = []
     for pid in pairs:
         entries = c2f_masks.load(pid)
         try:
@@ -49,8 +51,69 @@ def _scan_tiles(pairs: list[int], depth: int) -> list[tuple[int, int, int, str]]
                 x, y = int(x_s), int(y_s)
             except ValueError:
                 continue
-            out.append((pid, x, y, loc))
+            out.append({"pair_id": int(pid), "x": x, "y": y, "loc": loc})
     return out
+
+
+def split_tiles(
+    tiles: list[dict],
+    ratios: tuple[float, float, float] = DEFAULT_SPLIT_RATIOS,
+    seed: int = DEFAULT_SPLIT_SEED,
+) -> dict:
+    if not tiles:
+        raise RuntimeError("no tiles to split")
+    r_train, r_val, r_test = ratios
+    if abs((r_train + r_val + r_test) - 1.0) > 1e-6:
+        raise ValueError(f"split ratios must sum to 1, got {ratios}")
+    order = list(range(len(tiles)))
+    rng = random.Random(int(seed))
+    rng.shuffle(order)
+    n = len(order)
+    n_train = int(round(n * r_train))
+    n_val = int(round(n * r_val))
+    if n_train + n_val >= n:
+        n_val = max(0, n - n_train - 1) if n > 1 else 0
+        n_train = min(n_train, n - n_val - (1 if n > n_train + n_val else 0))
+    n_test = n - n_train - n_val
+    if n >= 3:
+        n_train = max(1, n_train)
+        n_val = max(1, n_val)
+        n_test = max(1, n - n_train - n_val)
+        while n_train + n_val + n_test > n:
+            if n_train >= n_val and n_train >= n_test and n_train > 1:
+                n_train -= 1
+            elif n_val >= n_test and n_val > 1:
+                n_val -= 1
+            elif n_test > 1:
+                n_test -= 1
+            else:
+                break
+        n_test = n - n_train - n_val
+    i0 = n_train
+    i1 = n_train + n_val
+    train_idx = order[:i0]
+    val_idx = order[i0:i1]
+    test_idx = order[i1:]
+    return {
+        "seed": int(seed),
+        "ratios": [float(r_train), float(r_val), float(r_test)],
+        "n_total": n,
+        "n_train": len(train_idx),
+        "n_val": len(val_idx),
+        "n_test": len(test_idx),
+        "train": [tiles[i] for i in train_idx],
+        "val": [tiles[i] for i in val_idx],
+        "test": [tiles[i] for i in test_idx],
+    }
+
+
+def subsample_tiles(tiles: list[dict], max_tiles: int | None, seed: int) -> list[dict]:
+    if max_tiles is None or max_tiles <= 0 or len(tiles) <= max_tiles:
+        return list(tiles)
+    order = list(range(len(tiles)))
+    rng = random.Random(int(seed))
+    rng.shuffle(order)
+    return [tiles[i] for i in order[: int(max_tiles)]]
 
 
 def _crop_patch(page: np.ndarray, cx: float, cy: float, size: int) -> np.ndarray:
@@ -100,43 +163,62 @@ def _affine_to_homography(M: np.ndarray) -> np.ndarray:
 
 
 def _compose_crop_homography(M_src: np.ndarray, src: int, out: int) -> np.ndarray:
-    """Map coords in base OUT crop → warped OUT crop (both size `out`)."""
     off = (src - out) / 2.0
-    T_out_to_src = np.array(
-        [[1, 0, off], [0, 1, off], [0, 0, 1]], dtype=np.float32
-    )
-    T_src_to_out = np.array(
-        [[1, 0, -off], [0, 1, -off], [0, 0, 1]], dtype=np.float32
-    )
+    T_out_to_src = np.array([[1, 0, off], [0, 1, off], [0, 0, 1]], dtype=np.float32)
+    T_src_to_out = np.array([[1, 0, -off], [0, 1, -off], [0, 0, 1]], dtype=np.float32)
     H_rot = _affine_to_homography(M_src)
     return T_src_to_out @ H_rot @ T_out_to_src
+
+
+def make_warp_pair(
+    page: np.ndarray,
+    tile: dict,
+    *,
+    depth: int,
+    preview_level: int,
+    src_size: int,
+    out_size: int,
+    theta_deg: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    scale = 2 ** (depth - preview_level)
+    cx = (tile["x"] + 0.5) * conf.CNN_INPUT_WIDTH / scale
+    cy = (tile["y"] + 0.5) * conf.CNN_INPUT_HEIGHT / scale
+    src = _crop_patch(page, cx, cy, src_size)
+    warped_src, M, valid_src = _rotate_center(src, theta_deg)
+    base = _center_square(src, out_size)
+    warped = _center_square(warped_src, out_size)
+    valid = _center_square(valid_src, out_size)
+    H = _compose_crop_homography(M, src_size, out_size)
+    return base, warped, valid, H
 
 
 class RotWarpDataset(Dataset):
     def __init__(
         self,
-        pairs: list[int] | None = None,
+        tiles: list[dict],
+        *,
         depth: int = DEFAULT_DEPTH,
         preview_level: int = DEFAULT_PREVIEW_LEVEL,
         src_size: int = SRC_SIZE,
         out_size: int = OUT_SIZE,
         sides: tuple[str, ...] = ("he", "ihc"),
+        fixed_angles: list[float] | None = None,
     ):
-        self.pairs = list(pairs or DEFAULT_PAIRS)
+        self.tiles = list(tiles)
         self.depth = int(depth)
         self.preview_level = int(preview_level)
         self.src_size = int(src_size)
         self.out_size = int(out_size)
         self.sides = sides
-        self.tiles = _scan_tiles(self.pairs, self.depth)
+        self.fixed_angles = fixed_angles
         if not self.tiles:
-            raise RuntimeError(
-                f"no unmasked tiles for pairs={self.pairs} depth={self.depth}"
-            )
+            raise RuntimeError("empty tile list")
         self._page_cache: dict[tuple[int, str], np.ndarray] = {}
 
     def __len__(self) -> int:
-        return len(self.tiles)
+        if self.fixed_angles is None:
+            return len(self.tiles)
+        return len(self.tiles) * len(self.fixed_angles)
 
     def _page(self, pair_id: int, side: str) -> np.ndarray:
         key = (pair_id, side)
@@ -150,19 +232,24 @@ class RotWarpDataset(Dataset):
         return self._page_cache[key]
 
     def __getitem__(self, idx: int) -> dict:
-        pair_id, tx, ty, _loc = self.tiles[idx]
+        if self.fixed_angles is None:
+            tile = self.tiles[idx]
+            theta = random.uniform(-180.0, 180.0)
+        else:
+            n_ang = len(self.fixed_angles)
+            tile = self.tiles[idx // n_ang]
+            theta = float(self.fixed_angles[idx % n_ang])
         side = random.choice(self.sides)
-        page = self._page(pair_id, side)
-        scale = 2 ** (self.depth - self.preview_level)
-        cx = (tx + 0.5) * conf.CNN_INPUT_WIDTH / scale
-        cy = (ty + 0.5) * conf.CNN_INPUT_HEIGHT / scale
-        src = _crop_patch(page, cx, cy, self.src_size)
-        theta = random.uniform(-180.0, 180.0)
-        warped_src, M, valid_src = _rotate_center(src, theta)
-        base = _center_square(src, self.out_size)
-        warped = _center_square(warped_src, self.out_size)
-        valid = _center_square(valid_src, self.out_size)
-        H = _compose_crop_homography(M, self.src_size, self.out_size)
+        page = self._page(int(tile["pair_id"]), side)
+        base, warped, valid, H = make_warp_pair(
+            page,
+            tile,
+            depth=self.depth,
+            preview_level=self.preview_level,
+            src_size=self.src_size,
+            out_size=self.out_size,
+            theta_deg=theta,
+        )
         base_t = torch.from_numpy(base.astype(np.float32) / 255.0).unsqueeze(0)
         warp_t = torch.from_numpy(warped.astype(np.float32) / 255.0).unsqueeze(0)
         valid_t = torch.from_numpy((valid > 127).astype(np.float32))
@@ -172,7 +259,8 @@ class RotWarpDataset(Dataset):
             "valid_mask": valid_t,
             "homography": torch.from_numpy(H),
             "theta_deg": float(theta),
-            "pair_id": int(pair_id),
+            "pair_id": int(tile["pair_id"]),
+            "loc": tile.get("loc"),
             "side": side,
         }
 

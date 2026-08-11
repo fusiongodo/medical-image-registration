@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { spawn } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import type { RequestHandler } from './$types';
 import { spRotTrainJobs, spRotTrainJobKey } from '$lib/spRotTrainJobs';
@@ -29,15 +30,42 @@ function runJson(args: string[]): Promise<unknown> {
 	});
 }
 
+function isPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function liveFromPid(runId: string) {
+	const p = resolve(REPO_ROOT, 'data', 'sp_rot_train', runId, 'train.pid');
+	if (!existsSync(p)) return null;
+	const pid = parseInt(readFileSync(p, 'utf-8').trim(), 10);
+	if (!Number.isFinite(pid) || !isPidAlive(pid)) return null;
+	return { running: true, detail: `pid ${pid}`, error: null, pid };
+}
+
 export const GET: RequestHandler = async ({ url }) => {
 	const runId = url.searchParams.get('run');
 	if (!runId) error(400, 'run required');
 	try {
 		const disk = (await runJson(['status', runId])) as Record<string, unknown>;
-		const live = spRotTrainJobs.get(spRotTrainJobKey(runId)) ?? null;
+		const mem = spRotTrainJobs.get(spRotTrainJobKey(runId)) ?? null;
+		const fromPid = liveFromPid(runId);
+		const live =
+			mem?.running || fromPid?.running
+				? {
+						running: true,
+						detail: mem?.detail ?? fromPid?.detail ?? null,
+						error: null,
+						pid: mem?.pid ?? fromPid?.pid
+					}
+				: (mem ?? fromPid);
 		let logs: unknown = null;
 		try {
-			logs = await runJson(['logs', runId, '-n', '40']);
+			logs = await runJson(['logs', runId, '-n', '0']);
 		} catch {
 			logs = null;
 		}
