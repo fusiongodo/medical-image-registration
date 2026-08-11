@@ -1,0 +1,193 @@
+=== overfit PRODUCT one model: 10 tiles × 12 angles = 120 samples, batch_size=10, lr=0.0001 ===
+overfit product step0_mean_kp=2.727375 n_gt=60168
+overfit product step=1/5000 batch_kp=2.069804 mean_kp=2.705400 ratio=0.9919
+overfit product step=50/5000 batch_kp=1.856352 mean_kp=1.782171 ratio=0.6534
+overfit product step=100/5000 batch_kp=1.135042 mean_kp=1.512516 ratio=0.5546
+overfit product step=150/5000 batch_kp=1.422176 mean_kp=1.342266 ratio=0.4921
+overfit product step=200/5000 batch_kp=1.352400 mean_kp=1.251846 ratio=0.4590
+overfit product step=250/5000 batch_kp=1.309806 mean_kp=1.152020 ratio=0.4224
+overfit product step=300/5000 batch_kp=1.130771 mean_kp=1.074159 ratio=0.3938
+overfit product step=350/5000 batch_kp=1.232106 mean_kp=1.096474 ratio=0.4020
+overfit product step=400/5000 batch_kp=0.786813 mean_kp=1.062206 ratio=0.3895
+overfit product step=450/5000 batch_kp=1.338585 mean_kp=1.098152 ratio=0.4026
+overfit product step=500/5000 batch_kp=1.008521 mean_kp=0.977814 ratio=0.3585
+overfit product step=550/5000 batch_kp=0.869028 mean_kp=0.939661 ratio=0.3445
+overfit product step=600/5000 batch_kp=0.845428 mean_kp=1.010724 ratio=0.3706
+overfit product step=650/5000 batch_kp=0.841004 mean_kp=1.085001 ratio=0.3978
+overfit product step=700/5000 batch_kp=0.958833 mean_kp=1.035238 ratio=0.3796
+overfit product step=750/5000 batch_kp=0.782625 mean_kp=0.998567 ratio=0.3661
+overfit product step=800/5000 batch_kp=0.791504 mean_kp=0.906501 ratio=0.3324
+overfit product step=850/5000 batch_kp=1.001992 mean_kp=0.979712 ratio=0.3592
+overfit product step=900/5000 batch_kp=1.061278 mean_kp=0.955701 ratio=0.3504
+overfit product step=950/5000 batch_kp=0.876584 mean_kp=1.090505 ratio=0.3998
+overfit product step=1000/5000 batch_kp=0.831708 mean_kp=1.026394 ratio=0.3763
+overfit product step=1050/5000 batch_kp=1.112417 mean_kp=0.942086 ratio=0.3454
+overfit product step=1100/5000 batch_kp=0.887769 mean_kp=0.988141 ratio=0.3623
+overfit product step=1150/5000 batch_kp=0.740687 mean_kp=0.917380 ratio=0.3364
+overfit product step=1200/5000 batch_kp=0.894801 mean_kp=1.021902 ratio=0.3747
+overfit product step=1250/5000 batch_kp=0.782079 mean_kp=0.946449 ratio=0.3470
+overfit product step=1300/5000 batch_kp=1.384885 mean_kp=0.875212 ratio=0.3209
+overfit product step=1350/5000 batch_kp=0.931355 mean_kp=1.046219 ratio=0.3836
+overfit product step=1400/5000 batch_kp=0.996100 mean_kp=1.067329 ratio=0.3913
+overfit product step=1450/5000 batch_kp=0.840146 mean_kp=1.062353 ratio=0.3895
+overfit product step=1500/5000 batch_kp=0.766130 mean_kp=0.929537 ratio=0.3408
+overfit product step=1550/5000 batch_kp=0.951749 mean_kp=0.987165 ratio=0.3619
+overfit product step=1600/5000 batch_kp=0.688701 mean_kp=0.916435 ratio=0.3360
+overfit product step=1650/5000 batch_kp=0.767197 mean_kp=0.998058 ratio=0.3659
+overfit product step=1700/5000 batch_kp=0.824574 mean_kp=1.054376 ratio=0.3866
+overfit product step=1750/5000 batch_kp=0.783671 mean_kp=1.176741 ratio=0.4315
+overfit product step=1800/5000 batch_kp=0.964598 mean_kp=0.900379 ratio=0.3301
+overfit product step=1850/5000 batch_kp=0.975629 mean_kp=0.883932 ratio=0.3241
+overfit product step=1900/5000 batch_kp=0.932796 mean_kp=0.814771 ratio=0.2987
+overfit product step=1950/5000 batch_kp=0.839728 mean_kp=1.077101 ratio=0.3949
+overfit product step=2000/5000 batch_kp=0.918866 mean_kp=1.082469 ratio=0.3969
+overfit product step=2050/5000 batch_kp=0.773762 mean_kp=0.872216 ratio=0.3198
+overfit product step=2100/5000 batch_kp=0.839951 mean_kp=1.060850 ratio=0.3890
+overfit product step=2150/5000 batch_kp=0.681137 mean_kp=0.845887 ratio=0.3101
+overfit product step=2200/5000 batch_kp=0.689261 mean_kp=0.950689 ratio=0.3486
+overfit product step=2250/5000 batch_kp=0.584217 mean_kp=0.919541 ratio=0.3372
+overfit product step=2300/5000 batch_kp=0.997190 mean_kp=1.002339 ratio=0.3675
+overfit product step=2350/5000 batch_kp=0.901586 mean_kp=0.960286 ratio=0.3521
+overfit product step=2400/5000 batch_kp=0.712277 mean_kp=0.980767 ratio=0.3596
+overfit product step=2450/5000 batch_kp=1.075508 mean_kp=1.099909 ratio=0.4033
+overfit product step=2500/5000 batch_kp=0.756597 mean_kp=0.869367 ratio=0.3188
+overfit product step=2550/5000 batch_kp=0.649190 mean_kp=0.888851 ratio=0.3259
+overfit product step=2600/5000 batch_kp=0.549499 mean_kp=0.937407 ratio=0.3437
+overfit product step=2650/5000 batch_kp=0.949958 mean_kp=0.874080 ratio=0.3205
+overfit product step=2700/5000 batch_kp=0.927279 mean_kp=0.936251 ratio=0.3433
+overfit product step=2750/5000 batch_kp=0.724674 mean_kp=1.037282 ratio=0.3803
+overfit product step=2800/5000 batch_kp=0.627941 mean_kp=1.145304 ratio=0.4199
+overfit product step=2850/5000 batch_kp=0.695998 mean_kp=0.910671 ratio=0.3339
+overfit product step=2900/5000 batch_kp=0.574441 mean_kp=0.882495 ratio=0.3236
+overfit product step=2950/5000 batch_kp=0.774396 mean_kp=0.917856 ratio=0.3365
+overfit product step=3000/5000 batch_kp=0.714277 mean_kp=0.860866 ratio=0.3156
+overfit product step=3050/5000 batch_kp=0.721403 mean_kp=1.014375 ratio=0.3719
+overfit product step=3100/5000 batch_kp=0.699452 mean_kp=0.963238 ratio=0.3532
+overfit product step=3150/5000 batch_kp=0.744386 mean_kp=0.925638 ratio=0.3394
+overfit product step=3200/5000 batch_kp=0.848720 mean_kp=0.906022 ratio=0.3322
+overfit product step=3250/5000 batch_kp=1.139307 mean_kp=0.995715 ratio=0.3651
+overfit product step=3300/5000 batch_kp=0.753935 mean_kp=1.043948 ratio=0.3828
+overfit product step=3350/5000 batch_kp=0.669929 mean_kp=1.022459 ratio=0.3749
+overfit product step=3400/5000 batch_kp=0.738724 mean_kp=0.944908 ratio=0.3465
+overfit product step=3450/5000 batch_kp=0.701162 mean_kp=0.923611 ratio=0.3386
+overfit product step=3500/5000 batch_kp=0.613307 mean_kp=0.879041 ratio=0.3223
+overfit product step=3550/5000 batch_kp=0.625577 mean_kp=0.907765 ratio=0.3328
+overfit product step=3600/5000 batch_kp=0.732275 mean_kp=0.949575 ratio=0.3482
+overfit product step=3650/5000 batch_kp=0.974220 mean_kp=0.821412 ratio=0.3012
+overfit product step=3700/5000 batch_kp=0.766137 mean_kp=0.937674 ratio=0.3438
+overfit product step=3750/5000 batch_kp=0.648161 mean_kp=0.945337 ratio=0.3466
+overfit product step=3800/5000 batch_kp=0.817437 mean_kp=0.901435 ratio=0.3305
+overfit product step=3850/5000 batch_kp=0.700614 mean_kp=1.030115 ratio=0.3777
+overfit product step=3900/5000 batch_kp=0.900799 mean_kp=0.931243 ratio=0.3414
+overfit product step=3950/5000 batch_kp=0.778241 mean_kp=0.910723 ratio=0.3339
+overfit product step=4000/5000 batch_kp=0.724795 mean_kp=0.999995 ratio=0.3667
+overfit product step=4050/5000 batch_kp=0.799232 mean_kp=1.013878 ratio=0.3717
+overfit product step=4100/5000 batch_kp=0.824914 mean_kp=0.974059 ratio=0.3571
+overfit product step=4150/5000 batch_kp=0.712970 mean_kp=0.950241 ratio=0.3484
+overfit product step=4200/5000 batch_kp=0.780703 mean_kp=1.009461 ratio=0.3701
+overfit product step=4250/5000 batch_kp=0.710932 mean_kp=0.999287 ratio=0.3664
+overfit product step=4300/5000 batch_kp=0.663237 mean_kp=1.001449 ratio=0.3672
+overfit product step=4350/5000 batch_kp=0.667855 mean_kp=0.962385 ratio=0.3529
+overfit product step=4400/5000 batch_kp=0.690251 mean_kp=0.855476 ratio=0.3137
+overfit product step=4450/5000 batch_kp=0.908868 mean_kp=0.941462 ratio=0.3452
+overfit product step=4500/5000 batch_kp=0.986918 mean_kp=0.981442 ratio=0.3598
+overfit product step=4550/5000 batch_kp=0.806792 mean_kp=0.959860 ratio=0.3519
+overfit product step=4600/5000 batch_kp=0.827984 mean_kp=1.027641 ratio=0.3768
+overfit product step=4650/5000 batch_kp=0.736082 mean_kp=0.938254 ratio=0.3440
+overfit product step=4700/5000 batch_kp=0.644362 mean_kp=0.926898 ratio=0.3398
+overfit product step=4750/5000 batch_kp=0.620482 mean_kp=0.896329 ratio=0.3286
+overfit product step=4800/5000 batch_kp=0.868205 mean_kp=0.956570 ratio=0.3507
+overfit product step=4850/5000 batch_kp=0.742382 mean_kp=1.020316 ratio=0.3741
+overfit product step=4900/5000 batch_kp=0.610471 mean_kp=0.985914 ratio=0.3615
+overfit product step=4950/5000 batch_kp=0.929542 mean_kp=0.872929 ratio=0.3201
+overfit product step=5000/5000 batch_kp=0.707890 mean_kp=1.018027 ratio=0.3733
+{
+  "ok": true,
+  "ts": 1786469048,
+  "mode": "product",
+  "collapsed": false,
+  "first_collapse_step": null,
+  "ratio_kp": 0.37326235407294195,
+  "n_tiles": 10,
+  "n_angles": 12,
+  "n_samples": 120,
+  "batch_size": 10,
+  "each_tile": false,
+  "fresh_weights": "once",
+  "steps": 5000,
+  "steps_ran": 5000,
+  "angles": [
+    0.0,
+    30.0,
+    60.0,
+    90.0,
+    120.0,
+    150.0,
+    180.0,
+    210.0,
+    240.0,
+    270.0,
+    300.0,
+    330.0
+  ],
+  "side": "he",
+  "tiles": [
+    {
+      "pair_id": 0,
+      "loc": "30_27"
+    },
+    {
+      "pair_id": 1,
+      "loc": "20_22"
+    },
+    {
+      "pair_id": 3,
+      "loc": "20_29"
+    },
+    {
+      "pair_id": 16,
+      "loc": "25_22"
+    },
+    {
+      "pair_id": 1,
+      "loc": "22_10"
+    },
+    {
+      "pair_id": 0,
+      "loc": "26_16"
+    },
+    {
+      "pair_id": 0,
+      "loc": "16_10"
+    },
+    {
+      "pair_id": 16,
+      "loc": "18_13"
+    },
+    {
+      "pair_id": 0,
+      "loc": "11_18"
+    },
+    {
+      "pair_id": 3,
+      "loc": "9_7"
+    }
+  ],
+  "n_gt": 60168,
+  "desc_max_cells": 576,
+  "lr": 0.0001,
+  "step0": {
+    "step": 0,
+    "loss_kp": 2.727375249067942,
+    "loss_total": null,
+    "loss_desc": null
+  },
+  "stepN": {
+    "step": 5000,
+    "loss_kp": 1.0180265059073765,
+    "loss_total": 0.7972644567489624,
+    "loss_desc": 0.08937472105026245
+  },
+  "log_path": "/root/medical-image-registration/data/sp_rot_train/_overfit/overfit_product_t10_a12_b10_d576.jsonl",
+  "experiments_path": "/root/medical-image-registration/data/sp_rot_train/_overfit/experiments.jsonl"
+}
