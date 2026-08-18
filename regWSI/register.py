@@ -27,8 +27,6 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 
-from setup.coarse_to_fine.identity import pair_fingerprint
-
 from regWSI import paths
 from regWSI.export_slides import export_pair
 
@@ -173,11 +171,7 @@ def register_pair(
             )
     _purge_out_wsis(out, keep_warped=keep_warped)
 
-    identity = (
-        ds.pair_fingerprint(pair_id, dataset)
-        if dataset == "acrobat"
-        else pair_fingerprint(pair_id)
-    )
+    identity = ds.pair_fingerprint(pair_id, dataset)
     meta = {
         "pair_id": pair_id,
         "dataset": dataset,

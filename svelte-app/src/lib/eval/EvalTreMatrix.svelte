@@ -54,7 +54,7 @@
 		treErr: string | null;
 		landmarkCount: number;
 		batchId?: string | null;
-		dataset?: 'muromi' | 'acrobat';
+		dataset?: 'muromi' | 'acrobat' | 'anhir';
 		onClose?: (() => void) | undefined;
 	} = $props();
 

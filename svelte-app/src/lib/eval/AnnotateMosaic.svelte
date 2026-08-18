@@ -21,7 +21,7 @@
 		pendingHe: [number, number] | null;
 		active: boolean;
 		onAnnotate: (pt: [number, number]) => void;
-		dataset?: 'muromi' | 'acrobat';
+		dataset?: 'muromi' | 'acrobat' | 'anhir';
 	} = $props();
 
 	const MAX_ZOOM = 40;

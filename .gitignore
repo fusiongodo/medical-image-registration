@@ -20,6 +20,10 @@ data/acrobat/regwsi/
 data/acrobat/rigid/
 data/acrobat/valid/
 data/acrobat/pairs.json
+!data/anhir/
+!data/anhir/pairs.json
+data/anhir/regwsi/
+data/anhir/rigid/
 introducing_superpoint/runs/
 remote/logs/
 remote/runpodKey

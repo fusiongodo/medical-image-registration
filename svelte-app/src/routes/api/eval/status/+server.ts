@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import type { RequestHandler } from './$types';
-import { datasetFromUrl, pairCount, pairDir } from '$lib/server/datasets';
+import { datasetFromUrl, pairCount, pairDir, usesPairTiffs } from '$lib/server/datasets';
 import { fingerprintMatches, type PairIdentity } from '$lib/server/pairs';
 
 function pairStatus(dataset: ReturnType<typeof datasetFromUrl>, pairId: number) {
@@ -20,8 +20,9 @@ function pairStatus(dataset: ReturnType<typeof datasetFromUrl>, pairId: number) 
 		}
 	}
 	const ready = existsSync(previewHe) && existsSync(previewIhc) && existsSync(field);
-	const identityOk =
-		dataset === 'acrobat' ? true : fingerprintMatches(pairId, meta?.identity ?? null);
+	const identityOk = usesPairTiffs(dataset)
+		? true
+		: fingerprintMatches(pairId, meta?.identity ?? null);
 	return {
 		pairId,
 		dataset,

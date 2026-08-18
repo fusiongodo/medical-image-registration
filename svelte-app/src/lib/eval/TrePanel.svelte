@@ -42,7 +42,7 @@
 		mainSetName?: string | null;
 		mainSetId?: string | null;
 		emptyHint?: string;
-		dataset?: 'muromi' | 'acrobat';
+		dataset?: 'muromi' | 'acrobat' | 'anhir';
 		onClose?: (() => void) | undefined;
 	} = $props();
 

@@ -37,9 +37,20 @@ from setup.coarse_to_fine.field import (
     fit_gated,
     tau_for_keep,
 )
-from setup.coarse_to_fine.identity import pair_fingerprint
 from setup.coarse_to_fine.reg_branches import cache_path, normalize_estimator, normalize_lam
 from setup.coarse_to_fine.run import cache_candidates
+
+
+def _canvas_ingest(ds_name: str, pairs: list[int], *, force: bool = False) -> dict | None:
+    if ds_name == "acrobat":
+        from setup.acrobat.ingest import ingest
+
+        return ingest(unzip=True, pair_ids=pairs, force=force)
+    if ds_name == "anhir":
+        from setup.anhir.ingest import ingest
+
+        return ingest(pair_ids=pairs, force=force)
+    return None
 
 
 def parse_pairs_spec(spec: str) -> list[int]:
@@ -91,7 +102,7 @@ def _regwsi_ready(pair_id: int, *, force: bool = False) -> bool:
 
     return (
         rpaths.displacement_field(pair_id).is_file()
-        and datasets.rigid_path(pair_id, "acrobat").is_file()
+        and datasets.rigid_path(pair_id).is_file()
     )
 
 
@@ -124,7 +135,7 @@ def _batch_progress_counts(
 ) -> tuple[int, int]:
     total = len(pairs) * len(lams) * len(estimators)
     done = 0
-    if ds_name == "acrobat":
+    if datasets.uses_pair_tiffs(ds_name):
         total += len(pairs)
         for p in pairs:
             if _regwsi_ready(p, force=False) and not force:
@@ -263,11 +274,7 @@ def _write_cell(
     depths_out = {
         str(d): field.predict_tile_px(d) for d in range(eval_runs.EVAL_DEPTH + 1)
     }
-    identity = (
-        datasets.pair_fingerprint(pair_id, ds)
-        if ds == "acrobat"
-        else pair_fingerprint(pair_id)
-    )
+    identity = datasets.pair_fingerprint(pair_id, ds)
     payload = {
         "pair_id": pair_id,
         "dataset": ds,
@@ -374,7 +381,7 @@ def run_batch(
     bspline_grid = int(cell_cfg["bspline_grid"])
     bspline_reg = float(cell_cfg["bspline_reg"])
 
-    do_regwsi = ds_name == "acrobat" and not skip_regwsi
+    do_regwsi = datasets.uses_pair_tiffs(ds_name) and not skip_regwsi
     do_cells = not regwsi_only
     jobs = (
         [(p, lam, est) for p in pairs for lam in lams for est in estimators]
@@ -410,14 +417,12 @@ def run_batch(
 
     push_status(
         state="running",
-        detail="ingest" if (ds_name == "acrobat" and not skip_ingest) else "start",
+        detail="ingest" if (datasets.uses_pair_tiffs(ds_name) and not skip_ingest) else "start",
     )
 
-    if ds_name == "acrobat" and not skip_ingest:
-        from setup.acrobat.ingest import ingest
-
+    if datasets.uses_pair_tiffs(ds_name) and not skip_ingest:
         _emit("ingest", dataset=ds_name, pairs=len(pairs), done=0, total=total)
-        ingest_result = ingest(unzip=True, pair_ids=pairs, force=False)
+        ingest_result = _canvas_ingest(ds_name, pairs, force=False) or {}
         for err in ingest_result.get("errors") or []:
             _emit(
                 "ingest_skip",
@@ -450,7 +455,7 @@ def run_batch(
                 _emit("regwsi", pair=pair_id, done=done, total=total)
                 push_status(state="running", detail=detail)
                 df = rpaths.displacement_field(pair_id)
-                rigid = datasets.rigid_path(pair_id, "acrobat")
+                rigid = datasets.rigid_path(pair_id)
                 he = rpaths.he_tiff(pair_id)
                 ihc = rpaths.ihc_tiff(pair_id)
                 if not he.is_file() or not ihc.is_file():
@@ -750,11 +755,9 @@ def run_parallel_resource(
     cell_cfg = eval_runs.cell_config(cfg)
     force = bool(cfg.get("force")) or bool(manifest.get("config", {}).get("force"))
 
-    if not skip_ingest and ds_name == "acrobat":
-        from setup.acrobat.ingest import ingest
-
+    if not skip_ingest and datasets.uses_pair_tiffs(ds_name):
         _emit("ingest", dataset=ds_name, pairs=len(pairs))
-        ingest(unzip=True, pair_ids=pairs, force=False)
+        _canvas_ingest(ds_name, pairs, force=False)
 
     n_gpu = max(0, int(gpu_workers))
     n_cpu = max(0, int(cpu_workers))
@@ -794,7 +797,7 @@ def run_parallel_resource(
                 _enqueue({"kind": "lam", "pair": int(pair_id), "lam": lam})
 
     for pair_id in pairs:
-        if ds_name == "acrobat" and not _regwsi_ready(pair_id, force=force):
+        if datasets.uses_pair_tiffs(ds_name) and not _regwsi_ready(pair_id, force=force):
             _enqueue({"kind": "regwsi", "pair": int(pair_id)})
         else:
             _seed_lam_jobs(pair_id)
@@ -925,7 +928,7 @@ def run_parallel_resource(
                     )
                     if (
                         job.get("kind") == "regwsi"
-                        and ds_name == "acrobat"
+                        and datasets.uses_pair_tiffs(ds_name)
                         and _regwsi_ready(int(job["pair"]), force=False)
                     ):
                         _seed_lam_jobs(int(job["pair"]))
@@ -1146,7 +1149,7 @@ def main() -> None:
     c.add_argument("--id", default=None, help="optional batch id (slug)")
     c.add_argument("--lams", default=None, help="comma-separated, default all")
     c.add_argument("--estimators", default=None, help="comma-separated, default all")
-    c.add_argument("--dataset", default="muromi", help="muromi|acrobat")
+    c.add_argument("--dataset", default="muromi", help="muromi|acrobat|anhir")
     c.add_argument("--wendland-eps", type=float, default=None)
     c.add_argument("--bspline-grid", type=int, default=None)
     c.add_argument("--bspline-reg", type=float, default=None)

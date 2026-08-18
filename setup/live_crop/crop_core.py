@@ -98,10 +98,10 @@ def _labels() -> list[dict]:
 
 
 def num_pairs() -> int:
-    if _dataset() == "acrobat":
-        from setup import datasets as ds
+    from setup import datasets as ds
 
-        return ds.pair_count("acrobat")
+    if ds.uses_pair_tiffs():
+        return ds.pair_count()
     return len(_labels())
 
 
@@ -127,10 +127,12 @@ def _muromi_wsi_available(pair_id: int) -> bool:
 
 
 def _prefer_pair_tiffs(pair_id: int) -> bool:
+    from setup import datasets as ds
+
     he_tiff, ihc_tiff = _pair_tiff_paths(pair_id)
     if not (he_tiff.is_file() and ihc_tiff.is_file()):
         return False
-    if _dataset() == "acrobat":
+    if ds.uses_pair_tiffs():
         return True
     return not _muromi_wsi_available(pair_id)
 
@@ -226,8 +228,10 @@ def tissue_tiles(pair_id: int, level: int) -> dict:
     if chosen is None:
         return {"grid": grid, "page": None, "tile_w": 0, "tile_h": 0, "tiles": []}
 
+    from setup import datasets as ds
+
     page_idx, tile_h, tile_w = chosen
-    if _dataset() == "acrobat":
+    if ds.uses_pair_tiffs():
         tiles = [f"{x}_{y}" for y in range(grid) for x in range(grid)]
         return {
             "grid": grid,

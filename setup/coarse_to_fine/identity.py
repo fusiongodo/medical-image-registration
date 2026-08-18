@@ -26,8 +26,8 @@ import conf
 def pair_fingerprint(pair_id: int) -> dict:
     from setup import datasets
 
-    if datasets.active_dataset() == "acrobat":
-        return datasets.pair_fingerprint(int(pair_id), "acrobat")
+    if datasets.uses_pair_tiffs():
+        return datasets.pair_fingerprint(int(pair_id))
     labels = json.loads(Path(conf.LABELS_PATH).read_text())
     item = labels[pair_id]
     return {

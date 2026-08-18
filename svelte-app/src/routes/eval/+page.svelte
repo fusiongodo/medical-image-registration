@@ -3,7 +3,7 @@
 	import EvalTreMatrix, { type BatchTreResult } from '$lib/eval/EvalTreMatrix.svelte';
 	import type { BatchJobState } from '$lib/evalJobs';
 
-	type DatasetId = 'muromi' | 'acrobat';
+	type DatasetId = 'muromi' | 'acrobat' | 'anhir';
 	type EvalPageData = {
 		pairs: {
 			pairId: number;
@@ -71,14 +71,14 @@
 			const set = new Set(selectedBatch.pairs);
 			return data.pairs.filter((p) => set.has(p.pairId));
 		}
-		if (dataset === 'acrobat') return data.pairs;
+		if (dataset !== 'muromi') return data.pairs;
 		return data.pairs.filter((p) => p.landmarkCount > 0);
 	});
 	const selected = $derived(
 		selectedPair == null ? null : (data.pairs.find((p) => p.pairId === selectedPair) ?? null)
 	);
 	const selectablePairs = $derived(
-		dataset === 'acrobat' ? data.pairs : data.pairs.filter((p) => p.landmarkCount > 0)
+		dataset !== 'muromi' ? data.pairs : data.pairs.filter((p) => p.landmarkCount > 0)
 	);
 
 	async function loadBatches() {
@@ -345,6 +345,8 @@
 					{#if dataset === 'acrobat'}
 						ACROBAT: regWSI first (DF + rigid), then LAM × field. Official TRE via Grand Challenge
 						upload.
+					{:else if dataset === 'anhir'}
+						ANHIR training: local TRE from both-side landmarks. Canvas TIFFs under data/anhir/regwsi.
 					{:else}
 						muROMI: batch TRE for LAM × field. Landmarks under data/regwsi; methods under
 						data/eval_runs.
@@ -398,7 +400,7 @@
 			</label>
 			<p class="gate-note">Dataset: {dataset}</p>
 			<div class="pair-pick">
-				<span>{dataset === 'acrobat' ? 'ACROBAT pairs' : 'Pairs with landmarks'}</span>
+				<span>{dataset === 'muromi' ? 'Pairs with landmarks' : `${dataset} pairs`}</span>
 				<div class="chips">
 					{#each selectablePairs as p}
 						<button

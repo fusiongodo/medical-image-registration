@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import type { RequestHandler } from './$types';
-import { datasetFromUrl, pairCount, pairDir, type DatasetId } from '$lib/server/datasets';
+import { datasetFromUrl, pairCount, pairDir, usesPairTiffs, type DatasetId } from '$lib/server/datasets';
 import { pairFingerprint, fingerprintMatches } from '$lib/server/pairs';
 
 function landmarksPath(dataset: DatasetId, pairId: number) {
@@ -13,7 +13,9 @@ function empty(dataset: DatasetId, pairId: number) {
 	return {
 		pair_id: pairId,
 		dataset,
-		identity: dataset === 'muromi' ? (pairFingerprint(pairId) ?? undefined) : { dataset, pair_id: pairId },
+		identity: usesPairTiffs(dataset)
+			? { dataset, pair_id: pairId }
+			: (pairFingerprint(pairId) ?? undefined),
 		points: [] as { he: [number, number]; ihc: [number, number] }[]
 	};
 }

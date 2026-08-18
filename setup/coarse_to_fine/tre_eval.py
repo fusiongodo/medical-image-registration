@@ -69,13 +69,11 @@ def load_landmarks(pair_id: int) -> list[dict]:
     data = json.loads(path.read_text())
     from setup import datasets as ds
 
-    if ds.active_dataset() != "acrobat":
-        if not fingerprint_matches(pair_id, data.get("identity")):
-            raise RuntimeError("landmarks identity does not match current labels")
+    if ds.uses_pair_tiffs():
+        return list(data.get("points") or [])
+    if not fingerprint_matches(pair_id, data.get("identity")):
+        raise RuntimeError("landmarks identity does not match current labels")
     return list(data.get("points") or [])
-
-
-def deskew_disp_norm(affine, xn: np.ndarray, yn: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     (a0, a1, s), (b0, _b1, b2) = affine
     du = a0 + a1 * xn + s * yn
     dv = b0 + s * xn + b2 * yn
