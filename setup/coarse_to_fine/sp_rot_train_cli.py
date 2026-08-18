@@ -382,6 +382,428 @@ def cmd_resume(args: argparse.Namespace) -> None:
         raise
 
 
+def cmd_overfit(args: argparse.Namespace) -> None:
+    import numpy as np
+    from setup import datasets as ds
+
+    run_id = args.run_id
+    cfg = store.load_config(run_id)
+    desc_max = int(args.desc_max_cells) if args.desc_max_cells is not None else 576
+    cfg = {**cfg, "desc_max_cells": desc_max}
+    if args.lr is not None:
+        cfg["lr"] = float(args.lr)
+    ds.set_active_dataset(cfg.get("dataset") or "muromi")
+
+    split = store.load_split(run_id)
+    train_tiles = list(split.get("train") or [])
+    if not train_tiles:
+        raise RuntimeError(f"no train tiles in split for {run_id}")
+
+    n_tiles = max(1, int(args.n_tiles))
+    if args.pair is not None and args.loc:
+        matched = [
+            t
+            for t in train_tiles
+            if int(t["pair_id"]) == int(args.pair) and str(t.get("loc")) == str(args.loc)
+        ]
+        if not matched:
+            raise RuntimeError(f"tile pair={args.pair} loc={args.loc} not in train split")
+        tiles = matched[:n_tiles]
+    elif args.pair is not None:
+        matched = [t for t in train_tiles if int(t["pair_id"]) == int(args.pair)]
+        if not matched:
+            raise RuntimeError(f"no train tile for pair={args.pair}")
+        tiles = matched[:n_tiles]
+    else:
+        tiles = train_tiles[:n_tiles]
+    if len(tiles) < n_tiles:
+        raise RuntimeError(f"need {n_tiles} tiles, found {len(tiles)}")
+
+    if args.angles:
+        angles = [float(x) for x in str(args.angles).split(",") if x.strip() != ""]
+    else:
+        angles = [float(args.theta)]
+    if not angles:
+        raise RuntimeError("no angles to run")
+
+    side = str(args.side)
+    steps = int(args.steps)
+    log_every = max(1, int(args.log_every))
+    exp_dir = store.TRAIN_ROOT / "_overfit"
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    experiments_path = exp_dir / "experiments.jsonl"
+
+    import crop_core
+
+    page_cache: dict[tuple[int, str], np.ndarray] = {}
+    for tile in tiles:
+        key = (int(tile["pair_id"]), side)
+        if key not in page_cache:
+            page = crop_core.whole_gray(key[0], side, int(cfg["preview_level"]))
+            if page is None:
+                raise RuntimeError(f"missing page pair={key[0]} side={side}")
+            page_cache[key] = page
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_product = (not bool(args.each_tile)) and len(angles) > 1
+
+    if use_product:
+        specs = [(tile, float(th)) for tile in tiles for th in angles]
+        batch_size = max(1, int(args.batch_size or min(10, len(specs))))
+        _safe_print(
+            f"=== overfit PRODUCT one model: {len(tiles)} tiles × {len(angles)} angles "
+            f"= {len(specs)} samples, batch_size={batch_size}, lr={cfg['lr']} ===",
+            flush=True,
+        )
+
+        samples = []
+        for tile, theta in specs:
+            key = (int(tile["pair_id"]), side)
+            base, warped, valid, H = data.make_warp_pair(
+                page_cache[key],
+                tile,
+                depth=int(cfg["depth"]),
+                preview_level=int(cfg["preview_level"]),
+                src_size=int(cfg["src_size"]),
+                out_size=int(cfg["out_size"]),
+                theta_deg=theta,
+            )
+            samples.append(
+                {
+                    "image": torch.from_numpy(base.astype(np.float32) / 255.0).unsqueeze(0),
+                    "warped": torch.from_numpy(warped.astype(np.float32) / 255.0).unsqueeze(0),
+                    "valid_mask": torch.from_numpy((valid > 127).astype(np.float32)),
+                    "homography": torch.from_numpy(H),
+                    "theta_deg": theta,
+                    "pair_id": int(tile["pair_id"]),
+                    "loc": tile.get("loc"),
+                    "side": side,
+                }
+            )
+
+        model = _build_model(cfg, device)
+        with torch.no_grad():
+            for s in samples:
+                img = s["image"].unsqueeze(0).to(device)
+                Ht = s["homography"].unsqueeze(0).to(device)
+                pseudo = store.detect_pseudo_gt(model, img, device)
+                s["gt_base"] = [
+                    g.detach().cpu()
+                    for g in store.filter_gt_in_frame(pseudo, int(cfg["out_size"]))
+                ]
+                s["gt_warp"] = [
+                    g.detach().cpu()
+                    for g in store.filter_gt_in_frame(
+                        store.warp_gt_points(pseudo, Ht), int(cfg["out_size"])
+                    )
+                ]
+        n_gt = int(sum(int(g.shape[0]) for s in samples for g in s["gt_base"]))
+        if n_gt == 0:
+            raise RuntimeError("frozen pseudo-GT empty for product set")
+
+        def _gather(idxs: list[int]):
+            batch = {
+                "image": torch.stack([samples[i]["image"] for i in idxs], dim=0),
+                "warped": torch.stack([samples[i]["warped"] for i in idxs], dim=0),
+                "valid_mask": torch.stack([samples[i]["valid_mask"] for i in idxs], dim=0),
+                "homography": torch.stack([samples[i]["homography"] for i in idxs], dim=0),
+                "theta_deg": [samples[i]["theta_deg"] for i in idxs],
+                "pair_id": [samples[i]["pair_id"] for i in idxs],
+                "side": [samples[i]["side"] for i in idxs],
+            }
+            gt_base = [samples[i]["gt_base"][0].to(device) for i in idxs]
+            gt_warp = [samples[i]["gt_warp"][0].to(device) for i in idxs]
+            return batch, gt_base, gt_warp
+
+        def _mean_kp() -> float:
+            model.eval()
+            tot = 0.0
+            n = 0
+            with torch.no_grad():
+                for start in range(0, len(samples), batch_size):
+                    idxs = list(range(start, min(start + batch_size, len(samples))))
+                    batch, gt_base, gt_warp = _gather(idxs)
+                    parts = store._forward_losses(
+                        model, batch, device, cfg, gt_base=gt_base, gt_warp=gt_warp
+                    )
+                    tot += float(parts["loss_kp"].detach().cpu())
+                    n += 1
+            model.train()
+            return tot / max(1, n)
+
+        opt = torch.optim.Adam(model.parameters(), lr=float(cfg["lr"]))
+        log_path = None
+        if args.log:
+            log_path = (
+                exp_dir
+                / (
+                    f"overfit_product_t{len(tiles)}_a{len(angles)}"
+                    f"_b{batch_size}_d{int(cfg['desc_max_cells'])}.jsonl"
+                )
+            )
+            if log_path.is_file():
+                log_path.unlink()
+
+        kp0 = _mean_kp()
+        _safe_print(f"overfit product step0_mean_kp={kp0:.6f} n_gt={n_gt}", flush=True)
+        step0 = {"step": 0, "loss_kp": kp0, "loss_total": None, "loss_desc": None}
+        first_collapse_step = None
+        step_n = None
+        history = []
+        order = list(range(len(samples)))
+        cursor = 0
+        for step in range(1, steps + 1):
+            if cursor + batch_size > len(order):
+                import random as _rnd
+
+                _rnd.shuffle(order)
+                cursor = 0
+            idxs = order[cursor : cursor + batch_size]
+            cursor += batch_size
+            batch, gt_base, gt_warp = _gather(idxs)
+            metrics = store.train_step(
+                model, batch, opt, device, cfg, gt_base=gt_base, gt_warp=gt_warp
+            )
+            mean_kp = None
+            if step % log_every == 0 or step == 1 or step == steps:
+                mean_kp = _mean_kp()
+                ratio = mean_kp / kp0 if kp0 > 0 else None
+                if ratio is not None:
+                    _safe_print(
+                        f"overfit product step={step}/{steps} "
+                        f"batch_kp={metrics['loss_kp']:.6f} mean_kp={mean_kp:.6f} "
+                        f"ratio={ratio:.4f}",
+                        flush=True,
+                    )
+                else:
+                    _safe_print(
+                        f"overfit product step={step}/{steps} "
+                        f"batch_kp={metrics['loss_kp']:.6f}",
+                        flush=True,
+                    )
+                if (
+                    first_collapse_step is None
+                    and kp0 > 0
+                    and mean_kp <= 0.2 * kp0
+                ):
+                    first_collapse_step = step
+                    _safe_print(
+                        f"overfit product first_collapse_step={step} "
+                        f"mean_kp={mean_kp:.6f} ratio={mean_kp/kp0:.4f}",
+                        flush=True,
+                    )
+            row = {
+                "step": step,
+                **metrics,
+                "mean_kp": mean_kp,
+            }
+            history.append(row)
+            if log_path is not None:
+                store.append_jsonl(log_path, row)
+            if first_collapse_step is not None:
+                step_n = {
+                    "step": step,
+                    "loss_kp": mean_kp if mean_kp is not None else metrics["loss_kp"],
+                    "loss_total": metrics["loss_total"],
+                    "loss_desc": metrics["loss_desc"],
+                }
+                break
+            if step == steps:
+                mean_kp = _mean_kp() if mean_kp is None else mean_kp
+                step_n = {
+                    "step": step,
+                    "loss_kp": mean_kp,
+                    "loss_total": metrics["loss_total"],
+                    "loss_desc": metrics["loss_desc"],
+                }
+
+        kp_n = float(step_n["loss_kp"]) if step_n else None
+        ratio = (kp_n / kp0) if kp0 and kp_n is not None and kp0 > 0 else None
+        summary = {
+            "ok": True,
+            "ts": int(time.time()),
+            "mode": "product",
+            "collapsed": bool(first_collapse_step is not None),
+            "first_collapse_step": first_collapse_step,
+            "ratio_kp": ratio,
+            "n_tiles": len(tiles),
+            "n_angles": len(angles),
+            "n_samples": len(samples),
+            "batch_size": batch_size,
+            "each_tile": False,
+            "fresh_weights": "once",
+            "steps": steps,
+            "steps_ran": len(history),
+            "angles": angles,
+            "side": side,
+            "tiles": [{"pair_id": int(t["pair_id"]), "loc": t.get("loc")} for t in tiles],
+            "n_gt": n_gt,
+            "desc_max_cells": int(cfg["desc_max_cells"]),
+            "lr": float(cfg["lr"]),
+            "step0": step0,
+            "stepN": step_n,
+            "log_path": str(log_path) if log_path else None,
+            "experiments_path": str(experiments_path),
+        }
+        store.append_jsonl(experiments_path, summary)
+        emit(summary)
+        return
+
+    summaries = []
+    tile_groups = [[t] for t in tiles] if bool(args.each_tile) else [tiles]
+    for group in tile_groups:
+        for theta in angles:
+            _safe_print(
+                f"=== overfit theta={theta:g} n_tiles={len(group)} ===",
+                flush=True,
+            )
+            images = []
+            warps = []
+            masks = []
+            Hs = []
+            for tile in group:
+                key = (int(tile["pair_id"]), side)
+                base, warped, valid, H = data.make_warp_pair(
+                    page_cache[key],
+                    tile,
+                    depth=int(cfg["depth"]),
+                    preview_level=int(cfg["preview_level"]),
+                    src_size=int(cfg["src_size"]),
+                    out_size=int(cfg["out_size"]),
+                    theta_deg=theta,
+                )
+                images.append(torch.from_numpy(base.astype(np.float32) / 255.0).unsqueeze(0))
+                warps.append(torch.from_numpy(warped.astype(np.float32) / 255.0).unsqueeze(0))
+                masks.append(torch.from_numpy((valid > 127).astype(np.float32)))
+                Hs.append(torch.from_numpy(H))
+
+            batch = {
+                "image": torch.stack(images, dim=0),
+                "warped": torch.stack(warps, dim=0),
+                "valid_mask": torch.stack(masks, dim=0),
+                "homography": torch.stack(Hs, dim=0),
+                "theta_deg": [theta] * len(group),
+                "pair_id": [int(t["pair_id"]) for t in group],
+                "side": [side] * len(group),
+            }
+
+            model = _build_model(cfg, device)
+            images_t = batch["image"].to(device)
+            H_t = batch["homography"].to(device)
+            with torch.no_grad():
+                pseudo = store.detect_pseudo_gt(model, images_t, device)
+                gt_base = store.filter_gt_in_frame(pseudo, int(cfg["out_size"]))
+                gt_warp = store.filter_gt_in_frame(
+                    store.warp_gt_points(pseudo, H_t), int(cfg["out_size"])
+                )
+            n_gt = int(sum(int(g.shape[0]) for g in gt_base))
+            if n_gt == 0:
+                raise RuntimeError(f"frozen pseudo-GT empty at theta={theta}")
+
+            opt = torch.optim.Adam(model.parameters(), lr=float(cfg["lr"]))
+            log_path = None
+            if args.log:
+                log_path = exp_dir / f"overfit_theta{theta:g}_n{len(group)}.jsonl"
+                if log_path.is_file():
+                    log_path.unlink()
+
+            step0 = None
+            step_n = None
+            first_collapse_step = None
+            history = []
+            for step in range(1, steps + 1):
+                metrics = store.train_step(
+                    model, batch, opt, device, cfg, gt_base=gt_base, gt_warp=gt_warp
+                )
+                row = {"step": step, **metrics}
+                history.append(row)
+                if step == 1:
+                    step0 = row
+                if step == steps:
+                    step_n = row
+                if (
+                    first_collapse_step is None
+                    and step0 is not None
+                    and float(step0["loss_kp"]) > 0
+                    and float(metrics["loss_kp"]) <= 0.2 * float(step0["loss_kp"])
+                ):
+                    first_collapse_step = step
+                    _safe_print(
+                        f"overfit first_collapse_step={step} "
+                        f"kp={metrics['loss_kp']:.6f} "
+                        f"ratio={metrics['loss_kp']/step0['loss_kp']:.4f}",
+                        flush=True,
+                    )
+                if step % log_every == 0 or step == 1 or step == steps:
+                    _safe_print(
+                        f"overfit theta={theta:g} n={len(group)} step={step}/{steps} "
+                        f"total={metrics['loss_total']:.6f} "
+                        f"kp={metrics['loss_kp']:.6f} desc={metrics['loss_desc']:.6f}",
+                        flush=True,
+                    )
+                if log_path is not None:
+                    store.append_jsonl(log_path, row)
+                if first_collapse_step is not None:
+                    step_n = row
+                    break
+
+            kp0 = float(step0["loss_kp"]) if step0 else None
+            kp_n = float(step_n["loss_kp"]) if step_n else None
+            ratio = (kp_n / kp0) if kp0 and kp0 > 0 else None
+            summary = {
+                "ok": True,
+                "ts": int(time.time()),
+                "mode": "single_batch",
+                "collapsed": bool(first_collapse_step is not None),
+                "first_collapse_step": first_collapse_step,
+                "ratio_kp": ratio,
+                "n_tiles": len(group),
+                "each_tile": bool(args.each_tile),
+                "fresh_weights": "once_per_run",
+                "steps": steps,
+                "steps_ran": len(history),
+                "theta": theta,
+                "side": side,
+                "tiles": [
+                    {"pair_id": int(t["pair_id"]), "loc": t.get("loc")} for t in group
+                ],
+                "n_gt": n_gt,
+                "desc_max_cells": int(cfg["desc_max_cells"]),
+                "lr": float(cfg["lr"]),
+                "step0": step0,
+                "stepN": step_n,
+                "log_path": str(log_path) if log_path else None,
+                "experiments_path": str(experiments_path),
+            }
+            store.append_jsonl(experiments_path, summary)
+            summaries.append(summary)
+            del model, opt
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+
+    if len(summaries) == 1:
+        emit(summaries[0])
+    else:
+        emit(
+            {
+                "ok": True,
+                "n_runs": len(summaries),
+                "experiments_path": str(experiments_path),
+                "by_run": [
+                    {
+                        "theta": s["theta"],
+                        "tiles": s["tiles"],
+                        "first_collapse_step": s["first_collapse_step"],
+                        "ratio_kp": s["ratio_kp"],
+                        "collapsed": s["collapsed"],
+                        "steps_ran": s["steps_ran"],
+                    }
+                    for s in summaries
+                ],
+            }
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -405,6 +827,39 @@ def build_parser() -> argparse.ArgumentParser:
     lg = sub.add_parser("logs")
     lg.add_argument("run_id")
     lg.add_argument("-n", type=int, default=50)
+    ov = sub.add_parser("overfit")
+    ov.add_argument("--run-id", default="first")
+    ov.add_argument("--theta", type=float, default=0.0)
+    ov.add_argument(
+        "--angles",
+        default=None,
+        help="comma-separated angles; overrides --theta when set",
+    )
+    ov.add_argument("--steps", type=int, default=200)
+    ov.add_argument("--n-tiles", type=int, default=1)
+    ov.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="minibatch size for product mode (tiles×angles, one shared model)",
+    )
+    ov.add_argument(
+        "--each-tile",
+        action="store_true",
+        help="separate overfit per tile×angle with re-init (not shared weights)",
+    )
+    ov.add_argument("--lr", type=float, default=None)
+    ov.add_argument("--side", default="he", choices=("he", "ihc"))
+    ov.add_argument("--pair", type=int, default=None)
+    ov.add_argument("--loc", default=None)
+    ov.add_argument("--log-every", type=int, default=5)
+    ov.add_argument("--log", action="store_true")
+    ov.add_argument(
+        "--desc-max-cells",
+        type=int,
+        default=576,
+        help="0 = dense Magicleap desc; default 576 subsample",
+    )
     return p
 
 
@@ -419,6 +874,7 @@ def main() -> None:
         "stop": cmd_stop,
         "status": cmd_status,
         "logs": cmd_logs,
+        "overfit": cmd_overfit,
     }[args.cmd](args)
 
 

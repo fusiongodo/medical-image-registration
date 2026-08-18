@@ -275,7 +275,15 @@ def filter_gt_in_frame(gts: list[torch.Tensor], size: int) -> list[torch.Tensor]
     return out
 
 
-def _forward_losses(model, batch, device, cfg: dict) -> dict:
+def _forward_losses(
+    model,
+    batch,
+    device,
+    cfg: dict,
+    *,
+    gt_base=None,
+    gt_warp=None,
+) -> dict:
     import utils
     from superpoint_pytorch import default_config
 
@@ -284,9 +292,10 @@ def _forward_losses(model, batch, device, cfg: dict) -> dict:
     valid = batch["valid_mask"].to(device)
     H = batch["homography"].to(device)
 
-    pseudo = detect_pseudo_gt(model, images, device)
-    gt_base = filter_gt_in_frame(pseudo, int(cfg["out_size"]))
-    gt_warp = filter_gt_in_frame(warp_gt_points(pseudo, H), int(cfg["out_size"]))
+    if gt_base is None or gt_warp is None:
+        pseudo = detect_pseudo_gt(model, images, device)
+        gt_base = filter_gt_in_frame(pseudo, int(cfg["out_size"]))
+        gt_warp = filter_gt_in_frame(warp_gt_points(pseudo, H), int(cfg["out_size"]))
 
     out0 = model({"image": images}, training=True)
     out1 = model({"image": warped}, training=True)
@@ -302,12 +311,13 @@ def _forward_losses(model, batch, device, cfg: dict) -> dict:
     }
     kp0 = utils.keypoint_matching_loss_detailed(out0["logits"], gt_base, **kp_kwargs)
     kp1 = utils.keypoint_matching_loss_detailed(out1["logits"], gt_warp, **kp_kwargs)
+    desc_max = cfg.get("desc_max_cells")
     desc_cfg = {
         **default_config,
         "lambda_d": float(cfg["desc_lambda"]),
         "positive_margin": float(cfg["desc_positive_margin"]),
         "negative_margin": float(cfg["desc_negative_margin"]),
-        "desc_max_cells": int(cfg.get("desc_max_cells") or 576),
+        "desc_max_cells": int(desc_max) if desc_max is not None else 576,
     }
     desc = utils.descriptor_loss(
         out0["descriptors_raw"],
@@ -326,9 +336,20 @@ def _forward_losses(model, batch, device, cfg: dict) -> dict:
     }
 
 
-def train_step(model, batch, optimizer, device, cfg: dict) -> dict:
+def train_step(
+    model,
+    batch,
+    optimizer,
+    device,
+    cfg: dict,
+    *,
+    gt_base=None,
+    gt_warp=None,
+) -> dict:
     model.train()
-    parts = _forward_losses(model, batch, device, cfg)
+    parts = _forward_losses(
+        model, batch, device, cfg, gt_base=gt_base, gt_warp=gt_warp
+    )
     loss = parts["loss"]
     optimizer.zero_grad(set_to_none=True)
     loss.backward()

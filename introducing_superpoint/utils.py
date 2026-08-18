@@ -369,7 +369,7 @@ def descriptor_loss(
         negative_dist = torch.clamp(dots - config["negative_margin"], min=0.0)
         loss = config["lambda_d"] * s * positive_dist + (1 - s) * negative_dist
         mask = cell_valid.unsqueeze(2) * cell_valid.unsqueeze(1)
-        normalization = torch.sum(mask) * M
+        normalization = torch.sum(mask)
         return torch.sum(mask * loss) / (normalization + 1e-8)
 
     desc_flat = desc.view(batch_size, -1, N)
