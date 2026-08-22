@@ -111,7 +111,9 @@ export async function getCandidates(
 	regConfig?: Partial<RegConfig>
 ): Promise<CandidatesResponse> {
 	const c = cfg(regConfig);
-	const r = await fetch(`/api/c2f/candidates?pair=${pair}&depth=${depth}&lam=${c.lam}`);
+	const r = await fetch(
+		`/api/c2f/candidates?pair=${pair}&depth=${depth}&lam=${c.lam}&estimator=${c.fieldEstimator}`
+	);
 	return r.json();
 }
 
@@ -124,7 +126,7 @@ export async function computeCandidates(
 	const r = await fetch('/api/c2f/candidates', {
 		method: 'POST',
 		headers: JSON_HEADERS,
-		body: JSON.stringify({ pair_id: pair, depth, lam: c.lam })
+		body: JSON.stringify({ pair_id: pair, depth, lam: c.lam, estimator: c.fieldEstimator })
 	});
 	return r.json();
 }
@@ -136,7 +138,7 @@ export async function getProgress(
 ): Promise<JobState> {
 	const c = cfg(regConfig);
 	const r = await fetch(
-		`/api/c2f/candidates/progress?pair=${pair}&depth=${depth}&lam=${c.lam}`
+		`/api/c2f/candidates/progress?pair=${pair}&depth=${depth}&lam=${c.lam}&estimator=${c.fieldEstimator}`
 	);
 	return r.json();
 }
@@ -151,7 +153,7 @@ export async function computeMetrics(
 	const r = await fetch('/api/c2f/metrics', {
 		method: 'POST',
 		headers: JSON_HEADERS,
-		body: JSON.stringify({ pair_id: pair, depth, lam: c.lam })
+		body: JSON.stringify({ pair_id: pair, depth, lam: c.lam, estimator: c.fieldEstimator })
 	});
 	return r.json();
 }
@@ -162,7 +164,9 @@ export async function getMetricsProgress(
 	regConfig?: Partial<RegConfig>
 ): Promise<JobState> {
 	const c = cfg(regConfig);
-	const r = await fetch(`/api/c2f/metrics/progress?pair=${pair}&depth=${depth}&lam=${c.lam}`);
+	const r = await fetch(
+		`/api/c2f/metrics/progress?pair=${pair}&depth=${depth}&lam=${c.lam}&estimator=${c.fieldEstimator}`
+	);
 	return r.json();
 }
 

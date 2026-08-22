@@ -74,6 +74,9 @@ def load_landmarks(pair_id: int) -> list[dict]:
     if not fingerprint_matches(pair_id, data.get("identity")):
         raise RuntimeError("landmarks identity does not match current labels")
     return list(data.get("points") or [])
+
+
+def deskew_disp_norm(affine, xn: np.ndarray, yn: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     (a0, a1, s), (b0, _b1, b2) = affine
     du = a0 + a1 * xn + s * yn
     dv = b0 + s * xn + b2 * yn
@@ -129,43 +132,89 @@ def field_disp_canvas(
     return dx * scale, dy * scale
 
 
-def tre_none(points: list[dict], w: int, h: int) -> np.ndarray:
+def _he_xy(points: list[dict], w: int, h: int) -> np.ndarray:
     he = np.array([p["he"] for p in points], dtype=float)
+    return np.stack([he[:, 0] * w, he[:, 1] * h], axis=1)
+
+
+def warp_ihc_none(points: list[dict], w: int, h: int) -> np.ndarray:
     ihc = np.array([p["ihc"] for p in points], dtype=float)
-    he_xy = np.stack([he[:, 0] * w, he[:, 1] * h], axis=1)
-    ihc_xy = np.stack([ihc[:, 0] * w, ihc[:, 1] * h], axis=1)
-    return np.linalg.norm(ihc_xy - he_xy, axis=1)
+    return np.stack([ihc[:, 0] * w, ihc[:, 1] * h], axis=1)
 
 
-def tre_regwsi(points: list[dict], pair_id: int, w: int, h: int) -> np.ndarray:
+def xy_norm(xy: np.ndarray, w: int, h: int) -> list[list[float]]:
+    if len(xy) == 0:
+        return []
+    return [[float(p[0] / w), float(p[1] / h)] for p in xy]
+
+
+def tre_none(points: list[dict], w: int, h: int) -> np.ndarray:
+    return np.linalg.norm(warp_ihc_none(points, w, h) - _he_xy(points, w, h), axis=1)
+
+
+def _load_regwsi_df(pair_id: int) -> np.ndarray:
     import SimpleITK as sitk
 
     df_path = paths.displacement_field(pair_id)
     if not df_path.is_file():
         raise FileNotFoundError(f"missing {df_path}")
     arr = sitk.GetArrayFromImage(sitk.ReadImage(str(df_path))).astype(np.float32)
+    if arr.ndim == 4:
+        arr = arr[0]
+    if arr.ndim == 3 and arr.shape[-1] == 2:
+        return np.moveaxis(arr, -1, 0)
     if arr.ndim == 3 and arr.shape[0] == 2:
-        df = arr
-    elif arr.ndim == 3 and arr.shape[-1] == 2:
-        df = np.moveaxis(arr, -1, 0)
-    else:
-        raise RuntimeError(f"unexpected displacement field shape {arr.shape}")
+        return arr
+    raise RuntimeError(f"unexpected displacement field shape {arr.shape}")
 
+
+def _sample_df(df: np.ndarray, xn: np.ndarray, yn: np.ndarray) -> tuple[np.ndarray, np.ndarray, int, int]:
     _, df_h, df_w = df.shape
-    he = np.array([p["he"] for p in points], dtype=float)
-    ihc = np.array([p["ihc"] for p in points], dtype=float)
-    he_xy = np.stack([he[:, 0] * w, he[:, 1] * h], axis=1)
-    lx = ihc[:, 0] * (df_w - 1)
-    ly = ihc[:, 1] * (df_h - 1)
+    lx = xn * (df_w - 1)
+    ly = yn * (df_h - 1)
     ux = map_coordinates(df[0], [ly, lx], order=1, mode="nearest")
     uy = map_coordinates(df[1], [ly, lx], order=1, mode="nearest")
+    return ux, uy, df_w, df_h
+
+
+def _overlay_ihc_nn(df: np.ndarray, ihc_xy: np.ndarray, w: int, h: int) -> np.ndarray:
+    from scipy.spatial import cKDTree
+
+    _, df_h, df_w = df.shape
     sx, sy = w / df_w, h / df_h
-    ihc_xy = np.stack([ihc[:, 0] * w, ihc[:, 1] * h], axis=1)
-    pred = ihc_xy - np.stack([ux * sx, uy * sy], axis=1)
-    return np.linalg.norm(pred - he_xy, axis=1)
+    ys, xs = np.mgrid[0:df_h, 0:df_w]
+    src = np.stack([(xs + df[0]) * sx, (ys + df[1]) * sy], axis=-1).reshape(-1, 2)
+    _, idx = cKDTree(src).query(ihc_xy, k=1)
+    iy, ix = np.unravel_index(idx, (df_h, df_w))
+    return np.stack([ix.astype(float) * sx, iy.astype(float) * sy], axis=1)
 
 
-def tre_field_payload(
+def _regwsi_errs_and_overlay(
+    points: list[dict], pair_id: int, w: int, h: int
+) -> tuple[np.ndarray, np.ndarray]:
+    df = _load_regwsi_df(pair_id)
+    he = np.array([p["he"] for p in points], dtype=float)
+    he_xy = _he_xy(points, w, h)
+    ihc_xy = warp_ihc_none(points, w, h)
+    ux, uy, df_w, df_h = _sample_df(df, he[:, 0], he[:, 1])
+    sx, sy = w / df_w, h / df_h
+    sampled = he_xy + np.stack([ux * sx, uy * sy], axis=1)
+    errs = np.linalg.norm(sampled - ihc_xy, axis=1)
+    q = _overlay_ihc_nn(df, ihc_xy, w, h)
+    return errs, q
+
+
+def tre_regwsi(points: list[dict], pair_id: int, w: int, h: int) -> np.ndarray:
+    errs, _ = _regwsi_errs_and_overlay(points, pair_id, w, h)
+    return errs
+
+
+def warp_ihc_regwsi(points: list[dict], pair_id: int, w: int, h: int) -> np.ndarray:
+    _, q = _regwsi_errs_and_overlay(points, pair_id, w, h)
+    return q
+
+
+def warp_ihc_field_payload(
     points: list[dict],
     field_payload: dict,
     w: int,
@@ -179,36 +228,41 @@ def tre_field_payload(
         or field_payload.get("depths", {}).get(5)
         or {}
     )
-    he = np.array([p["he"] for p in points], dtype=float)
     ihc = np.array([p["ihc"] for p in points], dtype=float)
-    he_xy = np.stack([he[:, 0] * w, he[:, 1] * h], axis=1)
     xn, yn = ihc[:, 0], ihc[:, 1]
-
     if rigid is not None:
         xn, yn = apply_rigid_norm(rigid, xn, yn)
     base_xy = np.stack([xn * w, yn * h], axis=1)
-
     du_n = np.zeros(len(points))
     dv_n = np.zeros(len(points))
     if deskew_affine is not None:
         du_n, dv_n = deskew_disp_norm(deskew_affine, xn, yn)
-
     fdx, fdy = field_disp_canvas(depth5, xn, yn, scale)
     dx = du_n * w + fdx
     dy = dv_n * h + fdy
-    pred = base_xy + np.stack([dx, dy], axis=1)
-    return np.linalg.norm(pred - he_xy, axis=1)
+    return base_xy + np.stack([dx, dy], axis=1)
 
 
-def tre_field_file(
+def tre_field_payload(
     points: list[dict],
-    field_path: Path,
+    field_payload: dict,
     w: int,
     h: int,
     scale: float,
+    deskew_affine=None,
+    rigid=None,
+) -> np.ndarray:
+    pred = warp_ihc_field_payload(
+        points, field_payload, w, h, scale, deskew_affine=deskew_affine, rigid=rigid
+    )
+    return np.linalg.norm(pred - _he_xy(points, w, h), axis=1)
+
+
+def _field_file_kwargs(
+    field_path: Path,
     deskew_path: Path | None = None,
     rigid_path: Path | None = None,
-) -> np.ndarray:
+) -> dict:
     field = json.loads(field_path.read_text())
     deskew_aff = None
     if deskew_path is not None and deskew_path.is_file():
@@ -220,9 +274,35 @@ def tre_field_file(
         rigid = json.loads(rigid_path.read_text()).get("rigid")
     elif (field_path.parent / "rigid.json").is_file():
         rigid = json.loads((field_path.parent / "rigid.json").read_text()).get("rigid")
-    return tre_field_payload(
-        points, field, w, h, scale, deskew_affine=deskew_aff, rigid=rigid
+    return {"field_payload": field, "deskew_affine": deskew_aff, "rigid": rigid}
+
+
+def warp_ihc_field_file(
+    points: list[dict],
+    field_path: Path,
+    w: int,
+    h: int,
+    scale: float,
+    deskew_path: Path | None = None,
+    rigid_path: Path | None = None,
+) -> np.ndarray:
+    kw = _field_file_kwargs(field_path, deskew_path, rigid_path)
+    return warp_ihc_field_payload(points, w=w, h=h, scale=scale, **kw)
+
+
+def tre_field_file(
+    points: list[dict],
+    field_path: Path,
+    w: int,
+    h: int,
+    scale: float,
+    deskew_path: Path | None = None,
+    rigid_path: Path | None = None,
+) -> np.ndarray:
+    pred = warp_ihc_field_file(
+        points, field_path, w, h, scale, deskew_path=deskew_path, rigid_path=rigid_path
     )
+    return np.linalg.norm(pred - _he_xy(points, w, h), axis=1)
 
 
 def annotate_tile_means(st: dict, scale: float) -> dict:
@@ -311,11 +391,16 @@ def compute_pair_baseline(pair_id: int) -> dict:
         result["regwsi"] = empty
         return result
 
-    result["none"] = annotate_tile_means(stats(tre_none(points, w, h)), scale)
+    none_xy = warp_ihc_none(points, w, h)
+    result["none"] = annotate_tile_means(
+        stats(np.linalg.norm(none_xy - _he_xy(points, w, h), axis=1)), scale
+    )
+    result["none"]["ihc_warped"] = xy_norm(none_xy, w, h)
     try:
-        result["regwsi"] = annotate_tile_means(
-            stats(tre_regwsi(points, pair_id, w, h)), scale
-        )
+        errs, pred = _regwsi_errs_and_overlay(points, pair_id, w, h)
+        result["regwsi"] = annotate_tile_means(stats(errs), scale)
+        result["regwsi"]["ihc_warped"] = xy_norm(pred, w, h)
+        result["regwsi"]["df_sample"] = "he"
     except Exception as e:
         result["regwsi"] = empty_err(str(e))
     return result

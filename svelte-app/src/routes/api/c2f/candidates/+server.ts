@@ -12,23 +12,39 @@ const SCRIPT = resolve(REPO_ROOT, 'setup', 'coarse_to_fine', 'run.py');
 const CACHE_ROOT = resolve(REPO_ROOT, 'data', 'c2f_cache');
 
 const LAMS = new Set(['fft', 'superpoint_glue']);
+const ESTIMATORS = new Set(['tps', 'wendland', 'bspline']);
 
 function normalizeLam(raw: unknown): string {
 	return typeof raw === 'string' && LAMS.has(raw) ? raw : 'fft';
 }
 
-function cacheFile(pair: string, depth: string, lam: string): string {
-	if (lam === 'fft') return join(CACHE_ROOT, `${pair}_d${depth}.json`);
-	return join(CACHE_ROOT, lam, `${pair}_d${depth}.json`);
+function normalizeEstimator(raw: unknown): string {
+	return typeof raw === 'string' && ESTIMATORS.has(raw) ? raw : 'tps';
+}
+
+function cacheFile(
+	pair: string,
+	depth: string,
+	lam: string,
+	estimator: string,
+	wendlandEps?: string | null
+): string {
+	if (estimator === 'wendland') {
+		const tag = `e${wendlandEps && wendlandEps.length ? wendlandEps : '0.35'}`;
+		return join(CACHE_ROOT, lam, estimator, tag, `${pair}_d${depth}.json`);
+	}
+	return join(CACHE_ROOT, lam, estimator, `${pair}_d${depth}.json`);
 }
 
 export const GET: RequestHandler = ({ url }) => {
 	const pair = url.searchParams.get('pair');
 	const depth = url.searchParams.get('depth');
 	const lam = normalizeLam(url.searchParams.get('lam'));
+	const estimator = normalizeEstimator(url.searchParams.get('estimator'));
+	const wendlandEps = url.searchParams.get('wendland_eps');
 	if (!pair || !depth) error(400, 'Missing pair / depth');
 
-	const file = cacheFile(pair, depth, lam);
+	const file = cacheFile(pair, depth, lam, estimator, wendlandEps);
 	if (!existsSync(file)) return json({ cached: false });
 
 	try {
@@ -47,15 +63,21 @@ export const GET: RequestHandler = ({ url }) => {
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
 	if (!body || typeof body.pair_id !== 'number' || typeof body.depth !== 'number') {
-		error(400, 'Expected { pair_id: number, depth: number, lam? }');
+		error(400, 'Expected { pair_id: number, depth: number, lam?, estimator? }');
 	}
 
-	const { pair_id, depth } = body as { pair_id: number; depth: number; lam?: string };
+	const { pair_id, depth } = body as {
+		pair_id: number;
+		depth: number;
+		lam?: string;
+		estimator?: string;
+	};
 	const lam = normalizeLam(body.lam);
+	const estimator = normalizeEstimator(body.estimator);
 	if (pair_id < 0 || pair_id >= pairCount()) {
 		error(400, `Pair ${pair_id} does not exist (valid range 0..${pairCount() - 1})`);
 	}
-	const key = jobKey(pair_id, depth, 'candidates', lam);
+	const key = jobKey(pair_id, depth, 'candidates', lam, estimator);
 
 	const existing = jobs.get(key);
 	if (existing?.running) {
@@ -74,7 +96,16 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	const child = spawn(
 		PYTHON,
-		[SCRIPT, String(pair_id), '--cache-depth', String(depth), '--lam', lam],
+		[
+			SCRIPT,
+			String(pair_id),
+			'--cache-depth',
+			String(depth),
+			'--lam',
+			lam,
+			'--estimator',
+			estimator
+		],
 		{ cwd: REPO_ROOT }
 	);
 
@@ -88,7 +119,9 @@ export const POST: RequestHandler = async ({ request }) => {
 			const trimmed = line.trim();
 			if (!trimmed) continue;
 			if (trimmed.startsWith('stage=') || trimmed.startsWith('done=')) {
-				console.log(`[c2f candidates pair=${pair_id} d=${depth} lam=${lam}] ${trimmed}`);
+				console.log(
+					`[c2f candidates pair=${pair_id} d=${depth} lam=${lam} est=${estimator}] ${trimmed}`
+				);
 			}
 			const stage = trimmed.match(/stage=(\S+)/);
 			if (stage) {
@@ -114,7 +147,9 @@ export const POST: RequestHandler = async ({ request }) => {
 		stderr += text;
 		const errLines = text.split('\n').filter((l) => l.trim());
 		for (const line of errLines) {
-			console.error(`[c2f candidates pair=${pair_id} d=${depth} lam=${lam}] ${line}`);
+			console.error(
+				`[c2f candidates pair=${pair_id} d=${depth} lam=${lam} est=${estimator}] ${line}`
+			);
 		}
 	});
 

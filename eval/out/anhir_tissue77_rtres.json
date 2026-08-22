@@ -1,0 +1,3781 @@
+{
+  "batch_id": "anhir-tissue77",
+  "n_pairs": 77,
+  "rTRE": "TRE_canvas * downsample / (fit_scale * HE_medium_diagonal)",
+  "tre_cap": "non-finite or > canvas-diagonal TRE clipped to hypot(canvas_w, canvas_h)",
+  "canvas": [
+    16384,
+    11008
+  ],
+  "hardware": "VPS 2\u00d7RTX 4090, 12 CPU workers, OMP=4; mean time uses uncached wall clocks only",
+  "pairs": [
+    {
+      "id": 0,
+      "case": "COAD_01",
+      "tissue": "COAD"
+    },
+    {
+      "id": 1,
+      "case": "COAD_01",
+      "tissue": "COAD"
+    },
+    {
+      "id": 2,
+      "case": "COAD_01",
+      "tissue": "COAD"
+    },
+    {
+      "id": 3,
+      "case": "COAD_01",
+      "tissue": "COAD"
+    },
+    {
+      "id": 4,
+      "case": "COAD_01",
+      "tissue": "COAD"
+    },
+    {
+      "id": 5,
+      "case": "COAD_01",
+      "tissue": "COAD"
+    },
+    {
+      "id": 6,
+      "case": "COAD_02",
+      "tissue": "COAD"
+    },
+    {
+      "id": 7,
+      "case": "COAD_02",
+      "tissue": "COAD"
+    },
+    {
+      "id": 8,
+      "case": "COAD_02",
+      "tissue": "COAD"
+    },
+    {
+      "id": 9,
+      "case": "COAD_02",
+      "tissue": "COAD"
+    },
+    {
+      "id": 10,
+      "case": "COAD_02",
+      "tissue": "COAD"
+    },
+    {
+      "id": 11,
+      "case": "COAD_02",
+      "tissue": "COAD"
+    },
+    {
+      "id": 12,
+      "case": "COAD_03",
+      "tissue": "COAD"
+    },
+    {
+      "id": 13,
+      "case": "COAD_04",
+      "tissue": "COAD"
+    },
+    {
+      "id": 14,
+      "case": "COAD_05",
+      "tissue": "COAD"
+    },
+    {
+      "id": 15,
+      "case": "COAD_05",
+      "tissue": "COAD"
+    },
+    {
+      "id": 16,
+      "case": "COAD_05",
+      "tissue": "COAD"
+    },
+    {
+      "id": 17,
+      "case": "COAD_05",
+      "tissue": "COAD"
+    },
+    {
+      "id": 18,
+      "case": "COAD_05",
+      "tissue": "COAD"
+    },
+    {
+      "id": 19,
+      "case": "COAD_05",
+      "tissue": "COAD"
+    },
+    {
+      "id": 20,
+      "case": "COAD_06",
+      "tissue": "COAD"
+    },
+    {
+      "id": 21,
+      "case": "COAD_06",
+      "tissue": "COAD"
+    },
+    {
+      "id": 22,
+      "case": "COAD_06",
+      "tissue": "COAD"
+    },
+    {
+      "id": 23,
+      "case": "COAD_07",
+      "tissue": "COAD"
+    },
+    {
+      "id": 24,
+      "case": "COAD_07",
+      "tissue": "COAD"
+    },
+    {
+      "id": 25,
+      "case": "COAD_07",
+      "tissue": "COAD"
+    },
+    {
+      "id": 26,
+      "case": "COAD_08",
+      "tissue": "COAD"
+    },
+    {
+      "id": 27,
+      "case": "COAD_08",
+      "tissue": "COAD"
+    },
+    {
+      "id": 84,
+      "case": "breast_1",
+      "tissue": "breast"
+    },
+    {
+      "id": 85,
+      "case": "breast_2",
+      "tissue": "breast"
+    },
+    {
+      "id": 89,
+      "case": "gastric_1",
+      "tissue": "gastric"
+    },
+    {
+      "id": 90,
+      "case": "gastric_2",
+      "tissue": "gastric"
+    },
+    {
+      "id": 91,
+      "case": "gastric_3",
+      "tissue": "gastric"
+    },
+    {
+      "id": 92,
+      "case": "gastric_4",
+      "tissue": "gastric"
+    },
+    {
+      "id": 102,
+      "case": "kidney_1",
+      "tissue": "kidney"
+    },
+    {
+      "id": 103,
+      "case": "kidney_2",
+      "tissue": "kidney"
+    },
+    {
+      "id": 107,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 108,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 109,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 110,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 111,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 112,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 113,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 114,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 115,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 116,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion"
+    },
+    {
+      "id": 137,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 138,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 139,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 140,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 141,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 142,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 143,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 144,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 145,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 146,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 147,
+      "case": "lung-lobes_2",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 148,
+      "case": "lung-lobes_2",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 149,
+      "case": "lung-lobes_2",
+      "tissue": "lung-lobes"
+    },
+    {
+      "id": 177,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 178,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 179,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 180,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 181,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 182,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 183,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 184,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 185,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 186,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 187,
+      "case": "mammary-gland_2",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 188,
+      "case": "mammary-gland_2",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 189,
+      "case": "mammary-gland_2",
+      "tissue": "mammary-gland"
+    },
+    {
+      "id": 215,
+      "case": "mice-kidney_1",
+      "tissue": "mice-kidney"
+    },
+    {
+      "id": 216,
+      "case": "mice-kidney_1",
+      "tissue": "mice-kidney"
+    },
+    {
+      "id": 217,
+      "case": "mice-kidney_1",
+      "tissue": "mice-kidney"
+    },
+    {
+      "id": 218,
+      "case": "mice-kidney_1",
+      "tissue": "mice-kidney"
+    },
+    {
+      "id": 219,
+      "case": "mice-kidney_1",
+      "tissue": "mice-kidney"
+    }
+  ],
+  "methods": [
+    {
+      "id": "regwsi",
+      "label": "DeeperHistReg / regWSI",
+      "n": 77,
+      "AArTRE": 0.0234175901999656,
+      "AArTRE_std": 0.1334076649833427,
+      "AMrTRE": 0.021866108532846516,
+      "AMrTRE_std": 0.13341098103140622,
+      "MArTRE": 0.003376244211126912,
+      "MMrTRE": 0.002044603284825079,
+      "AMxrTRE": 0.04781391699459032,
+      "AMxrTRE_std": 0.14641434918216423,
+      "MMxrTRE": 0.02271723668217988,
+      "n_capped": 132,
+      "time_s": 61.93224567521429,
+      "time_n": 56
+    },
+    {
+      "id": "sp_wendland",
+      "label": "SP+LG \u00d7 Wendland (\u03b5=0.1)",
+      "n": 77,
+      "AArTRE": 0.024898999052424903,
+      "AArTRE_std": 0.13335866632560345,
+      "AMrTRE": 0.023198591599255663,
+      "AMrTRE_std": 0.1333157520912057,
+      "MArTRE": 0.004508428851785519,
+      "MMrTRE": 0.0032708034851234866,
+      "AMxrTRE": 0.05267981625215436,
+      "AMxrTRE_std": 0.14457801535674347,
+      "MMxrTRE": 0.02721500723055255,
+      "n_capped": 132,
+      "time_s": 102.4832236154079,
+      "time_n": 76
+    },
+    {
+      "id": "fft_wendland",
+      "label": "FFT \u00d7 Wendland (\u03b5=0.2)",
+      "n": 77,
+      "AArTRE": 0.039584197173567225,
+      "AArTRE_std": 0.13368907622048004,
+      "AMrTRE": 0.03655060039261959,
+      "AMrTRE_std": 0.13320429325016028,
+      "MArTRE": 0.012811122343092021,
+      "MMrTRE": 0.009907340269906442,
+      "AMxrTRE": 0.08114289320972179,
+      "AMxrTRE_std": 0.15253971839497546,
+      "MMxrTRE": 0.04789378000576294,
+      "n_capped": 132,
+      "time_s": 99.0726129665345,
+      "time_n": 58
+    },
+    {
+      "id": "initial",
+      "label": "Initial",
+      "n": 77,
+      "AArTRE": 0.06610005470308632,
+      "AArTRE_std": 0.09518378614148486,
+      "AMrTRE": 0.06523064516321299,
+      "AMrTRE_std": 0.09346947557893243,
+      "MArTRE": 0.038715898027640756,
+      "MMrTRE": 0.03907012991740967,
+      "AMxrTRE": 0.11990717819545414,
+      "AMxrTRE_std": 0.1596396788108724,
+      "MMxrTRE": 0.07296245511597509,
+      "n_capped": 0,
+      "time_s": null,
+      "time_n": 0
+    }
+  ],
+  "per_pair": {
+    "0": {
+      "initial": {
+        "mean": 0.13833220035314017,
+        "median": 0.1464942333627445,
+        "max": 0.21703200297029296,
+        "n": 61,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.036050667280461884,
+        "median": 0.0303586424168121,
+        "max": 0.08351538792895784,
+        "n": 61,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.012606101771253844,
+        "median": 0.01086596526993325,
+        "max": 0.05074793041625125,
+        "n": 61,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.01001679268118033,
+        "median": 0.00878460556013813,
+        "max": 0.033452238389660466,
+        "n": 61,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10496,
+        "src_h": 13812,
+        "fit_scale": 0.7969881262670142,
+        "downsample": 1.0,
+        "diag_medium": 17347.54622417822,
+        "rtre_factor": 7.232860607458855e-05,
+        "case": "COAD_01",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 17347.5
+      },
+      "n_landmarks": 61
+    },
+    "1": {
+      "initial": {
+        "mean": 0.10604339251771279,
+        "median": 0.09074293619490466,
+        "max": 0.2135145687482512,
+        "n": 61,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.04225488153984508,
+        "median": 0.03916782603317557,
+        "max": 0.12520010204953766,
+        "n": 61,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.007889712320148616,
+        "median": 0.004375850601725735,
+        "max": 0.04503943769515941,
+        "n": 61,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.003915100123593428,
+        "median": 0.0028158520164196575,
+        "max": 0.027577407077777106,
+        "n": 61,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10496,
+        "src_h": 13812,
+        "fit_scale": 0.7969881262670142,
+        "downsample": 1.0,
+        "diag_medium": 17347.54622417822,
+        "rtre_factor": 7.232860607458855e-05,
+        "case": "COAD_01",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 17347.5
+      },
+      "n_landmarks": 61
+    },
+    "2": {
+      "initial": {
+        "mean": 0.16689104590961723,
+        "median": 0.1952622778972271,
+        "max": 0.25142639315451865,
+        "n": 61,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.027234210744307354,
+        "median": 0.019698040274902847,
+        "max": 0.09118943284887612,
+        "n": 61,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.008555422211853233,
+        "median": 0.0065999430547987025,
+        "max": 0.029735892711788926,
+        "n": 61,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.006224627326333757,
+        "median": 0.004660843755010378,
+        "max": 0.02547753221354526,
+        "n": 61,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10496,
+        "src_h": 13812,
+        "fit_scale": 0.7969881262670142,
+        "downsample": 1.0,
+        "diag_medium": 17347.54622417822,
+        "rtre_factor": 7.232860607458855e-05,
+        "case": "COAD_01",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 17347.5
+      },
+      "n_landmarks": 61
+    },
+    "3": {
+      "initial": {
+        "mean": 0.04108470311398423,
+        "median": 0.0397639359667304,
+        "max": 0.08118389987889629,
+        "n": 61,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.07319975979273775,
+        "median": 0.05856576074142818,
+        "max": 0.15382960057369546,
+        "n": 61,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.011964579043979257,
+        "median": 0.010746615563312299,
+        "max": 0.0330876816372727,
+        "n": 61,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.007011305300281443,
+        "median": 0.005050912311912461,
+        "max": 0.02319631219458494,
+        "n": 61,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10724,
+        "src_h": 14131,
+        "fit_scale": 0.7789965324463944,
+        "downsample": 1.0,
+        "diag_medium": 17739.485251832986,
+        "rtre_factor": 7.236414943298676e-05,
+        "case": "COAD_01",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 17739.5
+      },
+      "n_landmarks": 61
+    },
+    "4": {
+      "initial": {
+        "mean": 0.04102579738856095,
+        "median": 0.040473831010966854,
+        "max": 0.06461209291991978,
+        "n": 61,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.013261639431516677,
+        "median": 0.011911446426223429,
+        "max": 0.042222139122903325,
+        "n": 61,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.005249739755995516,
+        "median": 0.0037871502102996436,
+        "max": 0.016652250630200035,
+        "n": 61,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.004207817973659453,
+        "median": 0.0026345933034127365,
+        "max": 0.016369449194195463,
+        "n": 61,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10724,
+        "src_h": 14131,
+        "fit_scale": 0.7789965324463944,
+        "downsample": 1.0,
+        "diag_medium": 17739.485251832986,
+        "rtre_factor": 7.236414943298676e-05,
+        "case": "COAD_01",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 17739.5
+      },
+      "n_landmarks": 61
+    },
+    "5": {
+      "initial": {
+        "mean": 0.07632428839003955,
+        "median": 0.07606228943893358,
+        "max": 0.13844692161146105,
+        "n": 61,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.037588917691815625,
+        "median": 0.02875711348205896,
+        "max": 0.12468934580988515,
+        "n": 61,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.010594694849547798,
+        "median": 0.006644460019354387,
+        "max": 0.055478500515150415,
+        "n": 61,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.00644132122994365,
+        "median": 0.004168023929490106,
+        "max": 0.027558430765548043,
+        "n": 61,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 11381,
+        "src_h": 15052,
+        "fit_scale": 0.7313313845336168,
+        "downsample": 1.0,
+        "diag_medium": 18870.343531584156,
+        "rtre_factor": 7.24612768049444e-05,
+        "case": "COAD_01",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 18870.3
+      },
+      "n_landmarks": 61
+    },
+    "6": {
+      "initial": {
+        "mean": 0.04326762245107481,
+        "median": 0.0435561260623781,
+        "max": 0.09885449690426683,
+        "n": 64,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.009131592898660966,
+        "median": 0.007684446514102187,
+        "max": 0.031148546454041137,
+        "n": 64,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0029739987179872368,
+        "median": 0.0024986555788760628,
+        "max": 0.01726648666657489,
+        "n": 64,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0019636695539742245,
+        "median": 0.0014123188707003908,
+        "max": 0.013005499506007332,
+        "n": 64,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8649,
+        "src_h": 9551,
+        "fit_scale": 1.1525494712595539,
+        "downsample": 1.0,
+        "diag_medium": 12885.138804064161,
+        "rtre_factor": 6.733662153818724e-05,
+        "case": "COAD_02",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 12885.1
+      },
+      "n_landmarks": 64
+    },
+    "7": {
+      "initial": {
+        "mean": 0.08894062329148,
+        "median": 0.09001619959777146,
+        "max": 0.17555240658977575,
+        "n": 64,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.028731867162576946,
+        "median": 0.023222412211124345,
+        "max": 0.07772036622917701,
+        "n": 64,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.008521309611828955,
+        "median": 0.005393652380060086,
+        "max": 0.035320182889053434,
+        "n": 64,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.006267975559473779,
+        "median": 0.0032217977045254954,
+        "max": 0.041351319088205905,
+        "n": 64,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8649,
+        "src_h": 9551,
+        "fit_scale": 1.1525494712595539,
+        "downsample": 1.0,
+        "diag_medium": 12885.138804064161,
+        "rtre_factor": 6.733662153818724e-05,
+        "case": "COAD_02",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 12885.1
+      },
+      "n_landmarks": 64
+    },
+    "8": {
+      "initial": {
+        "mean": 0.06456239984834777,
+        "median": 0.06106496074774419,
+        "max": 0.12405605272226221,
+        "n": 64,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.01712369569250266,
+        "median": 0.01252109153444008,
+        "max": 0.07445466000600338,
+        "n": 64,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.011132080383048703,
+        "median": 0.005347968578238041,
+        "max": 0.05761144831825097,
+        "n": 64,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.009603979948871567,
+        "median": 0.0038595157727189765,
+        "max": 0.04715356846205787,
+        "n": 64,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8649,
+        "src_h": 9551,
+        "fit_scale": 1.1525494712595539,
+        "downsample": 1.0,
+        "diag_medium": 12885.138804064161,
+        "rtre_factor": 6.733662153818724e-05,
+        "case": "COAD_02",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 12885.1
+      },
+      "n_landmarks": 64
+    },
+    "9": {
+      "initial": {
+        "mean": 0.05070719886109891,
+        "median": 0.05048167285170528,
+        "max": 0.1032091267155859,
+        "n": 64,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.012811122343092021,
+        "median": 0.008861571561005682,
+        "max": 0.05329004514329177,
+        "n": 64,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.006672432613918188,
+        "median": 0.004226955880185653,
+        "max": 0.04783354796699323,
+        "n": 64,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.006895590346799516,
+        "median": 0.003342502122182868,
+        "max": 0.04792255125994059,
+        "n": 64,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8197,
+        "src_h": 10396,
+        "fit_scale": 1.0588687956906502,
+        "downsample": 1.0,
+        "diag_medium": 13238.867965200046,
+        "rtre_factor": 7.13357118032993e-05,
+        "case": "COAD_02",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 13238.9
+      },
+      "n_landmarks": 64
+    },
+    "10": {
+      "initial": {
+        "mean": 0.03655185707554777,
+        "median": 0.03515892365349629,
+        "max": 0.07872366484884288,
+        "n": 64,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.015836930328973018,
+        "median": 0.012177428311854283,
+        "max": 0.07476774821651455,
+        "n": 64,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.009984628565925587,
+        "median": 0.004858491902185307,
+        "max": 0.049549853853275636,
+        "n": 64,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.00918174737932231,
+        "median": 0.0038765040550930116,
+        "max": 0.050838925724316635,
+        "n": 64,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8197,
+        "src_h": 10396,
+        "fit_scale": 1.0588687956906502,
+        "downsample": 1.0,
+        "diag_medium": 13238.867965200046,
+        "rtre_factor": 7.13357118032993e-05,
+        "case": "COAD_02",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 13238.9
+      },
+      "n_landmarks": 64
+    },
+    "11": {
+      "initial": {
+        "mean": 0.03183048706660188,
+        "median": 0.029639442990602623,
+        "max": 0.055042335254518966,
+        "n": 64,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.01243938891562528,
+        "median": 0.008045066063673934,
+        "max": 0.051381641934208654,
+        "n": 64,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0037016743653127677,
+        "median": 0.002124018789624367,
+        "max": 0.05022115627598436,
+        "n": 64,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.004224618340469489,
+        "median": 0.002112290958226138,
+        "max": 0.05336062883678484,
+        "n": 64,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8998,
+        "src_h": 10782,
+        "fit_scale": 1.0209608606937488,
+        "downsample": 1.0,
+        "diag_medium": 14043.344615866976,
+        "rtre_factor": 6.97461682765746e-05,
+        "case": "COAD_02",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 14043.3
+      },
+      "n_landmarks": 64
+    },
+    "12": {
+      "initial": {
+        "mean": 0.034467783680835744,
+        "median": 0.03462576094037567,
+        "max": 0.0730043967662449,
+        "n": 72,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.02916088405034012,
+        "median": 0.021920425458492723,
+        "max": 0.14094797711052934,
+        "n": 72,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.007664628508853392,
+        "median": 0.0035880818958950373,
+        "max": 0.05754519089089847,
+        "n": 72,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0016005518488408697,
+        "median": 0.0008779744831855342,
+        "max": 0.010588855254425584,
+        "n": 72,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10916,
+        "src_h": 14182,
+        "fit_scale": 0.7761951769849105,
+        "downsample": 1.0,
+        "diag_medium": 17896.596883206596,
+        "rtre_factor": 7.198775075628333e-05,
+        "case": "COAD_03",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 17896.6
+      },
+      "n_landmarks": 72
+    },
+    "13": {
+      "initial": {
+        "mean": 0.06712929748919004,
+        "median": 0.06984003744000468,
+        "max": 0.09955632810224045,
+        "n": 80,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.010882389214022417,
+        "median": 0.009284052504059018,
+        "max": 0.045902520400532755,
+        "n": 80,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0035768297437495065,
+        "median": 0.002079918722517337,
+        "max": 0.03314827951313359,
+        "n": 80,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0031350656641139633,
+        "median": 0.001604419283247152,
+        "max": 0.03339056547174538,
+        "n": 80,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8794,
+        "src_h": 13915,
+        "fit_scale": 0.7910887531440891,
+        "downsample": 1.0,
+        "diag_medium": 16460.91312777028,
+        "rtre_factor": 7.679286433217924e-05,
+        "case": "COAD_04",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 16460.9
+      },
+      "n_landmarks": 80
+    },
+    "14": {
+      "initial": {
+        "mean": 0.005508670001596636,
+        "median": 0.005157040894701535,
+        "max": 0.014778996663470026,
+        "n": 92,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.002918460634023399,
+        "median": 0.0020122548022060505,
+        "max": 0.02509938690600789,
+        "n": 92,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0019775595320396864,
+        "median": 0.0014700816142802753,
+        "max": 0.0104720982159498,
+        "n": 92,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0019851229780470424,
+        "median": 0.0014296248843376472,
+        "max": 0.013408402200958097,
+        "n": 92,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9911,
+        "src_h": 8064,
+        "fit_scale": 1.3650793650793651,
+        "downsample": 1.0,
+        "diag_medium": 12777.167800416491,
+        "rtre_factor": 5.733337395091617e-05,
+        "case": "COAD_05",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 12777.2
+      },
+      "n_landmarks": 92
+    },
+    "15": {
+      "initial": {
+        "mean": 0.038715898027640756,
+        "median": 0.03895177245640955,
+        "max": 0.0747695813403785,
+        "n": 92,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.005947930441024515,
+        "median": 0.004991312590620446,
+        "max": 0.02449220472853614,
+        "n": 92,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0034520690719822265,
+        "median": 0.0026588009173384337,
+        "max": 0.012183785837272169,
+        "n": 92,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.002577176890757459,
+        "median": 0.0020648098739339724,
+        "max": 0.01065972157368809,
+        "n": 92,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9911,
+        "src_h": 8064,
+        "fit_scale": 1.3650793650793651,
+        "downsample": 1.0,
+        "diag_medium": 12777.167800416491,
+        "rtre_factor": 5.733337395091617e-05,
+        "case": "COAD_05",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 12777.2
+      },
+      "n_landmarks": 92
+    },
+    "16": {
+      "initial": {
+        "mean": 0.0242287662482023,
+        "median": 0.025515428932040222,
+        "max": 0.04028449755886732,
+        "n": 92,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.0070406709139413815,
+        "median": 0.005095557369225845,
+        "max": 0.023052439774390216,
+        "n": 92,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0031256220592996726,
+        "median": 0.00220915429621168,
+        "max": 0.022260705973707773,
+        "n": 92,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0019776607883864664,
+        "median": 0.0015017401448732303,
+        "max": 0.010013805380798513,
+        "n": 92,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9911,
+        "src_h": 8064,
+        "fit_scale": 1.3650793650793651,
+        "downsample": 1.0,
+        "diag_medium": 12777.167800416491,
+        "rtre_factor": 5.733337395091617e-05,
+        "case": "COAD_05",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 12777.2
+      },
+      "n_landmarks": 92
+    },
+    "17": {
+      "initial": {
+        "mean": 0.038443178459754784,
+        "median": 0.03907012991740967,
+        "max": 0.07621569517331757,
+        "n": 92,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.006415196997933732,
+        "median": 0.005273580410588634,
+        "max": 0.019898053051344327,
+        "n": 92,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0035809831948766155,
+        "median": 0.0032708034851234866,
+        "max": 0.010319049529038568,
+        "n": 92,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.002952261780273857,
+        "median": 0.0024370504253765912,
+        "max": 0.010967332470025085,
+        "n": 92,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9850,
+        "src_h": 8282,
+        "fit_scale": 1.3291475489012317,
+        "downsample": 1.0,
+        "diag_medium": 12869.111235823553,
+        "rtre_factor": 5.846261678975254e-05,
+        "case": "COAD_05",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 12869.1
+      },
+      "n_landmarks": 92
+    },
+    "18": {
+      "initial": {
+        "mean": 0.023057176887074798,
+        "median": 0.023588779308934195,
+        "max": 0.04091096629726075,
+        "n": 92,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.008651871982813919,
+        "median": 0.007115640905034299,
+        "max": 0.023889095712618918,
+        "n": 92,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0025665672546210847,
+        "median": 0.002268108943672128,
+        "max": 0.009402780355158501,
+        "n": 92,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0023247536178225125,
+        "median": 0.0018591962467670255,
+        "max": 0.011564716672204045,
+        "n": 92,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9850,
+        "src_h": 8282,
+        "fit_scale": 1.3291475489012317,
+        "downsample": 1.0,
+        "diag_medium": 12869.111235823553,
+        "rtre_factor": 5.846261678975254e-05,
+        "case": "COAD_05",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 12869.1
+      },
+      "n_landmarks": 92
+    },
+    "19": {
+      "initial": {
+        "mean": 0.017476719639410648,
+        "median": 0.019268069786555358,
+        "max": 0.036638399766477495,
+        "n": 92,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.008827077990868104,
+        "median": 0.008809424260178684,
+        "max": 0.02595462260940264,
+        "n": 92,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.004467409080420416,
+        "median": 0.0034802356965243078,
+        "max": 0.039036699495353905,
+        "n": 92,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0030982064448294047,
+        "median": 0.0022811178187076724,
+        "max": 0.010844033960557158,
+        "n": 92,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9830,
+        "src_h": 8381,
+        "fit_scale": 1.3134470826870301,
+        "downsample": 1.0,
+        "diag_medium": 12917.819514144017,
+        "rtre_factor": 5.893838175036826e-05,
+        "case": "COAD_05",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 12917.8
+      },
+      "n_landmarks": 92
+    },
+    "20": {
+      "initial": {
+        "mean": 0.0529568830176716,
+        "median": 0.05111032205525662,
+        "max": 0.08115290501443691,
+        "n": 101,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.008411140845879957,
+        "median": 0.007703706974992052,
+        "max": 0.028646179537454037,
+        "n": 101,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0046797133686530285,
+        "median": 0.0035918044864574265,
+        "max": 0.028776580877893726,
+        "n": 101,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.003376244211126912,
+        "median": 0.002199947843722466,
+        "max": 0.022735633085136136,
+        "n": 101,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10934,
+        "src_h": 11194,
+        "fit_scale": 0.9833839556905485,
+        "downsample": 1.0,
+        "diag_medium": 15647.938905811206,
+        "rtre_factor": 6.498599006850254e-05,
+        "case": "COAD_06",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 15647.9
+      },
+      "n_landmarks": 101
+    },
+    "21": {
+      "initial": {
+        "mean": 0.03823669457166546,
+        "median": 0.039330015238857485,
+        "max": 0.05680689090098043,
+        "n": 101,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.008759179595415018,
+        "median": 0.008114020806988535,
+        "max": 0.031023521752062286,
+        "n": 101,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0032923580312647803,
+        "median": 0.002471057080168583,
+        "max": 0.01815376914221597,
+        "n": 101,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0025321029609635635,
+        "median": 0.0017423545860881973,
+        "max": 0.015215622102236592,
+        "n": 101,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10934,
+        "src_h": 11194,
+        "fit_scale": 0.9833839556905485,
+        "downsample": 1.0,
+        "diag_medium": 15647.938905811206,
+        "rtre_factor": 6.498599006850254e-05,
+        "case": "COAD_06",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 15647.9
+      },
+      "n_landmarks": 101
+    },
+    "22": {
+      "initial": {
+        "mean": 0.030936377219774835,
+        "median": 0.027632104598134127,
+        "max": 0.06596888902990827,
+        "n": 101,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.0057109309641659185,
+        "median": 0.004197640850664691,
+        "max": 0.025895605815599004,
+        "n": 101,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.002904553445516234,
+        "median": 0.0018826066213918683,
+        "max": 0.02174767554763504,
+        "n": 101,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0025452039164770243,
+        "median": 0.0015645221161722147,
+        "max": 0.019098272716589825,
+        "n": 101,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 11155,
+        "src_h": 11846,
+        "fit_scale": 0.9292588215431369,
+        "downsample": 1.0,
+        "diag_medium": 16271.500883446493,
+        "rtre_factor": 6.613566020717543e-05,
+        "case": "COAD_06",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 16271.5
+      },
+      "n_landmarks": 101
+    },
+    "23": {
+      "initial": {
+        "mean": 0.049166520179262284,
+        "median": 0.05106162101424952,
+        "max": 0.08569748460453046,
+        "n": 68,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.012549924453498148,
+        "median": 0.00933180011361388,
+        "max": 0.03904809889199054,
+        "n": 68,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.005359496719944244,
+        "median": 0.004238100349930741,
+        "max": 0.03061161641160833,
+        "n": 68,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0033707688087826104,
+        "median": 0.0016277815600851489,
+        "max": 0.05168831722250902,
+        "n": 68,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10746,
+        "src_h": 11702,
+        "fit_scale": 0.9406938984788925,
+        "downsample": 1.0,
+        "diag_medium": 15887.520889049996,
+        "rtre_factor": 6.691069459881605e-05,
+        "case": "COAD_07",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 15887.5
+      },
+      "n_landmarks": 68
+    },
+    "24": {
+      "initial": {
+        "mean": 0.06274416725786082,
+        "median": 0.06561217869469751,
+        "max": 0.1270794733447012,
+        "n": 68,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.009709622083196168,
+        "median": 0.006062733525393046,
+        "max": 0.042492228271418714,
+        "n": 68,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0036700895494887155,
+        "median": 0.002232192302497305,
+        "max": 0.028588316656273288,
+        "n": 68,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0030093429226997702,
+        "median": 0.0016745136813512492,
+        "max": 0.0307925188368242,
+        "n": 68,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10746,
+        "src_h": 11702,
+        "fit_scale": 0.9406938984788925,
+        "downsample": 1.0,
+        "diag_medium": 15887.520889049996,
+        "rtre_factor": 6.691069459881605e-05,
+        "case": "COAD_07",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 15887.5
+      },
+      "n_landmarks": 68
+    },
+    "25": {
+      "initial": {
+        "mean": 0.03869302644167519,
+        "median": 0.0366510094810578,
+        "max": 0.08283221415582014,
+        "n": 68,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.012331644028221261,
+        "median": 0.008889230976233894,
+        "max": 0.08305842239647607,
+        "n": 68,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.005598207162800568,
+        "median": 0.003622866703378685,
+        "max": 0.08676481962716481,
+        "n": 68,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.004267814957508507,
+        "median": 0.0021747479222950505,
+        "max": 0.08055068774996968,
+        "n": 68,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10323,
+        "src_h": 10740,
+        "fit_scale": 1.024953445065177,
+        "downsample": 1.0,
+        "diag_medium": 14896.7086633256,
+        "rtre_factor": 6.549460634679774e-05,
+        "case": "COAD_07",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 14896.7
+      },
+      "n_landmarks": 68
+    },
+    "26": {
+      "initial": {
+        "mean": 0.14229875962792252,
+        "median": 0.1523629922856346,
+        "max": 0.2820939169221596,
+        "n": 68,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.007517225856601508,
+        "median": 0.004970137222681989,
+        "max": 0.030202732777715336,
+        "n": 68,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0030663343652260204,
+        "median": 0.0017773438014193226,
+        "max": 0.025614091958138227,
+        "n": 68,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.002428947893641887,
+        "median": 0.0014839161422795437,
+        "max": 0.024207571763135847,
+        "n": 68,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10570,
+        "src_h": 14099,
+        "fit_scale": 0.7807645932335626,
+        "downsample": 1.0,
+        "diag_medium": 17621.20032801398,
+        "rtre_factor": 7.268493411584038e-05,
+        "case": "COAD_08",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 17621.2
+      },
+      "n_landmarks": 68
+    },
+    "27": {
+      "initial": {
+        "mean": 0.043431824164030186,
+        "median": 0.03793269779890822,
+        "max": 0.1125399176211389,
+        "n": 68,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.03068062994320413,
+        "median": 0.023136258811449057,
+        "max": 0.09006181648522425,
+        "n": 68,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.004225015868085636,
+        "median": 0.0026938584463830602,
+        "max": 0.029869845793882202,
+        "n": 68,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0036773053891991547,
+        "median": 0.0022233602295097703,
+        "max": 0.02449171959101237,
+        "n": 68,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10570,
+        "src_h": 14099,
+        "fit_scale": 0.7807645932335626,
+        "downsample": 1.0,
+        "diag_medium": 17621.20032801398,
+        "rtre_factor": 7.268493411584038e-05,
+        "case": "COAD_08",
+        "tissue": "COAD",
+        "scale": "scale-25pc",
+        "csv_diagonal": 17621.2
+      },
+      "n_landmarks": 68
+    },
+    "84": {
+      "initial": {
+        "mean": 0.38702540492546705,
+        "median": 0.39329681856280924,
+        "max": 0.6054587607127404,
+        "n": 79,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.03420213779582094,
+        "median": 0.03333026237877686,
+        "max": 0.06622938697533462,
+        "n": 79,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0075874550026394875,
+        "median": 0.005560916585010078,
+        "max": 0.02721500723055255,
+        "n": 79,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.002582581398414919,
+        "median": 0.001681050031541859,
+        "max": 0.014527352829584382,
+        "n": 79,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 13518,
+        "src_h": 14358,
+        "fit_scale": 0.7666805961833124,
+        "downsample": 1.0,
+        "diag_medium": 19720.255779274263,
+        "rtre_factor": 6.61413392658834e-05,
+        "case": "breast_1",
+        "tissue": "breast",
+        "scale": "scale-20pc",
+        "csv_diagonal": 19720.3
+      },
+      "n_landmarks": 79
+    },
+    "85": {
+      "initial": {
+        "mean": 0.10793228880469777,
+        "median": 0.10268076271491072,
+        "max": 0.18376314620527875,
+        "n": 50,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.15769322993652238,
+        "median": 0.15184450919147435,
+        "max": 0.2165435177579158,
+        "n": 50,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.020176416817065217,
+        "median": 0.014725930873524883,
+        "max": 0.07312843749572628,
+        "n": 50,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.008709102804982681,
+        "median": 0.008025704798271336,
+        "max": 0.03548693391462459,
+        "n": 50,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 12376,
+        "src_h": 11735,
+        "fit_scale": 0.938048572645931,
+        "downsample": 1.0,
+        "diag_medium": 17055.075520208055,
+        "rtre_factor": 6.250590193188263e-05,
+        "case": "breast_2",
+        "tissue": "breast",
+        "scale": "scale-20pc",
+        "csv_diagonal": 17055.1
+      },
+      "n_landmarks": 50
+    },
+    "89": {
+      "initial": {
+        "mean": 0.03834150215785659,
+        "median": 0.039522757389250845,
+        "max": 0.06157173368171471,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.010594297349065722,
+        "median": 0.00915880634141401,
+        "max": 0.027420789804882103,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0028497846586098947,
+        "median": 0.0019046418919721607,
+        "max": 0.017768186468940513,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0013811200251621226,
+        "median": 0.0008406234066284393,
+        "max": 0.013301861600867068,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 7171,
+        "src_h": 9916,
+        "fit_scale": 1.1101250504235578,
+        "downsample": 1.0,
+        "diag_medium": 12237.25038560542,
+        "rtre_factor": 7.361125990069259e-05,
+        "case": "gastric_1",
+        "tissue": "gastric",
+        "scale": "scale-15pc",
+        "csv_diagonal": 12237.3
+      },
+      "n_landmarks": 77
+    },
+    "90": {
+      "initial": {
+        "mean": 0.5082069038259833,
+        "median": 0.4668484659582951,
+        "max": 0.8361713654249117,
+        "n": 83,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.03094178945456722,
+        "median": 0.029277422484751906,
+        "max": 0.05926712233845287,
+        "n": 83,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.003531551383795925,
+        "median": 0.0024273451774932397,
+        "max": 0.01564505858855002,
+        "n": 83,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0018116418606409464,
+        "median": 0.0007381804663652505,
+        "max": 0.013440625427860061,
+        "n": 83,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9860,
+        "src_h": 10961,
+        "fit_scale": 1.0042879299334002,
+        "downsample": 1.0,
+        "diag_medium": 14743.239840686307,
+        "rtre_factor": 6.753809804810344e-05,
+        "case": "gastric_2",
+        "tissue": "gastric",
+        "scale": "scale-15pc",
+        "csv_diagonal": 14743.2
+      },
+      "n_landmarks": 83
+    },
+    "91": {
+      "initial": {
+        "mean": 0.4596035802524218,
+        "median": 0.4441402550195907,
+        "max": 0.7523520335884647,
+        "n": 63,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.01715199990463898,
+        "median": 0.010233269990706494,
+        "max": 0.048424498527157536,
+        "n": 63,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.004508428851785519,
+        "median": 0.0024161120401790287,
+        "max": 0.024808600456176905,
+        "n": 63,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.001031253113134117,
+        "median": 0.0007906545591170065,
+        "max": 0.009168970584752802,
+        "n": 63,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 10458,
+        "src_h": 13367,
+        "fit_scale": 0.823520610458592,
+        "downsample": 1.0,
+        "diag_medium": 16971.93132793083,
+        "rtre_factor": 7.154746672007121e-05,
+        "case": "gastric_3",
+        "tissue": "gastric",
+        "scale": "scale-15pc",
+        "csv_diagonal": 16971.9
+      },
+      "n_landmarks": 63
+    },
+    "92": {
+      "initial": {
+        "mean": 0.4383584794635121,
+        "median": 0.44803780480888356,
+        "max": 0.8226195913293238,
+        "n": 150,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.001665710925522501,
+        "median": 0.00043835389688747374,
+        "max": 0.03310415453976516,
+        "n": 150,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0012630393984058629,
+        "median": 0.00034744079540286344,
+        "max": 0.04056749876457943,
+        "n": 150,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.00041678813794571374,
+        "median": 0.00032104269048450373,
+        "max": 0.0029402329795409567,
+        "n": 150,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 15836,
+        "src_h": 13309,
+        "fit_scale": 0.8271094747914944,
+        "downsample": 1.0,
+        "diag_medium": 20685.946364621563,
+        "rtre_factor": 5.8446917303207774e-05,
+        "case": "gastric_4",
+        "tissue": "gastric",
+        "scale": "scale-15pc",
+        "csv_diagonal": 20685.9
+      },
+      "n_landmarks": 150
+    },
+    "102": {
+      "initial": {
+        "mean": 0.03433021899391043,
+        "median": 0.035241575790708614,
+        "max": 0.039889814236122326,
+        "n": 13,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.007732562557905543,
+        "median": 0.006086156546686189,
+        "max": 0.01611594438449479,
+        "n": 13,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.00254458822918389,
+        "median": 0.002553774114913431,
+        "max": 0.006034931909529865,
+        "n": 13,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0026721197004520953,
+        "median": 0.0025068810470762395,
+        "max": 0.00583675739488356,
+        "n": 13,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6902,
+        "src_h": 14283,
+        "fit_scale": 0.7707064342225023,
+        "downsample": 1.0,
+        "diag_medium": 15863.2182422105,
+        "rtre_factor": 8.179367397910714e-05,
+        "case": "kidney_1",
+        "tissue": "kidney",
+        "scale": "scale-25pc",
+        "csv_diagonal": 15863.2
+      },
+      "n_landmarks": 13
+    },
+    "103": {
+      "initial": {
+        "mean": 0.03508406055571709,
+        "median": 0.03363086914058885,
+        "max": 0.05003521786651407,
+        "n": 15,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.008605930606402594,
+        "median": 0.007511385428258023,
+        "max": 0.020108787134671742,
+        "n": 15,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.005136063041641219,
+        "median": 0.004205173304265689,
+        "max": 0.01339076901235622,
+        "n": 15,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0037541270438779923,
+        "median": 0.002566969981294681,
+        "max": 0.012566774785621121,
+        "n": 15,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 5950,
+        "src_h": 12766,
+        "fit_scale": 0.8622904590318032,
+        "downsample": 1.0,
+        "diag_medium": 14084.504109126456,
+        "rtre_factor": 8.233886162397858e-05,
+        "case": "kidney_2",
+        "tissue": "kidney",
+        "scale": "scale-25pc",
+        "csv_diagonal": 14084.5
+      },
+      "n_landmarks": 15
+    },
+    "107": {
+      "initial": {
+        "mean": 0.045514557932927045,
+        "median": 0.04444643742447765,
+        "max": 0.06903474185506232,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.018495160959540975,
+        "median": 0.017831537591811518,
+        "max": 0.04060431846693667,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.011273152457714286,
+        "median": 0.008308683574474554,
+        "max": 0.03498074129561412,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0067187585737793105,
+        "median": 0.005493389312889155,
+        "max": 0.02635016414939918,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6930,
+        "src_h": 4369,
+        "fit_scale": 2.364213564213564,
+        "downsample": 1.0,
+        "diag_medium": 8192.256160545763,
+        "rtre_factor": 5.163090905891811e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8192.3
+      },
+      "n_landmarks": 96
+    },
+    "108": {
+      "initial": {
+        "mean": 0.04146767437971962,
+        "median": 0.04032922179633516,
+        "max": 0.07296245511597509,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.016431618137177362,
+        "median": 0.012427347159407274,
+        "max": 0.0678138478394187,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0075046263404174125,
+        "median": 0.00482458119160201,
+        "max": 0.039728523717630145,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.00490095665747966,
+        "median": 0.0038355725419103987,
+        "max": 0.030721760722065963,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6930,
+        "src_h": 4369,
+        "fit_scale": 2.364213564213564,
+        "downsample": 1.0,
+        "diag_medium": 8192.256160545763,
+        "rtre_factor": 5.163090905891811e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8192.3
+      },
+      "n_landmarks": 96
+    },
+    "109": {
+      "initial": {
+        "mean": 0.046921015911691955,
+        "median": 0.04816097562736091,
+        "max": 0.06905706146445126,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.03178380544556115,
+        "median": 0.028636041668926047,
+        "max": 0.07391286911857407,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.02168629556859175,
+        "median": 0.020076902149878662,
+        "max": 0.05410319764739496,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.008316121363794253,
+        "median": 0.006021587823958868,
+        "max": 0.030704696582816916,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6930,
+        "src_h": 4369,
+        "fit_scale": 2.364213564213564,
+        "downsample": 1.0,
+        "diag_medium": 8192.256160545763,
+        "rtre_factor": 5.163090905891811e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8192.3
+      },
+      "n_landmarks": 96
+    },
+    "110": {
+      "initial": {
+        "mean": 0.06370813989789169,
+        "median": 0.0687401124438609,
+        "max": 0.09483181664908565,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.017413353514771922,
+        "median": 0.015644680274034817,
+        "max": 0.046685305567660595,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.014611711533670592,
+        "median": 0.012530967872276262,
+        "max": 0.040380518820986984,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.008256555994859284,
+        "median": 0.006938455016939389,
+        "max": 0.02473152357278764,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6930,
+        "src_h": 4369,
+        "fit_scale": 2.364213564213564,
+        "downsample": 1.0,
+        "diag_medium": 8192.256160545763,
+        "rtre_factor": 5.163090905891811e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8192.3
+      },
+      "n_landmarks": 96
+    },
+    "111": {
+      "initial": {
+        "mean": 0.040755544930007236,
+        "median": 0.04061798013075539,
+        "max": 0.06144232916237927,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.023970489880878836,
+        "median": 0.024137909078216807,
+        "max": 0.04848714715760352,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.012563776614764073,
+        "median": 0.011812743694082781,
+        "max": 0.03821454593824064,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.009746978628239722,
+        "median": 0.00938083076253635,
+        "max": 0.02729034586244357,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6925,
+        "src_h": 4388,
+        "fit_scale": 2.3659205776173287,
+        "downsample": 1.0,
+        "diag_medium": 8198.180834794997,
+        "rtre_factor": 5.155637153517597e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8198.2
+      },
+      "n_landmarks": 96
+    },
+    "112": {
+      "initial": {
+        "mean": 0.05122660994126386,
+        "median": 0.05107039729032706,
+        "max": 0.06964981507879364,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.008876361061477085,
+        "median": 0.0073210781410212806,
+        "max": 0.024406886860946282,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.005545713981675754,
+        "median": 0.004501365922215947,
+        "max": 0.024143072622111173,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0029010656020110083,
+        "median": 0.001771826780722749,
+        "max": 0.016638332990104813,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6925,
+        "src_h": 4388,
+        "fit_scale": 2.3659205776173287,
+        "downsample": 1.0,
+        "diag_medium": 8198.180834794997,
+        "rtre_factor": 5.155637153517597e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8198.2
+      },
+      "n_landmarks": 96
+    },
+    "113": {
+      "initial": {
+        "mean": 0.059952210599610735,
+        "median": 0.05942067961750769,
+        "max": 0.09577840031995136,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.015152599477219744,
+        "median": 0.013624153314929995,
+        "max": 0.03611528110475774,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0031705025217246066,
+        "median": 0.0024028815377012108,
+        "max": 0.010491960737255586,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.003795544031318706,
+        "median": 0.0016587643971095372,
+        "max": 0.026183324001214894,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6925,
+        "src_h": 4388,
+        "fit_scale": 2.3659205776173287,
+        "downsample": 1.0,
+        "diag_medium": 8198.180834794997,
+        "rtre_factor": 5.155637153517597e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8198.2
+      },
+      "n_landmarks": 96
+    },
+    "114": {
+      "initial": {
+        "mean": 0.018604495646236518,
+        "median": 0.019594912673022723,
+        "max": 0.038918800543121926,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.020454221803532485,
+        "median": 0.019080613923597813,
+        "max": 0.04789378000576294,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.013801050937025073,
+        "median": 0.011162419602744049,
+        "max": 0.045226332336204565,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.010381104030041397,
+        "median": 0.008027934126724048,
+        "max": 0.04322398286596052,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6925,
+        "src_h": 4392,
+        "fit_scale": 2.3659205776173287,
+        "downsample": 1.0,
+        "diag_medium": 8200.322493658405,
+        "rtre_factor": 5.154290667935489e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8200.3
+      },
+      "n_landmarks": 96
+    },
+    "115": {
+      "initial": {
+        "mean": 0.03188554683695899,
+        "median": 0.03152653530555487,
+        "max": 0.06410982031037286,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.05089407837091257,
+        "median": 0.052289048766301485,
+        "max": 0.09632356887474952,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.011399472475218544,
+        "median": 0.009628467472023654,
+        "max": 0.04930447193209635,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.007724033057418989,
+        "median": 0.0075718239809619454,
+        "max": 0.020497549088750264,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6925,
+        "src_h": 4392,
+        "fit_scale": 2.3659205776173287,
+        "downsample": 1.0,
+        "diag_medium": 8200.322493658405,
+        "rtre_factor": 5.154290667935489e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8200.3
+      },
+      "n_landmarks": 96
+    },
+    "116": {
+      "initial": {
+        "mean": 0.021415937297403976,
+        "median": 0.021787866906600124,
+        "max": 0.03971676319194428,
+        "n": 96,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.011808711436074778,
+        "median": 0.011049529399182627,
+        "max": 0.026803792019910285,
+        "n": 96,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.007147601455707011,
+        "median": 0.005940924663726796,
+        "max": 0.024570142241198942,
+        "n": 96,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.004287683947454543,
+        "median": 0.0031698727778581817,
+        "max": 0.015193402276195169,
+        "n": 96,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6929,
+        "src_h": 4386,
+        "fit_scale": 2.364554769808053,
+        "downsample": 1.0,
+        "diag_medium": 8200.490046332598,
+        "rtre_factor": 5.157162502079787e-05,
+        "case": "lung-lesion_2",
+        "tissue": "lung-lesion",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8200.5
+      },
+      "n_landmarks": 96
+    },
+    "137": {
+      "initial": {
+        "mean": 0.017217768006147716,
+        "median": 0.016165703599275022,
+        "max": 0.03547498968155472,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.015241875544183799,
+        "median": 0.012032570728159348,
+        "max": 0.049338592301215185,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0026241364337528674,
+        "median": 0.0016508437179504894,
+        "max": 0.021005013741308767,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0034119520927528325,
+        "median": 0.0012982848374939746,
+        "max": 0.021040586460483807,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6842,
+        "src_h": 11692,
+        "fit_scale": 0.9414984604858022,
+        "downsample": 1.0,
+        "diag_medium": 13546.801393686997,
+        "rtre_factor": 7.840497524396774e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 13546.8
+      },
+      "n_landmarks": 98
+    },
+    "138": {
+      "initial": {
+        "mean": 0.018950777387394018,
+        "median": 0.018740374800041294,
+        "max": 0.0320599256514114,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.012355893997706771,
+        "median": 0.011305533268412835,
+        "max": 0.03337059569014026,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.004684716478725686,
+        "median": 0.0032931853218302626,
+        "max": 0.015687129613823392,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.002867904610578946,
+        "median": 0.0016300717041874222,
+        "max": 0.016020146405462527,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6842,
+        "src_h": 11692,
+        "fit_scale": 0.9414984604858022,
+        "downsample": 1.0,
+        "diag_medium": 13546.801393686997,
+        "rtre_factor": 7.840497524396774e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 13546.8
+      },
+      "n_landmarks": 98
+    },
+    "139": {
+      "initial": {
+        "mean": 0.020289395722926647,
+        "median": 0.02153769152947782,
+        "max": 0.03132548655789324,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.02131250950891374,
+        "median": 0.018305876192356824,
+        "max": 0.05912656314191241,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.008077501675134456,
+        "median": 0.006469391575418855,
+        "max": 0.031131797937398346,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0036984276650374897,
+        "median": 0.002044603284825079,
+        "max": 0.024110619315671846,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6842,
+        "src_h": 11692,
+        "fit_scale": 0.9414984604858022,
+        "downsample": 1.0,
+        "diag_medium": 13546.801393686997,
+        "rtre_factor": 7.840497524396774e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 13546.8
+      },
+      "n_landmarks": 98
+    },
+    "140": {
+      "initial": {
+        "mean": 0.042151233835130926,
+        "median": 0.040024479819339036,
+        "max": 0.09302132648861237,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.01900405866751015,
+        "median": 0.01516945804336222,
+        "max": 0.05376328615900887,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.016026874402192193,
+        "median": 0.012950519093448291,
+        "max": 0.046122637260582175,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.01347424141980792,
+        "median": 0.01146362861478658,
+        "max": 0.03743951849333692,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6842,
+        "src_h": 11692,
+        "fit_scale": 0.9414984604858022,
+        "downsample": 1.0,
+        "diag_medium": 13546.801393686997,
+        "rtre_factor": 7.840497524396774e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 13546.8
+      },
+      "n_landmarks": 98
+    },
+    "141": {
+      "initial": {
+        "mean": 0.01529848086563162,
+        "median": 0.015780918641841314,
+        "max": 0.042185173695039796,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.003688319004763368,
+        "median": 0.0015317580137251792,
+        "max": 0.033998025561836814,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0021910632284155417,
+        "median": 0.0011821364251326726,
+        "max": 0.01601495613260901,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.002430415506683921,
+        "median": 0.001085770811433353,
+        "max": 0.01692537282665522,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 5095,
+        "src_h": 9631,
+        "fit_scale": 1.1429758072889626,
+        "downsample": 1.0,
+        "diag_medium": 10895.649865886844,
+        "rtre_factor": 8.02989420315345e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 10895.6
+      },
+      "n_landmarks": 98
+    },
+    "142": {
+      "initial": {
+        "mean": 0.022129689013375264,
+        "median": 0.020912536403262988,
+        "max": 0.056581416746577275,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.007616226289246757,
+        "median": 0.004560774716748513,
+        "max": 0.05866245536642338,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.003211913196878968,
+        "median": 0.0016429174197121336,
+        "max": 0.03774832675000643,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.002653338912152636,
+        "median": 0.001185803424428312,
+        "max": 0.028973467614367907,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 5095,
+        "src_h": 9631,
+        "fit_scale": 1.1429758072889626,
+        "downsample": 1.0,
+        "diag_medium": 10895.649865886844,
+        "rtre_factor": 8.02989420315345e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 10895.6
+      },
+      "n_landmarks": 98
+    },
+    "143": {
+      "initial": {
+        "mean": 0.026261041899180035,
+        "median": 0.02477524441492654,
+        "max": 0.05981571658388426,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.017944068321139584,
+        "median": 0.017071112294831645,
+        "max": 0.039846143263402675,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.010228976093080096,
+        "median": 0.007221798684789874,
+        "max": 0.04445390927182211,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.005590125819022207,
+        "median": 0.003763198303315397,
+        "max": 0.022381297050974993,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 5095,
+        "src_h": 9631,
+        "fit_scale": 1.1429758072889626,
+        "downsample": 1.0,
+        "diag_medium": 10895.649865886844,
+        "rtre_factor": 8.02989420315345e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 10895.6
+      },
+      "n_landmarks": 98
+    },
+    "144": {
+      "initial": {
+        "mean": 0.011717435369680418,
+        "median": 0.010740321279681934,
+        "max": 0.02856177527877154,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.005464691493632511,
+        "median": 0.001995574674158925,
+        "max": 0.038675510349436885,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0021971584730830296,
+        "median": 0.0011356892185105604,
+        "max": 0.018034331929487224,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0019233588506184648,
+        "median": 0.0010504986746916784,
+        "max": 0.013070404883308831,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 5335,
+        "src_h": 9776,
+        "fit_scale": 1.126022913256956,
+        "downsample": 1.0,
+        "diag_medium": 11136.98347848285,
+        "rtre_factor": 7.974164611671105e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 11137.0
+      },
+      "n_landmarks": 98
+    },
+    "145": {
+      "initial": {
+        "mean": 0.03478525692181133,
+        "median": 0.033757659534099205,
+        "max": 0.09561490772500891,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.03532438275955106,
+        "median": 0.03556857880317126,
+        "max": 0.06233815784269182,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.016080766150012516,
+        "median": 0.01310863977842693,
+        "max": 0.047430630634294216,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.00956414885799449,
+        "median": 0.007081602224451317,
+        "max": 0.03737198052451304,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 5335,
+        "src_h": 9776,
+        "fit_scale": 1.126022913256956,
+        "downsample": 1.0,
+        "diag_medium": 11136.98347848285,
+        "rtre_factor": 7.974164611671105e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 11137.0
+      },
+      "n_landmarks": 98
+    },
+    "146": {
+      "initial": {
+        "mean": 0.04145992512718539,
+        "median": 0.036706990203617285,
+        "max": 0.10921439781835018,
+        "n": 98,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.04388880506182536,
+        "median": 0.04899529011771547,
+        "max": 0.08283100776013991,
+        "n": 98,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.010596452587491144,
+        "median": 0.009375060906780922,
+        "max": 0.04343628246078421,
+        "n": 98,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.021073918842157452,
+        "median": 0.020540424611037788,
+        "max": 0.05556651242234515,
+        "n": 98,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 5708,
+        "src_h": 10047,
+        "fit_scale": 1.095650442918284,
+        "downsample": 1.0,
+        "diag_medium": 11555.23573969826,
+        "rtre_factor": 7.898582730904942e-05,
+        "case": "lung-lobes_1",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 11555.2
+      },
+      "n_landmarks": 98
+    },
+    "147": {
+      "initial": {
+        "mean": 0.022088346990400833,
+        "median": 0.018558347687571888,
+        "max": 0.06805741722622792,
+        "n": 107,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.010991477419266286,
+        "median": 0.006015994661603045,
+        "max": 0.045206616468924966,
+        "n": 107,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.002768677487241244,
+        "median": 0.001397461114848317,
+        "max": 0.026513229339552094,
+        "n": 107,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.00232417008641734,
+        "median": 0.0007351469171672512,
+        "max": 0.023288014213212648,
+        "n": 107,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6613,
+        "src_h": 12000,
+        "fit_scale": 0.9173333333333333,
+        "downsample": 1.0,
+        "diag_medium": 13701.524331255994,
+        "rtre_factor": 7.956167888436968e-05,
+        "case": "lung-lobes_2",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 13701.5
+      },
+      "n_landmarks": 107
+    },
+    "148": {
+      "initial": {
+        "mean": 0.011608267903292873,
+        "median": 0.00739049070485375,
+        "max": 0.04820589856772569,
+        "n": 107,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.011734671170226006,
+        "median": 0.008442077182107066,
+        "max": 0.05500362976292393,
+        "n": 107,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.003884843883855643,
+        "median": 0.0020333143503110146,
+        "max": 0.03788337612560635,
+        "n": 107,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.002515497849357598,
+        "median": 0.001045117576099437,
+        "max": 0.0218745521666691,
+        "n": 107,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6613,
+        "src_h": 12000,
+        "fit_scale": 0.9173333333333333,
+        "downsample": 1.0,
+        "diag_medium": 13701.524331255994,
+        "rtre_factor": 7.956167888436968e-05,
+        "case": "lung-lobes_2",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 13701.5
+      },
+      "n_landmarks": 107
+    },
+    "149": {
+      "initial": {
+        "mean": 0.03250710704888938,
+        "median": 0.029864802838288164,
+        "max": 0.07042187838419048,
+        "n": 107,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.02999716268757788,
+        "median": 0.029926239221229778,
+        "max": 0.0929293682891251,
+        "n": 107,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.006082565702586773,
+        "median": 0.0028646332889810484,
+        "max": 0.054613884123660375,
+        "n": 107,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.005198628010156852,
+        "median": 0.001629856269216785,
+        "max": 0.037917080960470535,
+        "n": 107,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 6613,
+        "src_h": 12000,
+        "fit_scale": 0.9173333333333333,
+        "downsample": 1.0,
+        "diag_medium": 13701.524331255994,
+        "rtre_factor": 7.956167888436968e-05,
+        "case": "lung-lobes_2",
+        "tissue": "lung-lobes",
+        "scale": "scale-100pc",
+        "csv_diagonal": 13701.5
+      },
+      "n_landmarks": 107
+    },
+    "177": {
+      "initial": {
+        "mean": 0.04624502226959843,
+        "median": 0.04433142429183003,
+        "max": 0.08822818849610423,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.005774124563390766,
+        "median": 0.004277366726895399,
+        "max": 0.024152504083732127,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.003824429026188011,
+        "median": 0.0024578835757919784,
+        "max": 0.016235527125032782,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0023821285891205287,
+        "median": 0.001183351637306516,
+        "max": 0.013510761233588997,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8918,
+        "src_h": 2946,
+        "fit_scale": 1.837183224938327,
+        "downsample": 1.0,
+        "diag_medium": 9391.99872231678,
+        "rtre_factor": 5.795481233873417e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9392.0
+      },
+      "n_landmarks": 77
+    },
+    "178": {
+      "initial": {
+        "mean": 0.023224820707800947,
+        "median": 0.023308919154458787,
+        "max": 0.042897676662832986,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.004192954325130739,
+        "median": 0.0026725052731766605,
+        "max": 0.0316602859674417,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0019534218374579223,
+        "median": 0.0013116307558375076,
+        "max": 0.010598047180294641,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0010303138257812651,
+        "median": 0.0005394775237469271,
+        "max": 0.008026363881103503,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8918,
+        "src_h": 2946,
+        "fit_scale": 1.837183224938327,
+        "downsample": 1.0,
+        "diag_medium": 9391.99872231678,
+        "rtre_factor": 5.795481233873417e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9392.0
+      },
+      "n_landmarks": 77
+    },
+    "179": {
+      "initial": {
+        "mean": 0.015679855523528248,
+        "median": 0.016390214105056394,
+        "max": 0.026085959765637576,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.0109536054714789,
+        "median": 0.0032052258029622157,
+        "max": 0.09520567836818833,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0010780980051791871,
+        "median": 0.0006250920392252804,
+        "max": 0.007774463097032061,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.003545025815878341,
+        "median": 0.001217317706499693,
+        "max": 0.016769023328764968,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8918,
+        "src_h": 2946,
+        "fit_scale": 1.837183224938327,
+        "downsample": 1.0,
+        "diag_medium": 9391.99872231678,
+        "rtre_factor": 5.795481233873417e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9392.0
+      },
+      "n_landmarks": 77
+    },
+    "180": {
+      "initial": {
+        "mean": 0.0346117517822333,
+        "median": 0.03034624284351488,
+        "max": 0.06794624714901933,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.015415348369540142,
+        "median": 0.0036889812682493234,
+        "max": 0.135271503420094,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0018184615020251393,
+        "median": 0.0010506459852918958,
+        "max": 0.02127435028242301,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0013341226756301778,
+        "median": 0.00070427271745178,
+        "max": 0.02103499824744085,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8918,
+        "src_h": 2946,
+        "fit_scale": 1.837183224938327,
+        "downsample": 1.0,
+        "diag_medium": 9391.99872231678,
+        "rtre_factor": 5.795481233873417e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9392.0
+      },
+      "n_landmarks": 77
+    },
+    "181": {
+      "initial": {
+        "mean": 0.04385626645043436,
+        "median": 0.04442277652691834,
+        "max": 0.06503159119207233,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.0018702091286492662,
+        "median": 0.0012803327000560172,
+        "max": 0.012115126024822693,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0013260398238013787,
+        "median": 0.0009940926164068204,
+        "max": 0.007501357516384544,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0006364380139837004,
+        "median": 0.0004619953678341848,
+        "max": 0.004956765842596425,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8424,
+        "src_h": 2580,
+        "fit_scale": 1.9449192782526117,
+        "downsample": 1.0,
+        "diag_medium": 8810.23132499936,
+        "rtre_factor": 5.835943884822312e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8810.2
+      },
+      "n_landmarks": 77
+    },
+    "182": {
+      "initial": {
+        "mean": 0.0365356043140439,
+        "median": 0.033765254963682136,
+        "max": 0.06581175126355455,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.007768751930308917,
+        "median": 0.004733855577249511,
+        "max": 0.02996691051372657,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0020279093533129003,
+        "median": 0.0014425898412692912,
+        "max": 0.016776459903322338,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.003294944177522276,
+        "median": 0.0012555634197283882,
+        "max": 0.01706884977028176,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8424,
+        "src_h": 2580,
+        "fit_scale": 1.9449192782526117,
+        "downsample": 1.0,
+        "diag_medium": 8810.23132499936,
+        "rtre_factor": 5.835943884822312e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8810.2
+      },
+      "n_landmarks": 77
+    },
+    "183": {
+      "initial": {
+        "mean": 0.03748317371996189,
+        "median": 0.03739468425641271,
+        "max": 0.06118892819423333,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.007838064850460279,
+        "median": 0.006628065569971484,
+        "max": 0.03922949163697967,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.003796284405161392,
+        "median": 0.0023477114430915337,
+        "max": 0.02179878839206978,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0023253105732139977,
+        "median": 0.0013171045503261349,
+        "max": 0.021958137773085237,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8424,
+        "src_h": 2580,
+        "fit_scale": 1.9449192782526117,
+        "downsample": 1.0,
+        "diag_medium": 8810.23132499936,
+        "rtre_factor": 5.835943884822312e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 8810.2
+      },
+      "n_landmarks": 77
+    },
+    "184": {
+      "initial": {
+        "mean": 0.017717614855122524,
+        "median": 0.01707813081696565,
+        "max": 0.02602079196697281,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.003583310711500359,
+        "median": 0.0018497501309833716,
+        "max": 0.029954876275897893,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0011908961792895477,
+        "median": 0.0007270017677278801,
+        "max": 0.008356678108536903,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0020942187959144026,
+        "median": 0.0007591025184178207,
+        "max": 0.015948928503114558,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8918,
+        "src_h": 2580,
+        "fit_scale": 1.837183224938327,
+        "downsample": 1.0,
+        "diag_medium": 9283.7020632935,
+        "rtre_factor": 5.8630869423269624e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9283.7
+      },
+      "n_landmarks": 77
+    },
+    "185": {
+      "initial": {
+        "mean": 0.023498413018857585,
+        "median": 0.025274350276106642,
+        "max": 0.036990521372945936,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.006982842924649255,
+        "median": 0.00476198253056977,
+        "max": 0.02504095149615109,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.002681899144952447,
+        "median": 0.001783634708066819,
+        "max": 0.02396950680761427,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0028119486407968317,
+        "median": 0.00112544782214093,
+        "max": 0.02271723668217988,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8918,
+        "src_h": 2580,
+        "fit_scale": 1.837183224938327,
+        "downsample": 1.0,
+        "diag_medium": 9283.7020632935,
+        "rtre_factor": 5.8630869423269624e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9283.7
+      },
+      "n_landmarks": 77
+    },
+    "186": {
+      "initial": {
+        "mean": 0.033131771089426804,
+        "median": 0.03212955643576393,
+        "max": 0.05127040767831682,
+        "n": 77,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.006289017886007955,
+        "median": 0.004460262793971633,
+        "max": 0.028351725768870982,
+        "n": 77,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.0020267332219643156,
+        "median": 0.0014087378929565604,
+        "max": 0.021536444859253944,
+        "n": 77,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.011372239751140416,
+        "median": 0.013239315133440076,
+        "max": 0.024630907278116138,
+        "n": 77,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 8921,
+        "src_h": 2192,
+        "fit_scale": 1.8365654074655309,
+        "downsample": 1.0,
+        "diag_medium": 9186.354282303726,
+        "rtre_factor": 5.927211298122319e-05,
+        "case": "mammary-gland_1",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9186.4
+      },
+      "n_landmarks": 77
+    },
+    "187": {
+      "initial": {
+        "mean": 0.04242972580295244,
+        "median": 0.04157719830195769,
+        "max": 0.10585272071480836,
+        "n": 76,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.01566394497476843,
+        "median": 0.009907340269906442,
+        "max": 0.06781687771067235,
+        "n": 76,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.004014958686794948,
+        "median": 0.002471327429501667,
+        "max": 0.02442092239930537,
+        "n": 76,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.014267143105577161,
+        "median": 0.005455837525691101,
+        "max": 0.08272697711493911,
+        "n": 76,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9412,
+        "src_h": 2946,
+        "fit_scale": 1.7407564810879728,
+        "downsample": 1.0,
+        "diag_medium": 9862.2847251537,
+        "rtre_factor": 5.8248459320976174e-05,
+        "case": "mammary-gland_2",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9862.3
+      },
+      "n_landmarks": 76
+    },
+    "188": {
+      "initial": {
+        "mean": 0.03447794788671951,
+        "median": 0.03269695973611633,
+        "max": 0.08371243037991663,
+        "n": 76,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.003633505528580146,
+        "median": 0.0025378591804137932,
+        "max": 0.021912791953326315,
+        "n": 76,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.002480460447275146,
+        "median": 0.0011121652132161305,
+        "max": 0.015084302344360822,
+        "n": 76,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0020033899149450012,
+        "median": 0.0006677652662397842,
+        "max": 0.02251750029020932,
+        "n": 76,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9412,
+        "src_h": 2946,
+        "fit_scale": 1.7407564810879728,
+        "downsample": 1.0,
+        "diag_medium": 9862.2847251537,
+        "rtre_factor": 5.8248459320976174e-05,
+        "case": "mammary-gland_2",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9862.3
+      },
+      "n_landmarks": 76
+    },
+    "189": {
+      "initial": {
+        "mean": 0.027794106862934573,
+        "median": 0.027513000630978345,
+        "max": 0.04724489593224343,
+        "n": 76,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.015464739181578552,
+        "median": 0.012454837145907387,
+        "max": 0.05559851585696132,
+        "n": 76,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.00520183142319369,
+        "median": 0.004276186375367055,
+        "max": 0.01620993181587369,
+        "n": 76,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0040150558466801566,
+        "median": 0.0024297874045382797,
+        "max": 0.01802966554289523,
+        "n": 76,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9412,
+        "src_h": 2946,
+        "fit_scale": 1.7407564810879728,
+        "downsample": 1.0,
+        "diag_medium": 9862.2847251537,
+        "rtre_factor": 5.8248459320976174e-05,
+        "case": "mammary-gland_2",
+        "tissue": "mammary-gland",
+        "scale": "scale-25pc",
+        "csv_diagonal": 9862.3
+      },
+      "n_landmarks": 76
+    },
+    "215": {
+      "initial": {
+        "mean": 0.07685211464561698,
+        "median": 0.07319380298249092,
+        "max": 0.16373321633514987,
+        "n": 132,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.13326165542430318,
+        "median": 0.13205978285536582,
+        "max": 0.163282079948806,
+        "n": 132,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.002177356708374256,
+        "median": 0.0015615726362296824,
+        "max": 0.017439876647562278,
+        "n": 132,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0028104944730166287,
+        "median": 0.001692064318585014,
+        "max": 0.019461556566867336,
+        "n": 132,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9216,
+        "src_h": 7552,
+        "fit_scale": 1.4576271186440677,
+        "downsample": 1.0,
+        "diag_medium": 11915.005665126642,
+        "rtre_factor": 5.7578362185412795e-05,
+        "case": "mice-kidney_1",
+        "tissue": "mice-kidney",
+        "scale": "scale-25pc",
+        "csv_diagonal": 11915.0
+      },
+      "n_landmarks": 132
+    },
+    "216": {
+      "initial": {
+        "mean": 0.0496421596911954,
+        "median": 0.04671434282990852,
+        "max": 0.08876848902878456,
+        "n": 132,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 1.1365150784879476,
+        "median": 1.1365150784879474,
+        "max": 1.1365150784879474,
+        "n": 132,
+        "n_capped": 132
+      },
+      "sp_wendland": {
+        "mean": 1.1365150784879476,
+        "median": 1.1365150784879474,
+        "max": 1.1365150784879474,
+        "n": 132,
+        "n_capped": 132
+      },
+      "regwsi": {
+        "mean": 1.1365150784879476,
+        "median": 1.1365150784879474,
+        "max": 1.1365150784879474,
+        "n": 132,
+        "n_capped": 132
+      },
+      "geom": {
+        "src_w": 9216,
+        "src_h": 7552,
+        "fit_scale": 1.4576271186440677,
+        "downsample": 1.0,
+        "diag_medium": 11915.005665126642,
+        "rtre_factor": 5.7578362185412795e-05,
+        "case": "mice-kidney_1",
+        "tissue": "mice-kidney",
+        "scale": "scale-25pc",
+        "csv_diagonal": 11915.0
+      },
+      "n_landmarks": 132
+    },
+    "217": {
+      "initial": {
+        "mean": 0.08643614713694249,
+        "median": 0.08325893406006842,
+        "max": 0.1918482159207561,
+        "n": 132,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.10666002521474528,
+        "median": 0.10673639570344531,
+        "max": 0.12736673989636538,
+        "n": 132,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.005753307674786989,
+        "median": 0.0039924158180633575,
+        "max": 0.026903724593465336,
+        "n": 132,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.0028480875515323537,
+        "median": 0.0013061456833545664,
+        "max": 0.02576130590510171,
+        "n": 132,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9216,
+        "src_h": 7552,
+        "fit_scale": 1.4576271186440677,
+        "downsample": 1.0,
+        "diag_medium": 11915.005665126642,
+        "rtre_factor": 5.7578362185412795e-05,
+        "case": "mice-kidney_1",
+        "tissue": "mice-kidney",
+        "scale": "scale-25pc",
+        "csv_diagonal": 11915.0
+      },
+      "n_landmarks": 132
+    },
+    "218": {
+      "initial": {
+        "mean": 0.05638508834939481,
+        "median": 0.055555459143916984,
+        "max": 0.12276918016150574,
+        "n": 132,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.02802496980301967,
+        "median": 0.03005877848858462,
+        "max": 0.051916352623711866,
+        "n": 132,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.009860944246025958,
+        "median": 0.008696231261865042,
+        "max": 0.04165722418784324,
+        "n": 132,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.005788832892807279,
+        "median": 0.0029797846647533583,
+        "max": 0.02716660655103893,
+        "n": 132,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9216,
+        "src_h": 7552,
+        "fit_scale": 1.4576271186440677,
+        "downsample": 1.0,
+        "diag_medium": 11915.005665126642,
+        "rtre_factor": 5.7578362185412795e-05,
+        "case": "mice-kidney_1",
+        "tissue": "mice-kidney",
+        "scale": "scale-25pc",
+        "csv_diagonal": 11915.0
+      },
+      "n_landmarks": 132
+    },
+    "219": {
+      "initial": {
+        "mean": 0.06385037040578202,
+        "median": 0.05733164553570612,
+        "max": 0.14756301611313488,
+        "n": 132,
+        "n_capped": 0
+      },
+      "fft_wendland": {
+        "mean": 0.31847937922821595,
+        "median": 0.28784626307886085,
+        "max": 0.7882204141403103,
+        "n": 132,
+        "n_capped": 0
+      },
+      "sp_wendland": {
+        "mean": 0.32148412863327874,
+        "median": 0.31285594874341827,
+        "max": 0.6494759897302043,
+        "n": 132,
+        "n_capped": 0
+      },
+      "regwsi": {
+        "mean": 0.3171529309347436,
+        "median": 0.31025893592389253,
+        "max": 0.6706051618527964,
+        "n": 132,
+        "n_capped": 0
+      },
+      "geom": {
+        "src_w": 9216,
+        "src_h": 7552,
+        "fit_scale": 1.4576271186440677,
+        "downsample": 1.0,
+        "diag_medium": 11915.005665126642,
+        "rtre_factor": 5.7578362185412795e-05,
+        "case": "mice-kidney_1",
+        "tissue": "mice-kidney",
+        "scale": "scale-25pc",
+        "csv_diagonal": 11915.0
+      },
+      "n_landmarks": 132
+    }
+  }
+}

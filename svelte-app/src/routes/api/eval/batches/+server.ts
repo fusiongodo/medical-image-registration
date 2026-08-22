@@ -64,6 +64,13 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 	const cfg = body.config ?? {};
 	if (typeof cfg.wendland_eps === 'number') args.push('--wendland-eps', String(cfg.wendland_eps));
+	const byLam = cfg.wendland_eps_by_lam;
+	if (byLam && typeof byLam === 'object') {
+		const parts = Object.entries(byLam as Record<string, unknown>)
+			.filter(([, v]) => typeof v === 'number')
+			.map(([k, v]) => `${k}=${v}`);
+		if (parts.length) args.push('--wendland-eps-by-lam', parts.join(','));
+	}
 	if (typeof cfg.bspline_grid === 'number') args.push('--bspline-grid', String(cfg.bspline_grid));
 	if (typeof cfg.bspline_reg === 'number') args.push('--bspline-reg', String(cfg.bspline_reg));
 	if (cfg.force === true) args.push('--force');

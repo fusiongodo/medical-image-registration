@@ -8,8 +8,8 @@ const LAMS = new Set(['fft', 'superpoint_glue']);
 export const load: PageServerLoad = ({ params, url }) => {
 	const data = loadOverlayPair(params.pair, url.searchParams.get('dataset'));
 	if (data.error === 'out_of_range') error(404, `pair ${params.pair} out of range`);
-	const rawEst = url.searchParams.get('estimator') ?? 'tps';
-	const estimator = EST.has(rawEst) ? rawEst : 'tps';
+	const rawEst = url.searchParams.get('estimator') ?? 'wendland';
+	const estimator = EST.has(rawEst) ? rawEst : 'wendland';
 	const rawLam = url.searchParams.get('lam') ?? 'fft';
 	const lam = LAMS.has(rawLam) ? rawLam : 'fft';
 	const batch = url.searchParams.get('batch');

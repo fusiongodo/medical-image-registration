@@ -1,5 +1,6 @@
 import type { PageServerLoad } from './$types';
 import { listDatasets, normalizeDataset, pairCount, regwsiRoot } from '$lib/server/datasets';
+import { layersReady } from '$lib/server/evalOverlay';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -13,6 +14,19 @@ function landmarkCount(dir: string): number {
 		return Array.isArray(data.points) ? data.points.length : 0;
 	} catch {
 		return 0;
+	}
+}
+
+function mosaicReady(dir: string): boolean {
+	const fullDir = resolve(dir, 'full');
+	const metaPath = resolve(fullDir, 'meta.json');
+	if (!existsSync(metaPath)) return false;
+	try {
+		const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+		const nq = typeof meta.nq === 'number' ? meta.nq : 2;
+		return layersReady(fullDir, nq, ['he', 'ihc_warped']);
+	} catch {
+		return false;
 	}
 }
 
@@ -69,6 +83,7 @@ export const load: PageServerLoad = ({ url }) => {
 		pairs.push({
 			pairId: i,
 			ready,
+			mosaicReady: mosaicReady(dir),
 			landmarkCount: landmarkCount(dir),
 			mainSetId,
 			mainSetName

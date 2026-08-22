@@ -2,7 +2,8 @@
 Warp IHC into HE space using an FFT field-set (deskew + L5 field) and write
 explorer mosaic quads: ihc_fieldset_{tps|wendland}_y{qy}_x{qx}.jpg
 
-Warp matches TRE: at HE pixel p, sample IHC at p - d(p), where d = deskew + field.
+Warp matches TRE: at HE pixel p, sample IHC at rigid^{-1}(p - d(p)),
+where d = deskew + L5 field in post-rigid HE space.
 
 Usage:
   python regWSI/make_fieldset_full.py <pair_id> --estimator tps
@@ -76,11 +77,37 @@ def _field_file(set_dir: Path) -> Path:
 
 def _field_mtime(set_dir: Path) -> float:
     field = _field_file(set_dir)
-    deskew = set_dir / "deskew.json"
     mt = field.stat().st_mtime if field.is_file() else 0.0
-    if deskew.is_file():
-        mt = max(mt, deskew.stat().st_mtime)
+    for name in ("deskew.json", "rigid.json"):
+        p = set_dir / name
+        if p.is_file():
+            mt = max(mt, p.stat().st_mtime)
     return mt
+
+
+def _load_rigid(set_dir: Path) -> list | None:
+    path = set_dir / "rigid.json"
+    if not path.is_file():
+        return None
+    try:
+        rigid = json.loads(path.read_text()).get("rigid")
+    except Exception:
+        return None
+    return rigid
+
+
+def _apply_inv_rigid(
+    map_x: np.ndarray, map_y: np.ndarray, rigid, w: int, h: int
+) -> tuple[np.ndarray, np.ndarray]:
+    (r00, r01, tx), (r10, r11, ty) = rigid
+    r = np.array([[float(r00), float(r01)], [float(r10), float(r11)]], dtype=np.float64)
+    t = np.array([float(tx), float(ty)], dtype=np.float64)
+    rinv = np.linalg.inv(r)
+    xn = map_x.astype(np.float64) / w - t[0]
+    yn = map_y.astype(np.float64) / h - t[1]
+    ix = rinv[0, 0] * xn + rinv[0, 1] * yn
+    iy = rinv[1, 0] * xn + rinv[1, 1] * yn
+    return (ix * w).astype(np.float32), (iy * h).astype(np.float32)
 
 
 def _stamp_fresh(pair_id: int, layer: str, set_id: str, set_dir: Path, nq: int) -> bool:
@@ -161,9 +188,10 @@ def make_fieldset_full(
     if estimator not in ("tps", "wendland", "bspline"):
         raise ValueError("estimator must be tps, wendland, or bspline")
 
+    from setup.datasets import ensure_canvas_tiffs
+
+    ensure_canvas_tiffs(pair_id)
     ihc_path = paths.ihc_tiff(pair_id)
-    if not ihc_path.is_file():
-        raise FileNotFoundError(f"missing {ihc_path}")
 
     if batch_id:
         from setup.coarse_to_fine import eval_runs
@@ -205,6 +233,7 @@ def make_fieldset_full(
     ihc = _resize_to(_load_rgb(ihc_path), tw, th)
     print(f"done=1 total=4 stage=disp", flush=True)
     dx, dy = _dense_disp(set_dir, tw, th)
+    rigid = _load_rigid(set_dir)
 
     print(f"done=2 total=4 stage=warp", flush=True)
     out = np.empty_like(ihc)
@@ -214,6 +243,8 @@ def make_fieldset_full(
         cols = np.arange(tw, dtype=np.float32)[None, :]
         map_x = (cols - dx[y0:y1]).astype(np.float32)
         map_y = (rows - dy[y0:y1]).astype(np.float32)
+        if rigid is not None:
+            map_x, map_y = _apply_inv_rigid(map_x, map_y, rigid, tw, th)
         out[y0:y1] = cv2.remap(
             ihc, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT
         )

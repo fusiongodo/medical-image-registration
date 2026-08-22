@@ -13,6 +13,9 @@ from setup import datasets
 from setup.coarse_to_fine.reg_branches import clear_lam_caches
 from setup.coarse_to_fine.rigid_sp_lg import fit_rigid_kabsch
 
+LEGACY_VERSION = "regwsi_initial"
+RIGID_VERSION = "regwsi_initial_v2"
+
 
 def _norm_from_pixel_rigid(R_px: np.ndarray, t_px: np.ndarray, w: int, h: int) -> np.ndarray:
     sx, sy = float(w), float(h)
@@ -52,14 +55,10 @@ def rigid_from_displacement_field(
     ys = np.arange(sample_step // 2, h, sample_step)
     xs = np.arange(sample_step // 2, w, sample_step)
     grid_x, grid_y = np.meshgrid(xs, ys)
-    ihc = np.stack([grid_x.ravel().astype(float), grid_y.ravel().astype(float)], axis=1)
-    he = np.stack(
-        [
-            ihc[:, 0] + dx[grid_y.ravel(), grid_x.ravel()],
-            ihc[:, 1] + dy[grid_y.ravel(), grid_x.ravel()],
-        ],
-        axis=1,
-    )
+    he = np.stack([grid_x.ravel().astype(float), grid_y.ravel().astype(float)], axis=1)
+    gy = grid_y.ravel()
+    gx = grid_x.ravel()
+    ihc = np.stack([he[:, 0] + dx[gy, gx], he[:, 1] + dy[gy, gx]], axis=1)
     R, t, mask, stats = fit_rigid_kabsch(he, ihc, inlier_px=inlier_px)
     rigid_n = _norm_from_pixel_rigid(R, t, w, h)
     out_stats = {
@@ -101,7 +100,7 @@ def persist_regwsi_rigid(
     store = {
         "pair_id": int(pair_id),
         "dataset": ds,
-        "version": "regwsi_initial",
+        "version": RIGID_VERSION,
         "identity": datasets.pair_fingerprint(pair_id, ds),
         "rigid": rigid_n.tolist(),
         "stats": stats,
@@ -114,3 +113,35 @@ def persist_regwsi_rigid(
     path.write_text(json.dumps(store, indent=2))
     clear_lam_caches(pair_id, dataset=ds)
     return store
+
+
+def invert_norm_rigid(rigid) -> list:
+    R = np.asarray(rigid, dtype=float).reshape(2, 3)
+    Ainv = np.linalg.inv(R[:, :2])
+    tinv = -Ainv @ R[:, 2]
+    return np.column_stack([Ainv, tinv]).tolist()
+
+
+def ensure_regwsi_rigid(pair_id: int, dataset: str | None = None) -> bool:
+    ds = datasets.normalize_dataset(dataset) if dataset else datasets.active_dataset()
+    path = datasets.rigid_path(pair_id, ds)
+    if not path.is_file():
+        return False
+    try:
+        store = json.loads(path.read_text())
+    except Exception:
+        return False
+    if store.get("version") == RIGID_VERSION:
+        return False
+    if store.get("version") != LEGACY_VERSION or not store.get("rigid"):
+        return False
+    store["rigid"] = invert_norm_rigid(store["rigid"])
+    stats = store.get("stats")
+    if isinstance(stats, dict) and stats.get("rotation_deg") is not None:
+        stats = {**stats, "rotation_deg": -float(stats["rotation_deg"])}
+        store["stats"] = stats
+    store["version"] = RIGID_VERSION
+    store["saved_at"] = int(time.time())
+    path.write_text(json.dumps(store, indent=2))
+    clear_lam_caches(pair_id, dataset=ds)
+    return True

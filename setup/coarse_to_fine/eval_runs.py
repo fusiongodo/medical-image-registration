@@ -15,6 +15,8 @@ from setup.coarse_to_fine.reg_branches import (
     DEFAULT_WENDLAND_EPS,
     FIELD_ESTIMATORS,
     LAMS,
+    normalize_lam,
+    wendland_eps_for_lam,
 )
 
 EVAL_ROOT = conf.PROJECT_ROOT / "data" / "eval_runs"
@@ -57,17 +59,52 @@ def normalize_exclude_pct(raw) -> dict[str, float]:
     return base
 
 
+def normalize_eps_by_lam(raw, scalar: float) -> dict[str, float]:
+    base = {lam: float(scalar) for lam in LAMS}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            try:
+                base[normalize_lam(str(k))] = float(v)
+            except (TypeError, ValueError):
+                continue
+    return base
+
+
 def cell_config(cfg: dict | None) -> dict:
     """Subset of batch config that defines a fit cell's identity."""
-    merged = {**default_config(), **(cfg or {})}
-    return {
+    src = cfg or {}
+    merged = {**default_config(), **src}
+    scalar = float(merged["wendland_eps"])
+    out = {
         "levels": [int(x) for x in merged["levels"]],
         "exclude_pct_by_level": normalize_exclude_pct(merged.get("exclude_pct_by_level")),
-        "wendland_eps": float(merged["wendland_eps"]),
+        "wendland_eps": scalar,
         "bspline_grid": int(merged["bspline_grid"]),
         "bspline_reg": float(merged["bspline_reg"]),
         "eval_depth": int(EVAL_DEPTH),
+        "c2f_pyramid": "per_estimator",
     }
+    if "wendland_eps_by_lam" in src:
+        out["wendland_eps_by_lam"] = normalize_eps_by_lam(
+            src.get("wendland_eps_by_lam"), scalar
+        )
+    return out
+
+
+def eps_for_lam(cfg: dict | None, lam: str) -> float:
+    c = cfg or {}
+    by = c.get("wendland_eps_by_lam")
+    if isinstance(by, dict):
+        key = normalize_lam(lam)
+        if key in by:
+            return float(by[key])
+        try:
+            return float(by[lam])
+        except (KeyError, TypeError, ValueError):
+            pass
+    if c.get("wendland_eps") is not None:
+        return float(c["wendland_eps"])
+    return wendland_eps_for_lam(lam)
 
 
 def config_fingerprint(cfg: dict | None) -> str:
@@ -78,8 +115,14 @@ def config_fingerprint(cfg: dict | None) -> str:
 def config_summary(cfg: dict | None) -> dict:
     c = cell_config(cfg)
     excl = c["exclude_pct_by_level"]
+    by = c.get("wendland_eps_by_lam")
+    if isinstance(by, dict) and by:
+        eps_s = " · ".join(f"{k} ε={v:g}" for k, v in by.items())
+    else:
+        eps_s = f"Wendland ε={c['wendland_eps']}"
     return {
         "wendland_eps": c["wendland_eps"],
+        "wendland_eps_by_lam": by,
         "bspline_grid": c["bspline_grid"],
         "bspline_reg": c["bspline_reg"],
         "exclude_pct_by_level": excl,
@@ -87,6 +130,7 @@ def config_summary(cfg: dict | None) -> dict:
             f"L0–L3 keep 100% · L4 excl {100 * excl.get('4', 0.05):.0f}% · "
             f"L5 excl {100 * excl.get('5', 0.10):.0f}%"
         ),
+        "eps_label": eps_s,
         "fingerprint": config_fingerprint(cfg),
     }
 
@@ -129,6 +173,15 @@ def regwsi_dir(batch_id: str, pair_id: int) -> Path:
 
 def regwsi_runtime_path(batch_id: str, pair_id: int) -> Path:
     return regwsi_dir(batch_id, pair_id) / "runtime.json"
+
+
+def cpu_runtime_dir(pair_id: int) -> Path:
+    return EVAL_ROOT / "cpu_runtime" / str(int(pair_id))
+
+
+def cpu_runtime_path(pair_id: int, host: str, tag: str | None = None) -> Path:
+    name = f"{host}_{tag}.json" if tag else f"{host}.json"
+    return cpu_runtime_dir(pair_id) / name
 
 
 def read_cell_meta(batch_id: str, pair_id: int, lam: str, estimator: str) -> dict | None:
@@ -381,4 +434,14 @@ def cell_complete(
     got = meta.get("config_fingerprint")
     if got is None:
         return False
-    return str(got) == expected
+    if str(got) != expected:
+        return False
+    rigid_copy = cell_dir(batch_id, pair_id, lam, estimator) / "rigid.json"
+    if rigid_copy.is_file():
+        try:
+            ver = json.loads(rigid_copy.read_text()).get("version")
+        except Exception:
+            ver = None
+        if ver == "regwsi_initial":
+            return False
+    return True

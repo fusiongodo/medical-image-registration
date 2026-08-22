@@ -75,6 +75,9 @@ def compute_batch_pair_tre(batch_id: str, pair_id: int) -> dict:
     estimators = list(manifest.get("estimators") or [])
     methods: list[dict] = []
     runtime_avgs = _batch_runtime_avgs(manifest, batch_id)
+    points = tre_eval.load_landmarks(pair_id)
+    w, h = baseline["canvas"]
+    scale = float(baseline["scale"])
 
     for lam in lams:
         for est in estimators:
@@ -99,11 +102,36 @@ def compute_batch_pair_tre(batch_id: str, pair_id: int) -> dict:
                 cell["tre"] = tre
             cell["runtime_s"] = _runtime_from_cell(batch_id, pair_id, lam, est, tre)
             cell["runtime_avg_s"] = runtime_avgs["methods"].get(key)
+            fp = eval_runs.field_l5_path(batch_id, pair_id, lam, est)
+            if fp.is_file() and points:
+                try:
+                    pred = tre_eval.warp_ihc_field_file(points, fp, w, h, scale)
+                    cell["tre"]["ihc_warped"] = tre_eval.xy_norm(pred, w, h)
+                except Exception:
+                    pass
             methods.append(cell)
 
     regwsi_runtime = eval_runs.read_runtime_s(
         eval_runs.regwsi_runtime_path(batch_id, pair_id)
     )
+
+    rw = baseline.get("regwsi") or {}
+    if rw.get("mean") is not None and not rw.get("error"):
+        rd = eval_runs.regwsi_dir(batch_id, pair_id)
+        rd.mkdir(parents=True, exist_ok=True)
+        (rd / "tre.json").write_text(
+            json.dumps(
+                {
+                    "mean": rw.get("mean"),
+                    "median": rw.get("median"),
+                    "max": rw.get("max"),
+                    "p95": rw.get("p95"),
+                    "per_point": rw.get("per_point") or [],
+                    "ihc_warped": rw.get("ihc_warped") or [],
+                    "df_sample": "he",
+                }
+            )
+        )
 
     return {
         "pair_id": pair_id,

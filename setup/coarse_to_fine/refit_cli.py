@@ -43,9 +43,12 @@ from setup.coarse_to_fine.run import _level_candidates
 
 
 def _load_level_cache(
-    pair_id: int, level: int, lam: str | None = None
+    pair_id: int,
+    level: int,
+    lam: str | None = None,
+    field_estimator: str | None = None,
 ) -> list[Candidate] | None:
-    path = cache_path(pair_id, level, lam)
+    path = cache_path(pair_id, level, lam, field_estimator=field_estimator)
     if not path.exists():
         return None
     try:
@@ -82,7 +85,9 @@ def _compute_prior_field(
     )
 
     for level in sorted(lv for lv in levels if lv < depth):
-        cands = _load_level_cache(pair_id, level, lam=lam)
+        cands = _load_level_cache(
+            pair_id, level, lam=lam, field_estimator=field_estimator
+        )
         if cands is None:
             cands = _level_candidates(pair_id, level, field, lam=lam)
         if not cands:
@@ -105,7 +110,7 @@ def refit(
     lam: str | None = None,
 ) -> dict:
     lam = normalize_lam(lam)
-    path = cache_path(pair_id, depth, lam)
+    path = cache_path(pair_id, depth, lam, field_estimator=field_estimator)
     if not path.exists():
         return {"error": f"no cached candidates for pair {pair_id} depth {depth} lam {lam}"}
 

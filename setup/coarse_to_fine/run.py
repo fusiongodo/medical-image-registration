@@ -47,9 +47,13 @@ from setup.coarse_to_fine.field import (
     write_field_json,
 )
 from setup.coarse_to_fine.reg_branches import (
+    DEFAULT_FIELD_ESTIMATOR,
     DEFAULT_LAM,
+    DEFAULT_WENDLAND_EPS,
+    FIELD_ESTIMATORS,
     LAMS,
     cache_path,
+    normalize_estimator,
     normalize_lam,
 )
 
@@ -199,6 +203,7 @@ def _fit_level(
     level: int,
     tau: float,
     masked: "set[str] | None" = None,
+    field_estimator: str | None = None,
 ) -> tuple[Field, list[Candidate]]:
     """Fit the field at one level: honour human anchors <= level, tau-gate soft points.
 
@@ -214,13 +219,25 @@ def _fit_level(
         dropped |= masked
     human_anchors = annotations.to_anchors(entries, up_to_level=level)
     kept_candidates = [c for c in candidates if c.tile_loc not in dropped]
-    return fit_gated(human_anchors, kept_candidates, tau)
+    return fit_gated(
+        human_anchors, kept_candidates, tau, field_estimator=field_estimator
+    )
 
 
 def _load_level_cache(
-    pair_id: int, level: int, lam: str | None = None
+    pair_id: int,
+    level: int,
+    lam: str | None = None,
+    field_estimator: str | None = None,
+    wendland_eps: float | None = None,
 ) -> list[Candidate] | None:
-    path = cache_path(pair_id, level, lam)
+    path = cache_path(
+        pair_id,
+        level,
+        lam,
+        field_estimator=field_estimator,
+        wendland_eps=wendland_eps,
+    )
     if not path.exists():
         return None
     try:
@@ -230,30 +247,65 @@ def _load_level_cache(
         return None
 
 
+def write_candidate_cache(
+    pair_id: int,
+    depth: int,
+    records: list[dict],
+    *,
+    lam: str | None = None,
+    field_estimator: str | None = None,
+    levels: list[int] | None = None,
+    wendland_eps: float | None = None,
+) -> Path:
+    lam = normalize_lam(lam)
+    est = normalize_estimator(field_estimator)
+    payload = {
+        "pair_id": pair_id,
+        "identity": pair_fingerprint(pair_id),
+        "depth": depth,
+        "levels": levels,
+        "lam": lam,
+        "field_estimator": est,
+        "candidates": records,
+    }
+    if est == "wendland":
+        eps = DEFAULT_WENDLAND_EPS if wendland_eps is None else float(wendland_eps)
+        payload["wendland_eps"] = eps
+    else:
+        eps = wendland_eps
+    out_path = cache_path(
+        pair_id, depth, lam, field_estimator=est, wendland_eps=eps
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, separators=(",", ":")))
+    return out_path
+
+
 def _coarse_field(
     pair_id: int,
     target_depth: int,
     levels: list[int],
     tau: float,
     lam: str | None = None,
+    field_estimator: str | None = None,
 ) -> Field:
-    """Coarse field going into `target_depth`: replay all c2f levels below it
-    (reproducing the saved previous-level field).
-
-    Uses branch caches when present; otherwise recomputes the LAM. A global
-    deskew, when present, is baked into the moving crops upstream (crop_core).
-    """
     lam = normalize_lam(lam)
+    est = normalize_estimator(field_estimator)
     entries = annotations.load(pair_id)
     mask_entries = masks.load(pair_id)
-    field = fit_field(annotations.to_anchors(entries, up_to_level=min(levels) - 1))
+    field = fit_field(
+        annotations.to_anchors(entries, up_to_level=min(levels) - 1),
+        field_estimator=est,
+    )
     for level in [lv for lv in levels if lv < target_depth]:
-        cands = _load_level_cache(pair_id, level, lam=lam)
+        cands = _load_level_cache(pair_id, level, lam=lam, field_estimator=est)
         if cands is None:
             cands = _level_candidates(pair_id, level, field, lam=lam)
         if cands:
             masked = masks.masked_at(mask_entries, level, [c.tile_loc for c in cands])
-            field, _ = _fit_level(field, cands, entries, level, tau, masked=masked)
+            field, _ = _fit_level(
+                field, cands, entries, level, tau, masked=masked, field_estimator=est
+            )
     return field
 
 
@@ -265,15 +317,11 @@ def compute_candidates(
     with_metrics: bool = False,
     on_progress=None,
     lam: str | None = None,
+    field_estimator: str | None = None,
 ) -> tuple[list[dict], Field]:
-    """
-    Build the coarse field by replaying all c2f levels below `target_depth`
-    (which reproduces the saved previous-level field), then compute (and return)
-    the target level's candidate records. LNCC metrics are only folded in when
-    `with_metrics` (see augment_metrics for the on-demand pass).
-    `on_progress(done, total)` reports progress over the target level's tiles.
-    """
-    field = _coarse_field(pair_id, target_depth, levels, tau, lam=lam)
+    field = _coarse_field(
+        pair_id, target_depth, levels, tau, lam=lam, field_estimator=field_estimator
+    )
     records = _level_records(
         pair_id,
         target_depth,
@@ -291,11 +339,12 @@ def cache_candidates(
     levels: list[int],
     tau: float,
     lam: str | None = None,
+    field_estimator: str | None = None,
 ) -> Path:
-    """Compute candidate records for one pair+depth and cache them under the LAM path."""
     lam = normalize_lam(lam)
+    est = normalize_estimator(field_estimator)
     print(
-        f"stage=start pair={pair_id} depth={target_depth} lam={lam}",
+        f"stage=start pair={pair_id} depth={target_depth} lam={lam} estimator={est}",
         flush=True,
     )
 
@@ -310,20 +359,18 @@ def cache_candidates(
         with_metrics=False,
         on_progress=_progress,
         lam=lam,
+        field_estimator=est,
     )
-    payload = {
-        "pair_id": pair_id,
-        "identity": pair_fingerprint(pair_id),
-        "depth": target_depth,
-        "levels": levels,
-        "lam": lam,
-        "candidates": records,
-    }
-    out_path = cache_path(pair_id, target_depth, lam)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, separators=(",", ":")))
+    out_path = write_candidate_cache(
+        pair_id,
+        target_depth,
+        records,
+        lam=lam,
+        field_estimator=est,
+        levels=levels,
+    )
     print(
-        f"pair {pair_id}  depth {target_depth}  lam {lam}: "
+        f"pair {pair_id}  depth {target_depth}  lam {lam} estimator={est}: "
         f"cached {len(records)} candidates -> {out_path.relative_to(conf.PROJECT_ROOT)}"
     )
     return out_path
@@ -335,25 +382,23 @@ def augment_metrics(
     levels: list[int],
     tau: float,
     lam: str | None = None,
+    field_estimator: str | None = None,
 ) -> Path:
-    """Add LNCC by_patch metrics to an already-cached candidate set.
-
-    Reuses each candidate's cached (u, v) instead of recomputing it, and
-    rebuilds the coarse field so the IHC base can be recropped at the prior
-    prediction. Rewrites the cache file in place, preserving identity/levels.
-    """
     lam = normalize_lam(lam)
-    out_path = cache_path(pair_id, target_depth, lam)
+    est = normalize_estimator(field_estimator)
+    out_path = cache_path(pair_id, target_depth, lam, field_estimator=est)
     if not out_path.exists():
         raise SystemExit(
-            f"no cached candidates for pair {pair_id} depth {target_depth} lam {lam}; "
-            "compute candidates first"
+            f"no cached candidates for pair {pair_id} depth {target_depth} "
+            f"lam {lam} estimator={est}; compute candidates first"
         )
     payload = json.loads(out_path.read_text())
     records = payload.get("candidates", [])
     total = len(records)
 
-    field = _coarse_field(pair_id, target_depth, levels, tau, lam=lam)
+    field = _coarse_field(
+        pair_id, target_depth, levels, tau, lam=lam, field_estimator=est
+    )
     for done, rec in enumerate(records, start=1):
         tile_loc = rec["tile_loc"]
         x, y = (int(p) for p in tile_loc.split("_"))
@@ -367,9 +412,10 @@ def augment_metrics(
 
     payload["candidates"] = records
     payload["lam"] = lam
+    payload["field_estimator"] = est
     out_path.write_text(json.dumps(payload, separators=(",", ":")))
     print(
-        f"pair {pair_id}  depth {target_depth}  lam {lam}: "
+        f"pair {pair_id}  depth {target_depth}  lam {lam} estimator={est}: "
         f"LNCC metrics for {total} candidates -> {out_path.name}"
     )
     return out_path
@@ -380,11 +426,16 @@ def process_pair(
     levels: list[int],
     tau: float,
     lam: str | None = None,
+    field_estimator: str | None = None,
 ) -> Field | None:
     lam = normalize_lam(lam)
+    est = normalize_estimator(field_estimator)
     entries = annotations.load(pair_id)
 
-    field = fit_field(annotations.to_anchors(entries, up_to_level=levels[0] - 1))
+    field = fit_field(
+        annotations.to_anchors(entries, up_to_level=levels[0] - 1),
+        field_estimator=est,
+    )
 
     total_kept = 0
     total_seen = 0
@@ -395,7 +446,9 @@ def process_pair(
             continue
         total_seen += len(candidates)
 
-        field, kept = _fit_level(field, candidates, entries, level, tau)
+        field, kept = _fit_level(
+            field, candidates, entries, level, tau, field_estimator=est
+        )
 
         total_kept += len(kept)
         print(
@@ -411,6 +464,7 @@ def process_pair(
         "levels": levels,
         "tau": tau,
         "lam": lam,
+        "field_estimator": est,
         "n_human_anchors": len(entries),
         "n_kept": total_kept,
         "n_seen": total_seen,
@@ -435,6 +489,11 @@ def main() -> None:
     parser.add_argument("--cache-depth", type=int, help="compute+cache LAM candidates for one depth (UI)")
     parser.add_argument("--metrics-depth", type=int, help="add LNCC metrics to cached candidates for one depth (UI)")
     parser.add_argument("--lam", default=DEFAULT_LAM, choices=LAMS)
+    parser.add_argument(
+        "--estimator",
+        default=DEFAULT_FIELD_ESTIMATOR,
+        choices=FIELD_ESTIMATORS,
+    )
     parser.add_argument("--levels", type=int, nargs="+", default=DEFAULT_LEVELS)
     parser.add_argument("--tau", type=float, default=DEFAULT_TAU)
     parser.add_argument("--force", action="store_true")
@@ -442,17 +501,22 @@ def main() -> None:
 
     levels = sorted(args.levels)
     lam = normalize_lam(args.lam)
+    est = normalize_estimator(args.estimator)
 
     if args.cache_depth is not None:
         if args.pair_id is None:
             parser.error("--cache-depth requires a pair_id")
-        cache_candidates(args.pair_id, args.cache_depth, levels, args.tau, lam=lam)
+        cache_candidates(
+            args.pair_id, args.cache_depth, levels, args.tau, lam=lam, field_estimator=est
+        )
         return
 
     if args.metrics_depth is not None:
         if args.pair_id is None:
             parser.error("--metrics-depth requires a pair_id")
-        augment_metrics(args.pair_id, args.metrics_depth, levels, args.tau, lam=lam)
+        augment_metrics(
+            args.pair_id, args.metrics_depth, levels, args.tau, lam=lam, field_estimator=est
+        )
         return
 
     if args.pairs is not None:
@@ -462,13 +526,13 @@ def main() -> None:
             print("Nothing to process — all pairs already have a c2f field (use --force to rerun).")
             return
         for pid in batch:
-            process_pair(pid, levels, args.tau, lam=lam)
+            process_pair(pid, levels, args.tau, lam=lam, field_estimator=est)
         return
 
     if args.pair_id is None:
         parser.error("provide a pair_id or --pairs N")
 
-    process_pair(args.pair_id, levels, args.tau, lam=lam)
+    process_pair(args.pair_id, levels, args.tau, lam=lam, field_estimator=est)
 
 
 if __name__ == "__main__":

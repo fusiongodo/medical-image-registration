@@ -13,9 +13,10 @@ export function jobKey(
 	pair: number,
 	depth: number,
 	kind: 'candidates' | 'metrics' = 'candidates',
-	lam = 'fft'
+	lam = 'fft',
+	estimator = 'tps'
 ): string {
-	const base = `${pair}:${depth}:${lam}`;
+	const base = `${pair}:${depth}:${lam}:${estimator}`;
 	return kind === 'candidates' ? base : `${base}:${kind}`;
 }
 

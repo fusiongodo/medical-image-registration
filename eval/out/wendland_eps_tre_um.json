@@ -1,0 +1,323 @@
+{
+  "unit": "\u00b5m",
+  "canvas": [
+    16384,
+    11008
+  ],
+  "diagonal": 19738.579482830064,
+  "level": 5,
+  "tile": [
+    512,
+    344
+  ],
+  "pairs": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "series": {
+    "fft": [
+      {
+        "eps": 0.1,
+        "batch_id": "anhir-full",
+        "n": 20,
+        "mean_of_medians": 521.2525718466284,
+        "mean_of_means": 602.6932635595797,
+        "mean_of_p95": 1344.7057969107855
+      },
+      {
+        "eps": 0.2,
+        "batch_id": "anhir-wen-e02",
+        "n": 20,
+        "mean_of_medians": 490.41482609103934,
+        "mean_of_means": 611.8006081673666,
+        "mean_of_p95": 1434.0202100128013
+      },
+      {
+        "eps": 0.3,
+        "batch_id": "anhir-wen-e03",
+        "n": 20,
+        "mean_of_medians": 583.0184697807383,
+        "mean_of_means": 722.1958896772475,
+        "mean_of_p95": 1583.0861796131662
+      },
+      {
+        "eps": 0.4,
+        "batch_id": "anhir-wen-e04",
+        "n": 20,
+        "mean_of_medians": 537.5196518305363,
+        "mean_of_means": 693.7082077190864,
+        "mean_of_p95": 1722.998346160357
+      },
+      {
+        "eps": 0.5,
+        "batch_id": "anhir-wen-e05",
+        "n": 20,
+        "mean_of_medians": 536.7988259529842,
+        "mean_of_means": 676.6303171572998,
+        "mean_of_p95": 1692.914762540325
+      }
+    ],
+    "superpoint_glue": [
+      {
+        "eps": 0.1,
+        "batch_id": "anhir-full",
+        "n": 20,
+        "mean_of_medians": 124.51910823803101,
+        "mean_of_means": 187.81060462708834,
+        "mean_of_p95": 569.8916223841609
+      },
+      {
+        "eps": 0.2,
+        "batch_id": "anhir-wen-e02",
+        "n": 20,
+        "mean_of_medians": 125.63501865740224,
+        "mean_of_means": 194.4138912878762,
+        "mean_of_p95": 592.5111261502782
+      },
+      {
+        "eps": 0.3,
+        "batch_id": "anhir-wen-e03",
+        "n": 20,
+        "mean_of_medians": 131.5343038822774,
+        "mean_of_means": 203.03267487960136,
+        "mean_of_p95": 663.7971118092271
+      },
+      {
+        "eps": 0.4,
+        "batch_id": "anhir-wen-e04",
+        "n": 20,
+        "mean_of_medians": 129.3076318545471,
+        "mean_of_means": 216.54810844609673,
+        "mean_of_p95": 739.1016422369631
+      },
+      {
+        "eps": 0.5,
+        "batch_id": "anhir-wen-e05",
+        "n": 20,
+        "mean_of_medians": 131.8745938257806,
+        "mean_of_means": 205.96457092739394,
+        "mean_of_p95": 629.0045149368607
+      }
+    ]
+  },
+  "um_per_pair": {
+    "0": {
+      "case": "COAD_01",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 10496,
+      "src_h": 13812,
+      "um_per_canvas_px": 2.348843023255814
+    },
+    "1": {
+      "case": "COAD_01",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 10496,
+      "src_h": 13812,
+      "um_per_canvas_px": 2.348843023255814
+    },
+    "2": {
+      "case": "COAD_01",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 10496,
+      "src_h": 13812,
+      "um_per_canvas_px": 2.348843023255814
+    },
+    "3": {
+      "case": "COAD_01",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 10724,
+      "src_h": 14131,
+      "um_per_canvas_px": 2.403091569767442
+    },
+    "4": {
+      "case": "COAD_01",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 10724,
+      "src_h": 14131,
+      "um_per_canvas_px": 2.403091569767442
+    },
+    "5": {
+      "case": "COAD_01",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 11381,
+      "src_h": 15052,
+      "um_per_canvas_px": 2.55971511627907
+    },
+    "6": {
+      "case": "COAD_02",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 8649,
+      "src_h": 9551,
+      "um_per_canvas_px": 1.6242252906976746
+    },
+    "7": {
+      "case": "COAD_02",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 8649,
+      "src_h": 9551,
+      "um_per_canvas_px": 1.6242252906976746
+    },
+    "8": {
+      "case": "COAD_02",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 8649,
+      "src_h": 9551,
+      "um_per_canvas_px": 1.6242252906976746
+    },
+    "9": {
+      "case": "COAD_02",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 8197,
+      "src_h": 10396,
+      "um_per_canvas_px": 1.7679244186046514
+    },
+    "10": {
+      "case": "COAD_02",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 8197,
+      "src_h": 10396,
+      "um_per_canvas_px": 1.7679244186046514
+    },
+    "11": {
+      "case": "COAD_02",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 8998,
+      "src_h": 10782,
+      "um_per_canvas_px": 1.8335668604651165
+    },
+    "12": {
+      "case": "COAD_03",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 10916,
+      "src_h": 14182,
+      "um_per_canvas_px": 2.411764534883721
+    },
+    "13": {
+      "case": "COAD_04",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 8794,
+      "src_h": 13915,
+      "um_per_canvas_px": 2.366359011627907
+    },
+    "14": {
+      "case": "COAD_05",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 9911,
+      "src_h": 8064,
+      "um_per_canvas_px": 1.3713488372093023
+    },
+    "15": {
+      "case": "COAD_05",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 9911,
+      "src_h": 8064,
+      "um_per_canvas_px": 1.3713488372093023
+    },
+    "16": {
+      "case": "COAD_05",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 9911,
+      "src_h": 8064,
+      "um_per_canvas_px": 1.3713488372093023
+    },
+    "17": {
+      "case": "COAD_05",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 9850,
+      "src_h": 8282,
+      "um_per_canvas_px": 1.408421511627907
+    },
+    "18": {
+      "case": "COAD_05",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 9850,
+      "src_h": 8282,
+      "um_per_canvas_px": 1.408421511627907
+    },
+    "19": {
+      "case": "COAD_05",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "scale_frac": 0.25,
+      "mpp_full_um": 0.468,
+      "src_w": 9830,
+      "src_h": 8381,
+      "um_per_canvas_px": 1.4252572674418607
+    }
+  }
+}

@@ -117,7 +117,7 @@ def resolve(
     lam: str | None = None,
 ) -> dict:
     lam = normalize_lam(lam)
-    path = cache_path(pair_id, depth, lam)
+    path = cache_path(pair_id, depth, lam, field_estimator=field_estimator)
     if not path.exists():
         return {"error": f"no cached candidates for pair {pair_id} depth {depth} lam {lam}"}
 

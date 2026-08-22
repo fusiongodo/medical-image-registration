@@ -20,6 +20,8 @@
 
 	export interface BatchConfigSummary {
 		wendland_eps?: number;
+		wendland_eps_by_lam?: Record<string, number>;
+		eps_label?: string;
 		bspline_grid?: number;
 		bspline_reg?: number;
 		gate?: string;
@@ -74,7 +76,8 @@
 	function openRegwsi() {
 		if (pairId == null) return;
 		const q = new URLSearchParams({ dataset });
-		window.open(`/eval/${pairId}/overlay/regwsi?${q}`, `eval-overlay-${pairId}-regwsi`);
+		if (batchId) q.set('batch', batchId);
+		window.open(`/eval/${pairId}/overlay/regwsi?${q}`, `eval-overlay-${pairId}`);
 	}
 
 	function openMethod(m: MethodCell) {
@@ -85,14 +88,55 @@
 			batch: batchId,
 			dataset
 		});
-		window.open(
-			`/eval/${pairId}/overlay/fieldset?${q}`,
-			`eval-overlay-${pairId}-${m.lam}-${m.field_estimator}`
-		);
+		window.open(`/eval/${pairId}/overlay/fieldset?${q}`, `eval-overlay-${pairId}`);
 	}
 
 	const methods = $derived(tre?.methods ?? []);
 	const cfg = $derived(tre?.config ?? null);
+
+	let cpuRt = $state<{
+		hosts: Record<
+			string,
+			{
+				threads?: number;
+				methods?: Record<string, { runtime_s?: number }>;
+			}
+		>;
+	} | null>(null);
+
+	$effect(() => {
+		if (pairId == null) {
+			cpuRt = null;
+			return;
+		}
+		const p = pairId;
+		const ds = dataset;
+		void fetch(`/api/eval/cpu-runtime?pair=${p}&dataset=${ds}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((j) => {
+				if (p !== pairId) return;
+				cpuRt = j;
+			})
+			.catch(() => {
+				if (p === pairId) cpuRt = null;
+			});
+	});
+
+	const cpuHosts = $derived.by(() => {
+		const h = cpuRt?.hosts ?? {};
+		return ['vps', 'm4'].filter((k) => h[k]);
+	});
+	const cpuMethods = ['regwsi', 'fft', 'superpoint_glue'] as const;
+	const cpuLabels: Record<(typeof cpuMethods)[number], string> = {
+		regwsi: 'regWSI',
+		fft: 'FFT',
+		superpoint_glue: 'SP+LG'
+	};
+
+	function cpuSec(host: string, method: string): number | null {
+		const v = cpuRt?.hosts?.[host]?.methods?.[method]?.runtime_s;
+		return typeof v === 'number' ? v : null;
+	}
 </script>
 
 <aside class="tre-panel">
@@ -120,7 +164,7 @@
 	{:else if tre}
 		{#if cfg}
 			<div class="cfg">
-				<span>Wendland ε={cfg.wendland_eps ?? '—'}</span>
+				<span>{cfg.eps_label ?? `Wendland ε=${cfg.wendland_eps ?? '—'}`}</span>
 				<span>B-spline grid={cfg.bspline_grid ?? '—'} reg={cfg.bspline_reg ?? '—'}</span>
 				<span>{cfg.gate ?? ''}</span>
 				{#if cfg.fingerprint}
@@ -193,6 +237,31 @@
 			</table>
 		</div>
 		<p class="n">n = {tre.n} landmarks · runtime = this pair · avg = mean over batch pairs with a stored time</p>
+		{#if cpuHosts.length}
+			<div class="cpu-rt">
+				<p class="cpu-h">CPU wall clock</p>
+				<table>
+					<thead>
+						<tr>
+							<th></th>
+							{#each cpuMethods as m}
+								<th>{cpuLabels[m]}</th>
+							{/each}
+						</tr>
+					</thead>
+					<tbody>
+						{#each cpuHosts as host}
+							<tr class="runtime">
+								<td>{host}</td>
+								{#each cpuMethods as m}
+									<td>{fmtSec(cpuSec(host, m))}</td>
+								{/each}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
 		<div class="actions">
 			<button type="button" class="btn" disabled={tre.regwsi.mean == null} onclick={openRegwsi}>
 				Open regWSI overlay
@@ -314,6 +383,14 @@
 		margin: 0;
 		font-size: 0.72rem;
 		color: #6b7280;
+	}
+	.cpu-h {
+		margin: 0 0 0.35rem;
+		font-size: 0.72rem;
+		color: #9ca3af;
+	}
+	.cpu-rt {
+		margin-top: 0.15rem;
 	}
 	.actions {
 		display: flex;

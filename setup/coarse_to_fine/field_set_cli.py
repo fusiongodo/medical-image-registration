@@ -132,7 +132,7 @@ def _field_path(pair_id: int) -> Path:
 
 
 def _cache_paths(pair_id: int) -> list[Path]:
-    return cache_paths(pair_id, _BRANCH_LAM)
+    return cache_paths(pair_id, _BRANCH_LAM, field_estimator=_BRANCH_ESTIMATOR)
 
 
 def _field_meta(pair_id: int) -> dict:
@@ -296,7 +296,7 @@ def load_set(pair_id: int, set_id: str) -> dict:
         stale.unlink()
     cache_src = set_dir / "candidates"
     if cache_src.exists():
-        dst_dir = cache_dir(_BRANCH_LAM)
+        dst_dir = cache_dir(_BRANCH_LAM, field_estimator=_BRANCH_ESTIMATOR)
         dst_dir.mkdir(parents=True, exist_ok=True)
         for src in sorted(cache_src.glob(f"{pair_id}_d*.json")):
             shutil.copy2(src, dst_dir / src.name)

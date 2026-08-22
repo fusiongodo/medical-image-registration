@@ -1,0 +1,12 @@
+\begin{tabular}{@{}lccccccc@{}}
+    \toprule
+    & \multicolumn{2}{c}{Average rTRE} & \multicolumn{2}{c}{Median rTRE} & \multicolumn{2}{c}{Max rTRE} & Mean Time \\
+    \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+    Method & AArTRE & AMrTRE & MArTRE & MMrTRE & AMxrTRE & MMxrTRE & [s] \\
+    \midrule
+    DeeperHistReg / regWSI & 0.0234 $\pm$ 0.1334 & 0.0219 $\pm$ 0.1334 & 0.0034 & 0.0020 & 0.0478 $\pm$ 0.1464 & 0.0227 & 61.9\textsuperscript{*} \\
+    SP+LG $\times$ Wendland ($\varepsilon=0.1$) & 0.0249 $\pm$ 0.1334 & 0.0232 $\pm$ 0.1333 & 0.0045 & 0.0033 & 0.0527 $\pm$ 0.1446 & 0.0272 & 102.5\textsuperscript{*} \\
+    FFT $\times$ Wendland ($\varepsilon=0.2$) & 0.0396 $\pm$ 0.1337 & 0.0366 $\pm$ 0.1332 & 0.0128 & 0.0099 & 0.0811 $\pm$ 0.1525 & 0.0479 & 99.1\textsuperscript{*} \\
+    Initial & 0.0661 $\pm$ 0.0952 & 0.0652 $\pm$ 0.0935 & 0.0387 & 0.0391 & 0.1199 $\pm$ 0.1596 & 0.0730 & --- \\
+    \bottomrule
+\end{tabular}

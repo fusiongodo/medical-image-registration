@@ -10,23 +10,34 @@ const PYTHON = resolve(REPO_ROOT, '.venv', 'bin', 'python3');
 const SCRIPT = resolve(REPO_ROOT, 'setup', 'coarse_to_fine', 'run.py');
 
 const LAMS = new Set(['fft', 'superpoint_glue']);
+const ESTIMATORS = new Set(['tps', 'wendland', 'bspline']);
 
 function normalizeLam(raw: unknown): string {
 	return typeof raw === 'string' && LAMS.has(raw) ? raw : 'fft';
 }
 
+function normalizeEstimator(raw: unknown): string {
+	return typeof raw === 'string' && ESTIMATORS.has(raw) ? raw : 'tps';
+}
+
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
 	if (!body || typeof body.pair_id !== 'number' || typeof body.depth !== 'number') {
-		error(400, 'Expected { pair_id: number, depth: number, lam? }');
+		error(400, 'Expected { pair_id: number, depth: number, lam?, estimator? }');
 	}
 
-	const { pair_id, depth } = body as { pair_id: number; depth: number; lam?: string };
+	const { pair_id, depth } = body as {
+		pair_id: number;
+		depth: number;
+		lam?: string;
+		estimator?: string;
+	};
 	const lam = normalizeLam(body.lam);
+	const estimator = normalizeEstimator(body.estimator);
 	if (pair_id < 0 || pair_id >= pairCount()) {
 		error(400, `Pair ${pair_id} does not exist (valid range 0..${pairCount() - 1})`);
 	}
-	const key = jobKey(pair_id, depth, 'metrics', lam);
+	const key = jobKey(pair_id, depth, 'metrics', lam, estimator);
 
 	const existing = jobs.get(key);
 	if (existing?.running) {
@@ -38,7 +49,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	const child = spawn(
 		PYTHON,
-		[SCRIPT, String(pair_id), '--metrics-depth', String(depth), '--lam', lam],
+		[SCRIPT, String(pair_id), '--metrics-depth', String(depth), '--lam', lam, '--estimator', estimator],
 		{ cwd: REPO_ROOT }
 	);
 

@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { CNN_WIDTH, CNN_HEIGHT } from '$lib/types';
 
 	export type MovingLayer = string;
+	type MethodId = 'regwsi' | 'fft' | 'superpoint_glue';
 
 	let {
 		pairId,
@@ -10,7 +12,10 @@
 		movingLayer,
 		fullMeta,
 		movingReady = true,
-		dataset = 'muromi'
+		dataset = 'muromi',
+		batch = null,
+		lam = null,
+		estimator = null
 	}: {
 		pairId: number;
 		title: string;
@@ -19,6 +24,9 @@
 		fullMeta: { w: number; h: number; qw: number; qh: number; nq?: number };
 		movingReady?: boolean;
 		dataset?: 'muromi' | 'acrobat' | 'anhir';
+		batch?: string | null;
+		lam?: string | null;
+		estimator?: string | null;
 	} = $props();
 
 	const MAX_ZOOM = 40;
@@ -43,7 +51,11 @@
 
 	let emphasis = $state<'he' | 'ihc' | null>(null);
 	let showGrid = $state(true);
+	let showLandmarks = $state(true);
 	let loaded = $state(0);
+	let landmarks = $state<{ he: [number, number]; ihc?: [number, number] }[]>([]);
+	let pointErr = $state<number[]>([]);
+	let ihcWarped = $state<[number, number][]>([]);
 
 	const heOpacity = $derived(emphasis === 'ihc' ? 0 : 1);
 	const ihcOpacity = $derived(emphasis === 'he' ? 0 : emphasis === 'ihc' ? 1 : 0.5);
@@ -57,6 +69,24 @@
 	const cellH = $derived(imgH > 0 ? imgH / GRID : CNN_HEIGHT);
 	const vLines = $derived(Array.from({ length: GRID + 1 }, (_, i) => i * cellW));
 	const hLines = $derived(Array.from({ length: GRID + 1 }, (_, i) => i * cellH));
+	const lmR = $derived(6 / Math.max(scale, 1e-6));
+	const HE_LM = '#7c3aed';
+	const IHC_LM = '#f97316';
+
+	function inUnit(pt: [number, number] | undefined): pt is [number, number] {
+		return (
+			!!pt &&
+			pt.length === 2 &&
+			Number.isFinite(pt[0]) &&
+			Number.isFinite(pt[1]) &&
+			pt[0] >= 0 &&
+			pt[0] <= 1 &&
+			pt[1] >= 0 &&
+			pt[1] <= 1
+		);
+	}
+	const lmFont = $derived(11 / Math.max(scale, 1e-6));
+	const showLmLabels = $derived(landmarks.length > 0 && landmarks.length <= 40);
 
 	function quadSrc(layer: 'he' | MovingLayer, qy: number, qx: number) {
 		return `/api/eval/full?pair=${pairId}&layer=${layer}&qy=${qy}&qx=${qx}&dataset=${dataset}`;
@@ -77,6 +107,86 @@
 	function toggleEmphasis(side: 'he' | 'ihc') {
 		emphasis = emphasis === side ? null : side;
 	}
+
+	const activeMethod = $derived(
+		lam === 'superpoint_glue' ? 'superpoint_glue' : lam === 'fft' ? 'fft' : 'regwsi'
+	);
+	const fieldEstimator = $derived(estimator && estimator.length ? estimator : 'wendland');
+
+	function overlayUrl(m: MethodId) {
+		const q = new URLSearchParams({ dataset });
+		if (batch) q.set('batch', batch);
+		q.set('estimator', fieldEstimator);
+		if (m === 'regwsi') return `/eval/${pairId}/overlay/regwsi?${q}`;
+		q.set('lam', m);
+		return `/eval/${pairId}/overlay/fieldset?${q}`;
+	}
+
+	function switchMethod(m: MethodId) {
+		if (m === activeMethod) return;
+		void goto(overlayUrl(m), { replaceState: true, noScroll: true, keepFocus: true });
+	}
+
+	$effect(() => {
+		const p = pairId;
+		const ds = dataset;
+		let cancelled = false;
+		landmarks = [];
+		void fetch(`/api/eval/landmarks?pair=${p}&dataset=${ds}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d) => {
+				if (cancelled) return;
+				landmarks = Array.isArray(d?.points) ? d.points : [];
+			})
+			.catch(() => {
+				if (!cancelled) landmarks = [];
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	$effect(() => {
+		const p = pairId;
+		const ds = dataset;
+		const b = batch;
+		const L = lam;
+		const E = estimator;
+		let cancelled = false;
+		pointErr = [];
+		ihcWarped = [];
+		const q = new URLSearchParams({ pair: String(p), dataset: ds });
+		if (b) q.set('batch', b);
+		void fetch(`/api/eval/tre?${q}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d) => {
+				if (cancelled || !d) return;
+				let arr: number[] = [];
+				let warped: [number, number][] = [];
+				if (L && E && Array.isArray(d.methods)) {
+					const m = d.methods.find(
+						(x: {
+							lam?: string;
+							field_estimator?: string;
+							tre?: { per_point?: number[]; ihc_warped?: [number, number][] };
+						}) => x.lam === L && x.field_estimator === E
+					);
+					arr = m?.tre?.per_point ?? [];
+					warped = m?.tre?.ihc_warped ?? [];
+				} else {
+					arr = d.regwsi?.per_point ?? [];
+					warped = d.regwsi?.ihc_warped ?? [];
+				}
+				pointErr = Array.isArray(arr) ? arr : [];
+				ihcWarped = Array.isArray(warped) ? warped : [];
+			})
+			.catch(() => {
+				if (!cancelled) pointErr = [];
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	$effect(() => {
 		void pairId;
@@ -167,6 +277,26 @@
 				<button
 					type="button"
 					class="emph-pill"
+					class:active={activeMethod === 'regwsi'}
+					onclick={() => switchMethod('regwsi')}
+				>regWSI</button>
+				<button
+					type="button"
+					class="emph-pill"
+					class:active={activeMethod === 'fft'}
+					onclick={() => switchMethod('fft')}
+				>FFT</button>
+				<button
+					type="button"
+					class="emph-pill"
+					class:active={activeMethod === 'superpoint_glue'}
+					onclick={() => switchMethod('superpoint_glue')}
+				>SP+LG</button>
+			</span>
+			<span class="emph-pills">
+				<button
+					type="button"
+					class="emph-pill"
 					class:active={emphasis === 'he'}
 					onclick={() => toggleEmphasis('he')}
 					title="Show only HE (Shift+Q)"
@@ -182,6 +312,10 @@
 			<label class="chk">
 				<input type="checkbox" bind:checked={showGrid} />
 				L5 grid
+			</label>
+			<label class="chk">
+				<input type="checkbox" bind:checked={showLandmarks} />
+				Landmarks
 			</label>
 			<button type="button" class="reset" onclick={fit} disabled={!allLoaded}>Reset view</button>
 			<span class="zoom">{allLoaded ? `${(scale / baseScale).toFixed(1)}×` : `${loaded}/${totalImgs}`}</span>
@@ -245,6 +379,29 @@
 						{/each}
 						{#each hLines as y}
 							<line x1={0} y1={y} x2={imgW} y2={y} />
+						{/each}
+					</svg>
+				{/if}
+				{#if showLandmarks && imgW && imgH && landmarks.length}
+					<svg class="lms" width={imgW} height={imgH} viewBox={`0 0 ${imgW} ${imgH}`} aria-hidden="true">
+						{#each landmarks as p, i}
+							{@const ihc = inUnit(ihcWarped[i]) ? ihcWarped[i] : inUnit(p.ihc) ? p.ihc : p.he}
+							{#if emphasis !== 'ihc' && p.he?.length === 2}
+								{@const x = p.he[0] * imgW}
+								{@const y = p.he[1] * imgH}
+								<circle class="he" cx={x} cy={y} r={lmR} fill={HE_LM} />
+								{#if showLmLabels}
+									<text x={x + lmR * 1.4} y={y} font-size={lmFont}>{i}</text>
+								{/if}
+							{/if}
+							{#if emphasis !== 'he' && ihc?.length === 2}
+								{@const x = ihc[0] * imgW}
+								{@const y = ihc[1] * imgH}
+								<circle class="ihc" cx={x} cy={y} r={lmR} fill={IHC_LM} />
+								{#if showLmLabels && emphasis === 'ihc'}
+									<text x={x + lmR * 1.4} y={y} font-size={lmFont}>{i}</text>
+								{/if}
+							{/if}
 						{/each}
 					</svg>
 				{/if}
@@ -397,6 +554,27 @@
 		stroke: rgba(255, 255, 255, 0.4);
 		stroke-width: 1;
 		vector-effect: non-scaling-stroke;
+	}
+	.lms {
+		position: absolute;
+		top: 0;
+		left: 0;
+		pointer-events: none;
+		overflow: visible;
+	}
+	.lms circle.he,
+	.lms circle.ihc {
+		stroke: #0f1117;
+		stroke-width: 1.25;
+		vector-effect: non-scaling-stroke;
+	}
+	.lms text {
+		fill: #e8eaf0;
+		paint-order: stroke;
+		stroke: #0f1117;
+		stroke-width: 3;
+		vector-effect: non-scaling-stroke;
+		dominant-baseline: middle;
 	}
 	.loading {
 		position: absolute;

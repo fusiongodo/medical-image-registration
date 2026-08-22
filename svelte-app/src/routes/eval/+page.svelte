@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import EvalEpsSweep from '$lib/eval/EvalEpsSweep.svelte';
 	import EvalTreMatrix, { type BatchTreResult } from '$lib/eval/EvalTreMatrix.svelte';
 	import type { BatchJobState } from '$lib/evalJobs';
 
@@ -8,6 +9,7 @@
 		pairs: {
 			pairId: number;
 			ready: boolean;
+			mosaicReady: boolean;
 			landmarkCount: number;
 			mainSetId: string | null;
 			mainSetName: string | null;
@@ -35,7 +37,13 @@
 	let tre = $state<BatchTreResult | null>(null);
 	let treBusy = $state(false);
 	let treErr = $state<string | null>(null);
+	let pairTres = $state<
+		Record<string, { regwsi: number | null; fft: number | null; superpoint_glue: number | null }>
+	>({});
 	let fetchGen = 0;
+	type TreKey = 'regwsi' | 'fft' | 'superpoint_glue';
+	let sortKey = $state<TreKey | 'pair'>('pair');
+	let sortDir = $state<'asc' | 'desc'>('asc');
 
 	let showNew = $state(false);
 	let newName = $state('');
@@ -67,12 +75,29 @@
 			: (selectedBatch?.status?.detail || runJob?.detail || null)
 	);
 	const listPairs = $derived.by(() => {
+		let rows;
 		if (selectedBatch?.pairs?.length) {
 			const set = new Set(selectedBatch.pairs);
-			return data.pairs.filter((p) => set.has(p.pairId));
+			rows = data.pairs.filter((p) => set.has(p.pairId));
+		} else if (dataset !== 'muromi') {
+			rows = data.pairs;
+		} else {
+			rows = data.pairs.filter((p) => p.landmarkCount > 0);
 		}
-		if (dataset !== 'muromi') return data.pairs;
-		return data.pairs.filter((p) => p.landmarkCount > 0);
+		const key = sortKey;
+		const dir = sortDir === 'asc' ? 1 : -1;
+		return [...rows].sort((a, b) => {
+			if (key === 'pair') return (a.pairId - b.pairId) * dir;
+			const va = pairTres[String(a.pairId)]?.[key];
+			const vb = pairTres[String(b.pairId)]?.[key];
+			const na = va == null || !Number.isFinite(va);
+			const nb = vb == null || !Number.isFinite(vb);
+			if (na && nb) return a.pairId - b.pairId;
+			if (na) return 1;
+			if (nb) return -1;
+			const d = (va as number) - (vb as number);
+			return d === 0 ? a.pairId - b.pairId : d * dir;
+		});
 	});
 	const selected = $derived(
 		selectedPair == null ? null : (data.pairs.find((p) => p.pairId === selectedPair) ?? null)
@@ -121,6 +146,7 @@
 				tre = null;
 			} else {
 				tre = json;
+				if (batchId) void loadPairTres(batchId);
 			}
 		} catch (e) {
 			if (gen !== fetchGen) return;
@@ -238,6 +264,7 @@
 			if (j && !j.running) {
 				stopRunPoll();
 				await loadBatches();
+				if (batchId) void loadPairTres(batchId);
 				if (selectedPair != null) void fetchTre(selectedPair);
 			} else if (j?.running) {
 				const b = batches.find((x) => x.id === batchId);
@@ -287,6 +314,44 @@
 		void batchId;
 		if (selectedPair != null) void fetchTre(selectedPair);
 	});
+
+	$effect(() => {
+		const id = batchId;
+		pairTres = {};
+		if (!id) return;
+		let cancelled = false;
+		void loadPairTres(id).catch(() => {
+			if (!cancelled) pairTres = {};
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	async function loadPairTres(id: string) {
+		const r = await fetch(`/api/eval/pair-tres?batch=${encodeURIComponent(id)}`);
+		if (!r.ok) throw new Error(await r.text());
+		const j = await r.json();
+		if (id !== batchId) return;
+		pairTres = j.pairs ?? {};
+	}
+
+	function fmtTre(v: number | null | undefined) {
+		return v == null ? '—' : v.toFixed(2);
+	}
+
+	function setSort(key: TreKey | 'pair') {
+		if (sortKey === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+		else {
+			sortKey = key;
+			sortDir = 'asc';
+		}
+	}
+
+	function sortMark(key: TreKey | 'pair') {
+		if (sortKey !== key) return '';
+		return sortDir === 'asc' ? ' ↑' : ' ↓';
+	}
 </script>
 
 <div class="page">
@@ -353,21 +418,67 @@
 					{/if}
 				</p>
 			</header>
+			{#if dataset === 'anhir'}
+				<EvalEpsSweep {dataset} />
+			{/if}
+			<div class="list-head row">
+				<div class="main">
+					<button type="button" class="sort" class:on={sortKey === 'pair'} onclick={() => setSort('pair')}>
+						Pair{sortMark('pair')}
+					</button>
+					<span class="tres">
+						<button type="button" class="sort" class:on={sortKey === 'regwsi'} onclick={() => setSort('regwsi')}
+							>reg{sortMark('regwsi')}</button
+						>
+						<button type="button" class="sort" class:on={sortKey === 'fft'} onclick={() => setSort('fft')}
+							>fft{sortMark('fft')}</button
+						>
+						<button
+							type="button"
+							class="sort"
+							class:on={sortKey === 'superpoint_glue'}
+							onclick={() => setSort('superpoint_glue')}>sp{sortMark('superpoint_glue')}</button
+						>
+					</span>
+					<span class="meta"></span>
+				</div>
+				<span class="action ghost">Annotate</span>
+				<span class="action ghost">Overlay</span>
+			</div>
 			<ul class="list">
 				{#each listPairs as p}
 					<li class:ready={p.ready} class:selected={selectedPair === p.pairId}>
 						<div class="row">
 							<button type="button" class="main" onclick={() => selectPair(p.pairId)}>
 								<span class="label">Pair {p.pairId}</span>
+								{#if batchId}
+									{@const t = pairTres[String(p.pairId)]}
+									<span class="tres" title="regWSI / FFT / SP+LG">
+										<span>{fmtTre(t?.regwsi)}</span>
+										<span>{fmtTre(t?.fft)}</span>
+										<span>{fmtTre(t?.superpoint_glue)}</span>
+									</span>
+								{:else}
+									<span class="tres"></span>
+								{/if}
 								<span class="meta">
 									{#if p.landmarkCount > 0}
 										<span class="landmarks">{p.landmarkCount} landmarks</span>
 									{/if}
-									<span class="badge">{p.ready ? 'regWSI' : 'no regWSI'}</span>
+									<span class="badge" class:ok={p.ready}>{p.ready ? 'regWSI' : 'no regWSI'}</span>
+									<span class="badge" class:ok={p.mosaicReady} title={p.mosaicReady ? 'Overlay mosaic ready' : 'Overlay mosaic not built yet'}
+										>{p.mosaicReady ? 'mosaic' : 'no mosaic'}</span
+									>
 								</span>
 							</button>
 							<a class="action" href={`/eval/${p.pairId}/annotate?dataset=${dataset}`}>Annotate</a>
-							<a class="action" href={`/eval/${p.pairId}/overlay/regwsi?dataset=${dataset}`}>Overlay</a>
+							<a
+								class="action"
+								href={`/eval/${p.pairId}/overlay/regwsi?${new URLSearchParams({
+									dataset,
+									...(batchId ? { batch: batchId } : {})
+								})}`}>Overlay</a
+							>
 						</div>
 					</li>
 				{/each}
@@ -532,6 +643,37 @@
 		color: #9ca3af;
 		max-width: 40rem;
 	}
+	.list-head {
+		margin-bottom: 0.2rem;
+	}
+	.list-head .main {
+		padding: 0.15rem 0.75rem;
+		border: none;
+		background: transparent;
+		cursor: default;
+	}
+	.list-head .sort {
+		padding: 0;
+		border: none;
+		background: none;
+		color: #6b7280;
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		cursor: pointer;
+		text-align: right;
+	}
+	.list-head .sort.on {
+		color: #93c5fd;
+	}
+	.list-head .main > .sort {
+		text-align: left;
+	}
+	.action.ghost {
+		visibility: hidden;
+		pointer-events: none;
+	}
 	.list {
 		list-style: none;
 		margin: 0;
@@ -547,8 +689,9 @@
 	}
 	.main {
 		flex: 1;
-		display: flex;
-		justify-content: space-between;
+		display: grid;
+		grid-template-columns: 7rem auto 1fr;
+		align-items: center;
 		gap: 0.75rem;
 		padding: 0.55rem 0.75rem;
 		border: 1px solid #2a2d3a;
@@ -569,15 +712,30 @@
 		display: flex;
 		gap: 0.5rem;
 		align-items: center;
+		justify-self: end;
 		font-size: 0.72rem;
 		color: #9ca3af;
+	}
+	.tres {
+		display: grid;
+		grid-template-columns: 6.5ch 6.5ch 6.5ch;
+		column-gap: 0.7rem;
+		justify-self: start;
+		font-variant-numeric: tabular-nums;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		color: #e8eaf0;
+		min-height: 1em;
+	}
+	.tres span {
+		text-align: right;
 	}
 	.badge {
 		padding: 0.1rem 0.35rem;
 		border-radius: 3px;
 		background: #1f2330;
+		color: #6b7280;
 	}
-	li.ready .badge {
+	.badge.ok {
 		color: #86efac;
 	}
 	.action {

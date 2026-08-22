@@ -31,6 +31,16 @@ Image.MAX_IMAGE_PIXELS = None
 INDEX_CSV = "dataset_medium.csv"
 
 
+def _zip_prefix(zf: zipfile.ZipFile) -> str:
+    names = zf.namelist()
+    if INDEX_CSV in names:
+        return ""
+    nested = f"dataset_medium/{INDEX_CSV}"
+    if nested in names:
+        return "dataset_medium/"
+    raise FileNotFoundError(f"{INDEX_CSV} not in zip")
+
+
 def parse_pairs_spec(spec: str | None) -> list[int] | None:
     if spec is None or not str(spec).strip():
         return None
@@ -64,8 +74,8 @@ def _open_zip(zip_path: Path | None = None) -> zipfile.ZipFile:
     return zipfile.ZipFile(path)
 
 
-def _read_index(zf: zipfile.ZipFile) -> list[dict]:
-    raw = zf.read(INDEX_CSV).decode("utf-8")
+def _read_index(zf: zipfile.ZipFile, prefix: str = "") -> list[dict]:
+    raw = zf.read(f"{prefix}{INDEX_CSV}").decode("utf-8")
     return list(csv.DictReader(io.StringIO(raw)))
 
 
@@ -85,15 +95,16 @@ def discover_training_pairs(zf: zipfile.ZipFile | None = None) -> list[dict]:
         close = True
     try:
         names = set(zf.namelist())
-        rows = _read_index(zf)
+        prefix = _zip_prefix(zf)
+        rows = _read_index(zf, prefix)
         pairs: list[dict] = []
         for row in rows:
             if (row.get("status") or "").strip().lower() != "training":
                 continue
-            src_im = row["Source image"]
-            tgt_im = row["Target image"]
-            src_lm = row["Source landmarks"]
-            tgt_lm = row["Target landmarks"]
+            src_im = f"{prefix}{row['Source image']}"
+            tgt_im = f"{prefix}{row['Target image']}"
+            src_lm = f"{prefix}{row['Source landmarks']}"
+            tgt_lm = f"{prefix}{row['Target landmarks']}"
             if src_lm not in names or tgt_lm not in names:
                 continue
             if src_im not in names or tgt_im not in names:
@@ -114,8 +125,8 @@ def discover_training_pairs(zf: zipfile.ZipFile | None = None) -> list[dict]:
                 {
                     "id": pair_id,
                     "csv_index": int(row.get("", pair_id) or pair_id),
-                    "case": _case_name(src_im),
-                    "scale": _scale_tag(src_im),
+                    "case": _case_name(row["Source image"]),
+                    "scale": _scale_tag(row["Source image"]),
                     "source_image": src_im,
                     "target_image": tgt_im,
                     "source_landmarks": src_lm,

@@ -162,3 +162,32 @@ def pair_fingerprint(pair_id: int, dataset: str | None = None) -> dict:
 def cache_namespace(dataset: str | None = None) -> str | None:
     ds = normalize_dataset(dataset) if dataset else active_dataset()
     return None if ds == "muromi" else ds
+
+
+def ensure_canvas_tiffs(pair_id: int) -> None:
+    from regWSI import paths as rpaths
+
+    pair_id = int(pair_id)
+    he = rpaths.he_tiff(pair_id)
+    ihc = rpaths.ihc_tiff(pair_id)
+    if he.is_file() and ihc.is_file():
+        return
+    ds = active_dataset()
+    if ds not in CANVAS_TIFF_DATASETS:
+        missing = he if not he.is_file() else ihc
+        raise FileNotFoundError(f"missing {missing}")
+    zip_path = ANHIR_ZIP if ds == "anhir" else ACROBAT_ZIP
+    print("done=0 total=1 stage=ingest", flush=True)
+    if ds == "anhir":
+        from setup.anhir.ingest import ingest
+
+        ingest(pair_ids=[pair_id], force=False)
+    else:
+        from setup.acrobat.ingest import ingest
+
+        ingest(unzip=True, pair_ids=[pair_id], force=False)
+    if not he.is_file() or not ihc.is_file():
+        missing = he if not he.is_file() else ihc
+        raise FileNotFoundError(
+            f"missing {missing}; ingest from {zip_path} failed or zip is absent"
+        )

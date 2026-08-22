@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -38,7 +39,7 @@ from setup.coarse_to_fine.field import (
     tau_for_keep,
 )
 from setup.coarse_to_fine.reg_branches import cache_path, normalize_estimator, normalize_lam
-from setup.coarse_to_fine.run import cache_candidates
+from setup.coarse_to_fine.run import _level_records, write_candidate_cache
 
 
 def _canvas_ingest(ds_name: str, pairs: list[int], *, force: bool = False) -> dict | None:
@@ -106,6 +107,14 @@ def _regwsi_ready(pair_id: int, *, force: bool = False) -> bool:
     )
 
 
+def _migrate_regwsi_rigids(pairs: list[int]) -> None:
+    from regWSI.extract_rigid import ensure_regwsi_rigid
+
+    for pair_id in pairs:
+        if ensure_regwsi_rigid(pair_id):
+            _emit("rigid_migrated", pair=pair_id)
+
+
 def _lam_pending(
     batch_id: str,
     pair_id: int,
@@ -155,27 +164,24 @@ def _emit(stage: str, **kv) -> None:
     print(" ".join(parts), flush=True)
 
 
-def _load_level_candidates(pair_id: int, level: int, lam: str) -> list[Candidate]:
-    path = cache_path(pair_id, level, lam)
+def _load_level_candidates(
+    pair_id: int,
+    level: int,
+    lam: str,
+    field_estimator: str,
+    wendland_eps: float | None = None,
+) -> list[Candidate]:
+    path = cache_path(
+        pair_id,
+        level,
+        lam,
+        field_estimator=field_estimator,
+        wendland_eps=wendland_eps,
+    )
     if not path.exists():
         return []
     payload = json.loads(path.read_text())
     return [candidate_from_dict(level, d) for d in payload.get("candidates", [])]
-
-
-def _ensure_lam_caches(
-    pair_id: int,
-    levels: list[int],
-    lam: str,
-    force: bool,
-) -> None:
-    for level in sorted(levels):
-        path = cache_path(pair_id, level, lam)
-        if path.exists() and not force:
-            _emit("cache_hit", pair=pair_id, lam=lam, level=level)
-            continue
-        _emit("cache_compute", pair=pair_id, lam=lam, level=level)
-        cache_candidates(pair_id, level, levels, float("inf"), lam=lam)
 
 
 def _fit_pair_lam_estimator(
@@ -186,6 +192,7 @@ def _fit_pair_lam_estimator(
     wendland_eps: float,
     bspline_grid: int,
     bspline_reg: float,
+    force: bool,
 ) -> tuple[Field, dict]:
     import setup.coarse_to_fine.field as field_mod
 
@@ -195,6 +202,7 @@ def _fit_pair_lam_estimator(
 
     entries = annotations.load(pair_id)
     mask_entries = masks.load(pair_id)
+    t_init = time.perf_counter()
     field = fit_field(
         annotations.to_anchors(entries, up_to_level=min(levels) - 1),
         field_estimator=estimator,
@@ -202,13 +210,58 @@ def _fit_pair_lam_estimator(
         bspline_grid=bspline_grid,
         bspline_reg=bspline_reg,
     )
+    init_fit_s = time.perf_counter() - t_init
 
     total_kept = 0
     total_seen = 0
     level_gates: dict[str, dict] = {}
+    level_times: dict[str, dict] = {}
+    lam_s_total = 0.0
+    fit_s_total = init_fit_s
     for level in sorted(levels):
-        cands = _load_level_candidates(pair_id, level, lam)
+        path = cache_path(
+            pair_id,
+            level,
+            lam,
+            field_estimator=estimator,
+            wendland_eps=wendland_eps,
+        )
+        t_lam = time.perf_counter()
+        if path.exists() and not force:
+            _emit("cache_hit", pair=pair_id, lam=lam, estimator=estimator, level=level)
+            cands = _load_level_candidates(
+                pair_id, level, lam, estimator, wendland_eps=wendland_eps
+            )
+            cache_kind = "hit"
+        else:
+            _emit(
+                "cache_compute",
+                pair=pair_id,
+                lam=lam,
+                estimator=estimator,
+                level=level,
+            )
+            records = _level_records(pair_id, level, field, lam=lam)
+            write_candidate_cache(
+                pair_id,
+                level,
+                records,
+                lam=lam,
+                field_estimator=estimator,
+                levels=levels,
+                wendland_eps=wendland_eps,
+            )
+            cands = [candidate_from_dict(level, d) for d in records]
+            cache_kind = "compute"
+        lam_s = time.perf_counter() - t_lam
         if not cands:
+            level_times[str(level)] = {
+                "lam_s": lam_s,
+                "fit_s": 0.0,
+                "cache": cache_kind,
+                "n_cands": 0,
+            }
+            lam_s_total += lam_s
             continue
         masked = masks.masked_at(mask_entries, level, [c.tile_loc for c in cands])
         excluded = {
@@ -221,6 +274,7 @@ def _fit_pair_lam_estimator(
         ]
         human = annotations.to_anchors(entries, up_to_level=level)
         keep = eval_runs.keep_for_level(level)
+        t_fit = time.perf_counter()
         if keep >= 1.0:
             tau = float("inf")
         else:
@@ -228,6 +282,16 @@ def _fit_pair_lam_estimator(
         field, kept = fit_gated(
             human, fit_cands, tau, field_estimator=estimator
         )
+        fit_s = time.perf_counter() - t_fit
+        level_times[str(level)] = {
+            "lam_s": lam_s,
+            "fit_s": fit_s,
+            "cache": cache_kind,
+            "n_cands": len(fit_cands),
+            "n_kept": len(kept),
+        }
+        lam_s_total += lam_s
+        fit_s_total += fit_s
         level_gates[str(level)] = {
             "exclude_pct": 1.0 - keep,
             "keep": keep,
@@ -245,6 +309,10 @@ def _fit_pair_lam_estimator(
             str(k): float(v) for k, v in eval_runs.EXCLUDE_PCT_BY_LEVEL.items()
         },
         "level_gates": level_gates,
+        "level_times": level_times,
+        "lam_s": lam_s_total,
+        "fit_s": fit_s_total,
+        "init_fit_s": init_fit_s,
         "levels": levels,
         "n_kept": total_kept,
         "n_seen": total_seen,
@@ -365,6 +433,9 @@ def run_batch(
     if not pairs:
         raise ValueError(f"no pairs to run for batch {batch_id}")
 
+    if datasets.uses_pair_tiffs(ds_name):
+        _migrate_regwsi_rigids(pairs)
+
     lams = [normalize_lam(x) for x in manifest.get("lams") or []]
     if lam_filter is not None:
         want = {normalize_lam(x) for x in lam_filter}
@@ -377,7 +448,6 @@ def run_batch(
     fp = eval_runs.config_fingerprint(cell_cfg)
     levels = sorted(int(x) for x in cell_cfg["levels"])
     force = bool(cfg.get("force")) or bool(manifest.get("config", {}).get("force"))
-    wendland_eps = float(cell_cfg["wendland_eps"])
     bspline_grid = int(cell_cfg["bspline_grid"])
     bspline_reg = float(cell_cfg["bspline_reg"])
 
@@ -513,15 +583,15 @@ def run_batch(
                 continue
 
             t0 = time.perf_counter()
-            _ensure_lam_caches(pair_id, levels, lam, force=force)
             field, meta = _fit_pair_lam_estimator(
                 pair_id,
                 levels,
                 lam,
                 estimator,
-                wendland_eps,
+                eval_runs.eps_for_lam(cell_cfg, lam),
                 bspline_grid,
                 bspline_reg,
+                force=force,
             )
             meta = {
                 **meta,
@@ -569,12 +639,18 @@ def run_parallel_shards(
     workers: int = 10,
     skip_ingest: bool = True,
     poll_s: float = 2.0,
+    pair_ids: list[int] | None = None,
 ) -> dict:
     manifest = eval_runs.read_manifest(batch_id)
     if manifest is None:
         raise FileNotFoundError(f"no batch {batch_id}")
 
-    pairs = [int(p) for p in manifest["pairs"]]
+    manifest_pairs = [int(p) for p in manifest["pairs"]]
+    allowed = set(manifest_pairs)
+    if pair_ids is None:
+        pairs = list(manifest_pairs)
+    else:
+        pairs = [int(p) for p in pair_ids if int(p) in allowed]
     shards = split_pair_shards(pairs, workers)
     if not shards:
         raise ValueError(f"no pairs in batch {batch_id}")
@@ -740,6 +816,7 @@ def run_parallel_resource(
     cpu_workers: int = 7,
     skip_ingest: bool = True,
     poll_s: float = 2.0,
+    pair_ids: list[int] | None = None,
 ) -> dict:
     """GPU queue: regWSI then superpoint; CPU queue: fft. Shared job deques."""
     manifest = eval_runs.read_manifest(batch_id)
@@ -748,7 +825,23 @@ def run_parallel_resource(
 
     ds_name = datasets.normalize_dataset(manifest.get("dataset"))
     datasets.set_active_dataset(ds_name)
-    pairs = [int(p) for p in manifest["pairs"]]
+    manifest_pairs = [int(p) for p in manifest["pairs"]]
+    allowed = set(manifest_pairs)
+    if pair_ids is None:
+        pairs = list(manifest_pairs)
+    else:
+        pairs = [int(p) for p in pair_ids if int(p) in allowed]
+        missing = sorted({int(p) for p in pair_ids} - allowed)
+        if missing:
+            _emit(
+                "pairs_ignored",
+                n=len(missing),
+                sample=",".join(str(p) for p in missing[:8]),
+            )
+    if not pairs:
+        raise ValueError(f"no pairs to run for batch {batch_id}")
+    if datasets.uses_pair_tiffs(ds_name):
+        _migrate_regwsi_rigids(pairs)
     lams = [normalize_lam(x) for x in manifest.get("lams") or []]
     estimators = [normalize_estimator(x) for x in manifest.get("estimators") or []]
     cfg = {**eval_runs.default_config(), **(manifest.get("config") or {})}
@@ -827,11 +920,21 @@ def run_parallel_resource(
 
     slots: list[dict] = []
     for i in range(n_gpu):
-        slots.append({"role": "gpu", "shard_id": i, "proc": None, "job": None, "log": None})
+        slots.append(
+            {
+                "role": "gpu",
+                "gpu_index": i,
+                "shard_id": i,
+                "proc": None,
+                "job": None,
+                "log": None,
+            }
+        )
     for j in range(n_cpu):
         slots.append(
             {
                 "role": "cpu",
+                "gpu_index": None,
                 "shard_id": n_gpu + j,
                 "proc": None,
                 "job": None,
@@ -872,11 +975,17 @@ def run_parallel_resource(
         log_fh = open(log_path, "a")
         slot["log"] = log_fh
         slot["job"] = job
+        env = os.environ.copy()
+        if slot["role"] == "gpu":
+            env["CUDA_VISIBLE_DEVICES"] = str(int(slot.get("gpu_index") or 0))
+        else:
+            env["CUDA_VISIBLE_DEVICES"] = ""
         slot["proc"] = subprocess.Popen(
             cmd,
             cwd=str(REPO_ROOT),
             stdout=log_fh,
             stderr=subprocess.STDOUT,
+            env=env,
         )
         _emit(
             "spawn_job",
@@ -885,6 +994,7 @@ def run_parallel_resource(
             kind=job["kind"],
             pair=pair,
             lam=job.get("lam", "-"),
+            cuda=env.get("CUDA_VISIBLE_DEVICES", ""),
         )
 
     errors: list[str] = []
@@ -1044,6 +1154,7 @@ def run_parallel(
     cpu_workers: int = 7,
     skip_ingest: bool = True,
     poll_s: float = 2.0,
+    pair_ids: list[int] | None = None,
 ) -> dict:
     sched = (schedule or "resource").strip().lower()
     if sched == "shards":
@@ -1052,6 +1163,7 @@ def run_parallel(
             workers=workers,
             skip_ingest=skip_ingest,
             poll_s=poll_s,
+            pair_ids=pair_ids,
         )
     if sched != "resource":
         raise ValueError(f"unknown schedule {schedule!r}; use resource|shards")
@@ -1061,6 +1173,7 @@ def run_parallel(
         cpu_workers=cpu_workers,
         skip_ingest=skip_ingest,
         poll_s=poll_s,
+        pair_ids=pair_ids,
     )
 
 
@@ -1072,11 +1185,29 @@ def cmd_list() -> None:
     _print_json({"batches": eval_runs.list_batches()})
 
 
+def parse_eps_by_lam(spec: str | None) -> dict[str, float] | None:
+    if spec is None or not str(spec).strip():
+        return None
+    out: dict[str, float] = {}
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise ValueError(f"expected lam=eps in {spec!r}, got {part!r}")
+        lam, raw = part.split("=", 1)
+        out[normalize_lam(lam.strip())] = float(raw.strip())
+    return out or None
+
+
 def cmd_create(args: argparse.Namespace) -> None:
     pairs = parse_pairs_spec(args.pairs)
     config = eval_runs.default_config()
     if args.wendland_eps is not None:
         config["wendland_eps"] = float(args.wendland_eps)
+    by_lam = parse_eps_by_lam(getattr(args, "wendland_eps_by_lam", None))
+    if by_lam:
+        config["wendland_eps_by_lam"] = by_lam
     if args.bspline_grid is not None:
         config["bspline_grid"] = int(args.bspline_grid)
     if args.bspline_reg is not None:
@@ -1123,6 +1254,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 
 def cmd_run_parallel(args: argparse.Namespace) -> None:
+    pair_ids = parse_pairs_spec(args.pairs) if args.pairs else None
     result = run_parallel(
         args.batch_id,
         schedule=str(args.schedule),
@@ -1131,6 +1263,7 @@ def cmd_run_parallel(args: argparse.Namespace) -> None:
         cpu_workers=int(args.cpu_workers),
         skip_ingest=bool(args.skip_ingest),
         poll_s=float(args.poll_s),
+        pair_ids=pair_ids,
     )
     _print_json(result)
     if not result.get("ok"):
@@ -1151,6 +1284,11 @@ def main() -> None:
     c.add_argument("--estimators", default=None, help="comma-separated, default all")
     c.add_argument("--dataset", default="muromi", help="muromi|acrobat|anhir")
     c.add_argument("--wendland-eps", type=float, default=None)
+    c.add_argument(
+        "--wendland-eps-by-lam",
+        default=None,
+        help="per-LAM compact support, e.g. fft=0.2,superpoint_glue=0.1",
+    )
     c.add_argument("--bspline-grid", type=int, default=None)
     c.add_argument("--bspline-reg", type=float, default=None)
     c.add_argument("--force", action="store_true")
@@ -1230,6 +1368,11 @@ def main() -> None:
         help="allow ingest before queue (not recommended)",
     )
     rp.add_argument("--poll-s", type=float, default=2.0)
+    rp.add_argument(
+        "--pairs",
+        default=None,
+        help="subset of manifest pairs: 0-9 or 0,1,2 or 0-9,15",
+    )
 
     args = ap.parse_args()
     if args.cmd == "list":

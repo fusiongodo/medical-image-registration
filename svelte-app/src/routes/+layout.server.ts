@@ -57,7 +57,7 @@ function fieldCompletePairs(n: number): number[] {
 		const complete =
 			savedDepth != null
 				? savedDepth >= MAX_DEPTH
-				: existsSync(join(CACHE_DIR, `${pair}_d${MAX_DEPTH}.json`));
+				: existsSync(join(CACHE_DIR, 'fft', 'tps', `${pair}_d${MAX_DEPTH}.json`));
 
 		if (complete) out.push(pair);
 	}

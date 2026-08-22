@@ -1,0 +1,121 @@
+{
+  "unit": "L5 canvas px",
+  "canvas": [
+    16384,
+    11008
+  ],
+  "diagonal": 19738.579482830064,
+  "level": 5,
+  "tile": [
+    512,
+    344
+  ],
+  "pairs": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "series": {
+    "fft": [
+      {
+        "eps": 0.1,
+        "batch_id": "anhir-full",
+        "n": 20,
+        "mean_of_medians": 240.21567313501473,
+        "mean_of_means": 280.4446306607298,
+        "mean_of_p95": 630.7918933671698
+      },
+      {
+        "eps": 0.2,
+        "batch_id": "anhir-wen-e02",
+        "n": 20,
+        "mean_of_medians": 231.41404222834484,
+        "mean_of_means": 289.34222084277206,
+        "mean_of_p95": 680.6641218392487
+      },
+      {
+        "eps": 0.3,
+        "batch_id": "anhir-wen-e03",
+        "n": 20,
+        "mean_of_medians": 270.89055197896283,
+        "mean_of_means": 338.0337922683513,
+        "mean_of_p95": 759.4239756383699
+      },
+      {
+        "eps": 0.4,
+        "batch_id": "anhir-wen-e04",
+        "n": 20,
+        "mean_of_medians": 255.86169903087006,
+        "mean_of_means": 330.4698191105668,
+        "mean_of_p95": 824.020786803578
+      },
+      {
+        "eps": 0.5,
+        "batch_id": "anhir-wen-e05",
+        "n": 20,
+        "mean_of_medians": 254.52870145979827,
+        "mean_of_means": 321.23410452158953,
+        "mean_of_p95": 802.9946452742525
+      }
+    ],
+    "superpoint_glue": [
+      {
+        "eps": 0.1,
+        "batch_id": "anhir-full",
+        "n": 20,
+        "mean_of_medians": 62.88893079294819,
+        "mean_of_means": 94.7353875302289,
+        "mean_of_p95": 287.557010588357
+      },
+      {
+        "eps": 0.2,
+        "batch_id": "anhir-wen-e02",
+        "n": 20,
+        "mean_of_medians": 62.89824473354629,
+        "mean_of_means": 97.14621040766392,
+        "mean_of_p95": 294.3781598416846
+      },
+      {
+        "eps": 0.3,
+        "batch_id": "anhir-wen-e03",
+        "n": 20,
+        "mean_of_medians": 65.92139793402905,
+        "mean_of_means": 100.76987195376576,
+        "mean_of_p95": 324.0984662458981
+      },
+      {
+        "eps": 0.4,
+        "batch_id": "anhir-wen-e04",
+        "n": 20,
+        "mean_of_medians": 64.64332235681087,
+        "mean_of_means": 106.80563809953699,
+        "mean_of_p95": 358.29495953565885
+      },
+      {
+        "eps": 0.5,
+        "batch_id": "anhir-wen-e05",
+        "n": 20,
+        "mean_of_medians": 65.74557663835512,
+        "mean_of_means": 102.41023525992469,
+        "mean_of_p95": 311.5854768021718
+      }
+    ]
+  }
+}

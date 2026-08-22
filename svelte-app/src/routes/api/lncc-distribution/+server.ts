@@ -17,11 +17,13 @@ export const GET: RequestHandler = ({ url }) => {
 	const pair      = url.searchParams.get('pair');
 	const depth     = url.searchParams.get('depth');
 	const patchSize = url.searchParams.get('patchSize') ?? '50';
+	const lam       = url.searchParams.get('lam') ?? 'fft';
+	const estimator = url.searchParams.get('estimator') ?? 'tps';
 	if (!pair || !depth) error(400, 'Missing pair / depth');
 
 	const empty = { bins: [], counts: [], maxVal: 1, totalTiles: 0, withDisplacement: 0, withMetrics: 0, missing: 0 };
 
-	const cachePath = join(CACHE_DIR, `${pair}_d${depth}.json`);
+	const cachePath = join(CACHE_DIR, lam, estimator, `${pair}_d${depth}.json`);
 	if (!existsSync(cachePath)) return json(empty);
 
 	let candidates: { by_patch?: Record<string, { lncc2_auto: number }> }[] = [];
