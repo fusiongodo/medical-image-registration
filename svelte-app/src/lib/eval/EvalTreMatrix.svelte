@@ -46,6 +46,7 @@
 		treBusy,
 		treErr,
 		landmarkCount,
+		rigidInliers = null,
 		batchId = null,
 		dataset = 'muromi',
 		onClose = undefined
@@ -55,6 +56,7 @@
 		treBusy: boolean;
 		treErr: string | null;
 		landmarkCount: number;
+		rigidInliers?: { nInliers: number; nTotal: number; inlierPx: number | null } | null;
 		batchId?: string | null;
 		dataset?: 'muromi' | 'acrobat' | 'anhir';
 		onClose?: (() => void) | undefined;
@@ -73,11 +75,22 @@
 		return `${m}m${s.toFixed(0)}s`;
 	}
 
-	function openRegwsi() {
-		if (pairId == null) return;
+	function overlayQuery() {
 		const q = new URLSearchParams({ dataset });
 		if (batchId) q.set('batch', batchId);
-		window.open(`/eval/${pairId}/overlay/regwsi?${q}`, `eval-overlay-${pairId}`);
+		return q;
+	}
+
+	function openRegwsi() {
+		if (pairId == null) return;
+		window.open(`/eval/${pairId}/overlay/regwsi?${overlayQuery()}`, `eval-overlay-${pairId}`);
+	}
+
+	function openNative() {
+		if (pairId == null) return;
+		const q = overlayQuery();
+		window.open(`/eval/${pairId}/native/he?${q}`, `eval-native-${pairId}-he`);
+		window.open(`/eval/${pairId}/native/ihc?${q}`, `eval-native-${pairId}-ihc`);
 	}
 
 	function openMethod(m: MethodCell) {
@@ -154,6 +167,15 @@
 		L5 px{#if batchId}
 			· batch {batchId}{/if}
 	</p>
+	{#if rigidInliers}
+		<p class="inliers" class:bad={rigidInliers.nInliers === 0}>
+			Rigid inliers {rigidInliers.nInliers}/{rigidInliers.nTotal}
+			({((100 * rigidInliers.nInliers) / rigidInliers.nTotal).toFixed(rigidInliers.nInliers / rigidInliers.nTotal < 0.01 ? 1 : 0)}%)
+			{#if rigidInliers.inlierPx != null}
+				<span class="hint"> · residual ≤ {Math.round(rigidInliers.inlierPx)} canvas px</span>
+			{/if}
+		</p>
+	{/if}
 
 	{#if treBusy}
 		<p class="muted">Computing…</p>
@@ -279,6 +301,11 @@
 			{/each}
 		</div>
 	{/if}
+	{#if pairId != null}
+		<div class="actions">
+			<button type="button" class="btn" onclick={openNative}>Open native HE + IHC</button>
+		</div>
+	{/if}
 </aside>
 
 <style>
@@ -320,6 +347,19 @@
 		margin: 0;
 		font-size: 0.72rem;
 		color: #6b7280;
+	}
+	.inliers {
+		margin: 0;
+		font-size: 0.75rem;
+		color: #86efac;
+		font-variant-numeric: tabular-nums;
+	}
+	.inliers.bad {
+		color: #f87171;
+	}
+	.inliers .hint {
+		color: #6b7280;
+		font-weight: 400;
 	}
 	.cfg {
 		display: flex;

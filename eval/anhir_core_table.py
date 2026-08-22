@@ -37,6 +37,7 @@ CANVAS_H = rpaths.CANVAS_H
 LAM_FFT = "fft"
 LAM_SP = "superpoint_glue"
 EST = "wendland"
+EXCLUDE_PAIRS = frozenset({216, 219})
 
 
 def _read_json(path: Path) -> dict | None:
@@ -263,7 +264,7 @@ def main() -> None:
     man = eval_runs.read_manifest(args.batch)
     if not man:
         raise SystemExit(f"missing batch {args.batch}")
-    pairs = [int(p) for p in man["pairs"]]
+    pairs = [int(p) for p in man["pairs"] if int(p) not in EXCLUDE_PAIRS]
     geom = pair_geom(pairs)
     methods = [
         {"id": "initial", "tex": "Initial", "label": "Initial"},
@@ -339,6 +340,7 @@ def main() -> None:
     payload = {
         "batch_id": args.batch,
         "n_pairs": len(pairs),
+        "excluded_pairs": sorted(EXCLUDE_PAIRS),
         "rTRE": "TRE_canvas * downsample / (fit_scale * HE_medium_diagonal)",
         "tre_cap": "non-finite or > canvas-diagonal TRE clipped to hypot(canvas_w, canvas_h)",
         "canvas": [CANVAS_W, CANVAS_H],

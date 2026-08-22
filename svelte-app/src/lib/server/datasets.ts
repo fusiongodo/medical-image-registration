@@ -25,6 +25,16 @@ export function regwsiRoot(dataset: DatasetId): string {
 	return resolve(REPO_ROOT, 'data', 'regwsi');
 }
 
+export function rigidRoot(dataset: DatasetId): string {
+	if (dataset === 'acrobat') return resolve(REPO_ROOT, 'data', 'acrobat', 'rigid');
+	if (dataset === 'anhir') return resolve(REPO_ROOT, 'data', 'anhir', 'rigid');
+	return resolve(REPO_ROOT, 'data', 'rigid', 'light_v1');
+}
+
+export function rigidPath(dataset: DatasetId, pairId: number): string {
+	return resolve(rigidRoot(dataset), `${pairId}.json`);
+}
+
 export function pairDir(dataset: DatasetId, pairId: number): string {
 	return resolve(regwsiRoot(dataset), String(pairId));
 }

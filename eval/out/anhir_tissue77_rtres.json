@@ -1,6 +1,10 @@
 {
   "batch_id": "anhir-tissue77",
-  "n_pairs": 77,
+  "n_pairs": 75,
+  "excluded_pairs": [
+    216,
+    219
+  ],
   "rTRE": "TRE_canvas * downsample / (fit_scale * HE_medium_diagonal)",
   "tre_cap": "non-finite or > canvas-diagonal TRE clipped to hypot(canvas_w, canvas_h)",
   "canvas": [
@@ -375,11 +379,6 @@
       "tissue": "mice-kidney"
     },
     {
-      "id": 216,
-      "case": "mice-kidney_1",
-      "tissue": "mice-kidney"
-    },
-    {
       "id": 217,
       "case": "mice-kidney_1",
       "tissue": "mice-kidney"
@@ -388,78 +387,73 @@
       "id": 218,
       "case": "mice-kidney_1",
       "tissue": "mice-kidney"
-    },
-    {
-      "id": 219,
-      "case": "mice-kidney_1",
-      "tissue": "mice-kidney"
     }
   ],
   "methods": [
     {
       "id": "regwsi",
       "label": "DeeperHistReg / regWSI",
-      "n": 77,
-      "AArTRE": 0.0234175901999656,
-      "AArTRE_std": 0.1334076649833427,
-      "AMrTRE": 0.021866108532846516,
-      "AMrTRE_std": 0.13341098103140622,
-      "MArTRE": 0.003376244211126912,
-      "MMrTRE": 0.002044603284825079,
-      "AMxrTRE": 0.04781391699459032,
-      "AMxrTRE_std": 0.14641434918216423,
-      "MMxrTRE": 0.02271723668217988,
-      "n_capped": 132,
-      "time_s": 61.93224567521429,
-      "time_n": 56
+      "n": 75,
+      "AArTRE": 0.004659819146328801,
+      "AArTRE_std": 0.0036064297915335756,
+      "AMrTRE": 0.0031588845682312223,
+      "AMrTRE_std": 0.003339896208716543,
+      "MArTRE": 0.0033707688087826104,
+      "MMrTRE": 0.0018591962467670255,
+      "AMxrTRE": 0.024994018243236136,
+      "AMxrTRE_std": 0.015169781481045468,
+      "MMxrTRE": 0.02251750029020932,
+      "n_capped": 0,
+      "time_s": 61.96651956992592,
+      "time_n": 54
     },
     {
       "id": "sp_wendland",
       "label": "SP+LG \u00d7 Wendland (\u03b5=0.1)",
-      "n": 77,
-      "AArTRE": 0.024898999052424903,
-      "AArTRE_std": 0.13335866632560345,
-      "AMrTRE": 0.023198591599255663,
-      "AMrTRE_std": 0.1333157520912057,
-      "MArTRE": 0.004508428851785519,
-      "MMrTRE": 0.0032708034851234866,
-      "AMxrTRE": 0.05267981625215436,
-      "AMxrTRE_std": 0.14457801535674347,
-      "MMxrTRE": 0.02721500723055255,
-      "n_capped": 132,
-      "time_s": 102.4832236154079,
-      "time_n": 76
+      "n": 75,
+      "AArTRE": 0.006122982932206548,
+      "AArTRE_std": 0.004548714469153624,
+      "AMrTRE": 0.004492273678817605,
+      "AMrTRE_std": 0.003916979915066686,
+      "MArTRE": 0.004467409080420416,
+      "MMrTRE": 0.0028646332889810484,
+      "AMxrTRE": 0.03027139710930312,
+      "AMxrTRE_std": 0.016476088276282146,
+      "MMxrTRE": 0.026903724593465336,
+      "n_capped": 0,
+      "time_s": 102.32753198377027,
+      "time_n": 74
     },
     {
       "id": "fft_wendland",
       "label": "FFT \u00d7 Wendland (\u03b5=0.2)",
-      "n": 77,
-      "AArTRE": 0.039584197173567225,
-      "AArTRE_std": 0.13368907622048004,
-      "AMrTRE": 0.03655060039261959,
-      "AMrTRE_std": 0.13320429325016028,
-      "MArTRE": 0.012811122343092021,
-      "MMrTRE": 0.009907340269906442,
-      "AMxrTRE": 0.08114289320972179,
-      "AMxrTRE_std": 0.15253971839497546,
-      "MMxrTRE": 0.04789378000576294,
-      "n_capped": 132,
-      "time_s": 99.0726129665345,
-      "time_n": 58
+      "n": 75,
+      "AArTRE": 0.021239849661980174,
+      "AArTRE_std": 0.026521775672206146,
+      "AMrTRE": 0.018533798515532003,
+      "AMrTRE_std": 0.026273101768437463,
+      "MArTRE": 0.012549924453498148,
+      "MMrTRE": 0.00933180011361388,
+      "AMxrTRE": 0.05764356379360426,
+      "AMxrTRE_std": 0.03911354503748873,
+      "MMxrTRE": 0.046685305567660595,
+      "n_capped": 0,
+      "time_s": 98.90071636801788,
+      "time_n": 56
     },
     {
       "id": "initial",
       "label": "Initial",
-      "n": 77,
-      "AArTRE": 0.06610005470308632,
-      "AArTRE_std": 0.09518378614148486,
-      "AMrTRE": 0.06523064516321299,
-      "AMrTRE_std": 0.09346947557893243,
-      "MArTRE": 0.038715898027640756,
-      "MMrTRE": 0.03907012991740967,
-      "AMxrTRE": 0.11990717819545414,
-      "AMxrTRE_std": 0.1596396788108724,
-      "MMxrTRE": 0.07296245511597509,
+      "n": 75,
+      "AArTRE": 0.06634948909387559,
+      "AArTRE_std": 0.09644182178909828,
+      "AMrTRE": 0.06558284918935714,
+      "AMrTRE_std": 0.09469458063470622,
+      "MArTRE": 0.03869302644167519,
+      "MMrTRE": 0.03895177245640955,
+      "AMxrTRE": 0.11995361621210732,
+      "AMxrTRE_std": 0.16171012732969908,
+      "MMxrTRE": 0.07042187838419048,
       "n_capped": 0,
       "time_s": null,
       "time_n": 0
@@ -3605,49 +3599,6 @@
       },
       "n_landmarks": 132
     },
-    "216": {
-      "initial": {
-        "mean": 0.0496421596911954,
-        "median": 0.04671434282990852,
-        "max": 0.08876848902878456,
-        "n": 132,
-        "n_capped": 0
-      },
-      "fft_wendland": {
-        "mean": 1.1365150784879476,
-        "median": 1.1365150784879474,
-        "max": 1.1365150784879474,
-        "n": 132,
-        "n_capped": 132
-      },
-      "sp_wendland": {
-        "mean": 1.1365150784879476,
-        "median": 1.1365150784879474,
-        "max": 1.1365150784879474,
-        "n": 132,
-        "n_capped": 132
-      },
-      "regwsi": {
-        "mean": 1.1365150784879476,
-        "median": 1.1365150784879474,
-        "max": 1.1365150784879474,
-        "n": 132,
-        "n_capped": 132
-      },
-      "geom": {
-        "src_w": 9216,
-        "src_h": 7552,
-        "fit_scale": 1.4576271186440677,
-        "downsample": 1.0,
-        "diag_medium": 11915.005665126642,
-        "rtre_factor": 5.7578362185412795e-05,
-        "case": "mice-kidney_1",
-        "tissue": "mice-kidney",
-        "scale": "scale-25pc",
-        "csv_diagonal": 11915.0
-      },
-      "n_landmarks": 132
-    },
     "217": {
       "initial": {
         "mean": 0.08643614713694249,
@@ -3717,49 +3668,6 @@
         "mean": 0.005788832892807279,
         "median": 0.0029797846647533583,
         "max": 0.02716660655103893,
-        "n": 132,
-        "n_capped": 0
-      },
-      "geom": {
-        "src_w": 9216,
-        "src_h": 7552,
-        "fit_scale": 1.4576271186440677,
-        "downsample": 1.0,
-        "diag_medium": 11915.005665126642,
-        "rtre_factor": 5.7578362185412795e-05,
-        "case": "mice-kidney_1",
-        "tissue": "mice-kidney",
-        "scale": "scale-25pc",
-        "csv_diagonal": 11915.0
-      },
-      "n_landmarks": 132
-    },
-    "219": {
-      "initial": {
-        "mean": 0.06385037040578202,
-        "median": 0.05733164553570612,
-        "max": 0.14756301611313488,
-        "n": 132,
-        "n_capped": 0
-      },
-      "fft_wendland": {
-        "mean": 0.31847937922821595,
-        "median": 0.28784626307886085,
-        "max": 0.7882204141403103,
-        "n": 132,
-        "n_capped": 0
-      },
-      "sp_wendland": {
-        "mean": 0.32148412863327874,
-        "median": 0.31285594874341827,
-        "max": 0.6494759897302043,
-        "n": 132,
-        "n_capped": 0
-      },
-      "regwsi": {
-        "mean": 0.3171529309347436,
-        "median": 0.31025893592389253,
-        "max": 0.6706051618527964,
         "n": 132,
         "n_capped": 0
       },

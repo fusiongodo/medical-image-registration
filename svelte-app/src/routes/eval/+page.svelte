@@ -11,6 +11,7 @@
 			ready: boolean;
 			mosaicReady: boolean;
 			landmarkCount: number;
+			rigidInliers: { nInliers: number; nTotal: number; inlierPx: number | null } | null;
 			mainSetId: string | null;
 			mainSetName: string | null;
 		}[];
@@ -42,7 +43,8 @@
 	>({});
 	let fetchGen = 0;
 	type TreKey = 'regwsi' | 'fft' | 'superpoint_glue';
-	let sortKey = $state<TreKey | 'pair'>('pair');
+	type SortKey = TreKey | 'pair' | 'inliers';
+	let sortKey = $state<SortKey>('pair');
 	let sortDir = $state<'asc' | 'desc'>('asc');
 
 	let showNew = $state(false);
@@ -88,6 +90,17 @@
 		const dir = sortDir === 'asc' ? 1 : -1;
 		return [...rows].sort((a, b) => {
 			if (key === 'pair') return (a.pairId - b.pairId) * dir;
+			if (key === 'inliers') {
+				const ra = a.rigidInliers ? a.rigidInliers.nInliers / a.rigidInliers.nTotal : null;
+				const rb = b.rigidInliers ? b.rigidInliers.nInliers / b.rigidInliers.nTotal : null;
+				const na = ra == null || !Number.isFinite(ra);
+				const nb = rb == null || !Number.isFinite(rb);
+				if (na && nb) return a.pairId - b.pairId;
+				if (na) return 1;
+				if (nb) return -1;
+				const d = (ra as number) - (rb as number);
+				return d === 0 ? a.pairId - b.pairId : d * dir;
+			}
 			const va = pairTres[String(a.pairId)]?.[key];
 			const vb = pairTres[String(b.pairId)]?.[key];
 			const na = va == null || !Number.isFinite(va);
@@ -175,6 +188,18 @@
 		treErr = null;
 		treBusy = false;
 		fetchGen += 1;
+	}
+
+	function pairQuery(pairId: number) {
+		const q = new URLSearchParams({ dataset });
+		if (batchId) q.set('batch', batchId);
+		return q;
+	}
+
+	function openNative(pairId: number) {
+		const q = pairQuery(pairId);
+		window.open(`/eval/${pairId}/native/he?${q}`, `eval-native-${pairId}-he`);
+		window.open(`/eval/${pairId}/native/ihc?${q}`, `eval-native-${pairId}-ihc`);
 	}
 
 	function openNewModal() {
@@ -340,17 +365,29 @@
 		return v == null ? '—' : v.toFixed(2);
 	}
 
-	function setSort(key: TreKey | 'pair') {
+	function setSort(key: SortKey) {
 		if (sortKey === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
 		else {
 			sortKey = key;
-			sortDir = 'asc';
+			sortDir = key === 'inliers' ? 'desc' : 'asc';
 		}
 	}
 
-	function sortMark(key: TreKey | 'pair') {
+	function sortMark(key: SortKey) {
 		if (sortKey !== key) return '';
 		return sortDir === 'asc' ? ' ↑' : ' ↓';
+	}
+
+	function inlierFrac(p: EvalPageData['pairs'][number]) {
+		if (!p.rigidInliers || p.rigidInliers.nTotal <= 0) return null;
+		return p.rigidInliers.nInliers / p.rigidInliers.nTotal;
+	}
+
+	function fmtInliers(p: EvalPageData['pairs'][number]) {
+		if (!p.rigidInliers) return null;
+		const pct = (100 * p.rigidInliers.nInliers) / p.rigidInliers.nTotal;
+		const pctStr = pct < 1 ? pct.toFixed(1) : pct.toFixed(0);
+		return `${p.rigidInliers.nInliers}/${p.rigidInliers.nTotal} ${pctStr}%`;
 	}
 </script>
 
@@ -440,9 +477,14 @@
 							onclick={() => setSort('superpoint_glue')}>sp{sortMark('superpoint_glue')}</button
 						>
 					</span>
-					<span class="meta"></span>
+					<span class="meta">
+						<button type="button" class="sort" class:on={sortKey === 'inliers'} onclick={() => setSort('inliers')}
+							>inliers{sortMark('inliers')}</button
+						>
+					</span>
 				</div>
 				<span class="action ghost">Annotate</span>
+				<span class="action ghost">Native</span>
 				<span class="action ghost">Overlay</span>
 			</div>
 			<ul class="list">
@@ -465,6 +507,17 @@
 									{#if p.landmarkCount > 0}
 										<span class="landmarks">{p.landmarkCount} landmarks</span>
 									{/if}
+									{#if p.rigidInliers}
+										{@const frac = inlierFrac(p)}
+										<span
+											class="badge"
+											class:ok={frac != null && frac >= 0.4}
+											class:warn={frac != null && frac > 0 && frac < 0.4}
+											class:bad={p.rigidInliers.nInliers === 0}
+											title={`Landmarks within ${p.rigidInliers.inlierPx?.toFixed(0)} canvas px of the extracted rigid`}
+											>{fmtInliers(p)}</span
+										>
+									{/if}
 									<span class="badge" class:ok={p.ready}>{p.ready ? 'regWSI' : 'no regWSI'}</span>
 									<span class="badge" class:ok={p.mosaicReady} title={p.mosaicReady ? 'Overlay mosaic ready' : 'Overlay mosaic not built yet'}
 										>{p.mosaicReady ? 'mosaic' : 'no mosaic'}</span
@@ -472,6 +525,7 @@
 								</span>
 							</button>
 							<a class="action" href={`/eval/${p.pairId}/annotate?dataset=${dataset}`}>Annotate</a>
+							<button type="button" class="action" onclick={() => openNative(p.pairId)}>Native</button>
 							<a
 								class="action"
 								href={`/eval/${p.pairId}/overlay/regwsi?${new URLSearchParams({
@@ -493,6 +547,7 @@
 					{treBusy}
 					{treErr}
 					landmarkCount={selected.landmarkCount}
+					rigidInliers={selected.rigidInliers}
 					{batchId}
 					onClose={closeTre}
 				/>
@@ -738,6 +793,12 @@
 	.badge.ok {
 		color: #86efac;
 	}
+	.badge.warn {
+		color: #fbbf24;
+	}
+	.badge.bad {
+		color: #f87171;
+	}
 	.action {
 		display: flex;
 		align-items: center;
@@ -747,6 +808,9 @@
 		font-size: 0.72rem;
 		color: #93c5fd;
 		text-decoration: none;
+		background: transparent;
+		cursor: pointer;
+		font-family: inherit;
 	}
 	.modal-backdrop {
 		position: fixed;

@@ -146,23 +146,18 @@ def make_full(pair_id: int, layers: tuple[str, ...] | None = None) -> dict:
     tw, th, nq = _target_size(pair_id)
     paths.ensure_pair_dirs(pair_id)
 
-    if layers is None:
-        for old in paths.full_dir(pair_id).glob("*.jpg"):
-            old.unlink()
-    else:
-        for layer in layer_list:
-            for old in paths.full_dir(pair_id).glob(f"{layer}_y*_x*.jpg"):
-                old.unlink()
-
     qw = qh = 0
     n = len(layer_list)
     print(f"done=0 total={n} stage=start", flush=True)
     for i, layer in enumerate(layer_list):
-        print(f"done={i} total={n} stage={layer}", flush=True)
+        print(f"done={i} total={n} stage=load_{layer}", flush=True)
         if layer == "ihc_warped" and not sources[layer].is_file():
             img = _warp_ihc_from_df(pair_id, tw, th)
         else:
             img = _resize_to(_load_rgb(sources[layer]), tw, th)
+        for old in paths.full_dir(pair_id).glob(f"{layer}_y*_x*.jpg"):
+            old.unlink()
+        print(f"done={i} total={n} stage=write_{layer}", flush=True)
         qw, qh = _write_mosaic(img, pair_id, layer, nq)
         del img
         print(f"done={i + 1} total={n} stage={layer}", flush=True)

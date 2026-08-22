@@ -123,6 +123,12 @@ export const POST: RequestHandler = async ({ request }) => {
 	child.stderr.on('data', (chunk: Buffer) => {
 		stderr += chunk.toString();
 	});
+	child.on('error', (err) => {
+		state.running = false;
+		state.finishedAt = Date.now();
+		state.error = err.message;
+		makeFullJobs.set(key, { ...state });
+	});
 	child.on('close', (code) => {
 		state.running = false;
 		state.finishedAt = Date.now();
