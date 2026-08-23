@@ -27,12 +27,22 @@ DEFAULT_CONFIG = {
     "out_size": 512,
     "extract_resize": 512,
     "sp_nms_dist": 8,
+    "eval_conf_thresh": 0.015,
+    "gt_nms_dist": 4,
+    "gt_conf_thresh": 0.005,
+    "gt_max_kpts": 2048,
     "batch_size": 8,
     "lr": 0.0001,
     "max_epochs": 50,
     "ckpt_every_epochs": 1,
     "eval_every_epochs": 1,
+    "ckpt_every_steps": 500,
+    "eval_every_steps": 200,
+    "eval_step_tiles": 2,
+    "max_steps": 0,
     "log_every": 50,
+    "frozen_gt": False,
+    "allow_live_gt": False,
     "split_seed": 0,
     "split_ratios": [0.8, 0.1, 0.1],
     "eval_max_tiles": 12,
@@ -48,6 +58,7 @@ DEFAULT_CONFIG = {
     "w_fn": 1.0,
     "w_fp": 0.5,
     "match_mode": "conf_distance",
+    "kp_loss": "matching",
     "match_epsilon": 1.0,
     "dataset": "muromi",
     "init_weights": str(conf.resolve("introducing_superpoint/superpoint_v6_from_tf.pth")),
@@ -225,7 +236,13 @@ def load_checkpoint(model: torch.nn.Module, path: Path, device: torch.device) ->
     model.load_state_dict(sd, strict=False)
 
 
-def detect_pseudo_gt(model, images: torch.Tensor, device: torch.device, max_kpts: int = 512):
+def detect_pseudo_gt(model, images: torch.Tensor, device: torch.device):
+    """
+    NMS keypoints of the frozen detector, one list entry per image, each (Ni, 3)
+    holding (x, y, conf). Keypoint count is governed by the model's own
+    nms_radius / detection_threshold / max_num_keypoints so that the targets match
+    what the evaluator later detects; no extra truncation happens here.
+    """
     was_training = model.training
     model.eval()
     with torch.no_grad():
@@ -236,9 +253,6 @@ def detect_pseudo_gt(model, images: torch.Tensor, device: torch.device, max_kpts
         if kpts.numel() == 0:
             gts.append(torch.zeros((0, 3), device=device))
             continue
-        if kpts.shape[0] > max_kpts:
-            scores, idx = torch.topk(scores, max_kpts)
-            kpts = kpts[idx]
         conf = scores.clamp(0.05, 1.0)
         gts.append(torch.cat([kpts, conf.unsqueeze(1)], dim=1))
     return gts
@@ -292,25 +306,57 @@ def _forward_losses(
     valid = batch["valid_mask"].to(device)
     H = batch["homography"].to(device)
 
-    if gt_base is None or gt_warp is None:
-        pseudo = detect_pseudo_gt(model, images, device)
-        gt_base = filter_gt_in_frame(pseudo, int(cfg["out_size"]))
-        gt_warp = filter_gt_in_frame(warp_gt_points(pseudo, H), int(cfg["out_size"]))
+    if gt_base is None:
+        if not bool(cfg.get("allow_live_gt")):
+            raise RuntimeError(
+                "no gt_base supplied; detecting it from the model being trained makes the "
+                "targets drift with the weights (self-distillation). Pass frozen GT, or set "
+                "cfg['allow_live_gt'] to opt in deliberately."
+            )
+        gt_base = filter_gt_in_frame(detect_pseudo_gt(model, images, device), int(cfg["out_size"]))
+    else:
+        gt_base = [g.to(device) for g in gt_base]
+    if gt_warp is None:
+        gt_warp = filter_gt_in_frame(warp_gt_points(gt_base, H), int(cfg["out_size"]))
+    else:
+        gt_warp = [g.to(device) for g in gt_warp]
 
     out0 = model({"image": images}, training=True)
     out1 = model({"image": warped}, training=True)
 
-    kp_kwargs = {
-        "cell_size": default_config["grid_size"],
-        "radius": int(cfg["kp_radius"]),
-        "w_loc": float(cfg["w_loc"]),
-        "w_fn": float(cfg["w_fn"]),
-        "w_fp": float(cfg["w_fp"]),
-        "match_mode": cfg["match_mode"],
-        "match_epsilon": float(cfg["match_epsilon"]),
-    }
-    kp0 = utils.keypoint_matching_loss_detailed(out0["logits"], gt_base, **kp_kwargs)
-    kp1 = utils.keypoint_matching_loss_detailed(out1["logits"], gt_warp, **kp_kwargs)
+    gs = int(default_config["grid_size"])
+    _, _, Hc, Wc = out0["logits"].shape
+    mask_base = utils.cell_fov_overlap_mask(
+        H, Hc, Wc, cell_size=gs, side="src", valid_dst=valid
+    )
+    mask_warp = utils.cell_fov_overlap_mask(H, Hc, Wc, cell_size=gs, side="dst")
+    mask_warp = mask_warp & utils.cell_valid_from_mask(valid, Hc, Wc, cell_size=gs)
+
+    if str(cfg.get("kp_loss") or "matching") == "paper_ce":
+        kp0 = utils.detector_ce_loss(
+            out0["logits"],
+            gt_base,
+            cell_size=gs,
+            cell_mask=mask_base,
+        )
+        kp1 = utils.detector_ce_loss(
+            out1["logits"],
+            gt_warp,
+            cell_size=gs,
+            cell_mask=mask_warp,
+        )
+    else:
+        kp_kwargs = {
+            "cell_size": default_config["grid_size"],
+            "radius": int(cfg["kp_radius"]),
+            "w_loc": float(cfg["w_loc"]),
+            "w_fn": float(cfg["w_fn"]),
+            "w_fp": float(cfg["w_fp"]),
+            "match_mode": cfg["match_mode"],
+            "match_epsilon": float(cfg["match_epsilon"]),
+        }
+        kp0 = utils.keypoint_matching_loss_detailed(out0["logits"], gt_base, **kp_kwargs)
+        kp1 = utils.keypoint_matching_loss_detailed(out1["logits"], gt_warp, **kp_kwargs)
     desc_max = cfg.get("desc_max_cells")
     desc_cfg = {
         **default_config,
@@ -325,13 +371,25 @@ def _forward_losses(
         desc_cfg,
         valid_mask=valid,
         homographies=H,
+        cell_mask_src=mask_base,
+        cell_mask_dst=mask_warp,
     )
     loss_kp = kp0["loss"] + kp1["loss"]
     loss = float(cfg["w_kp"]) * loss_kp + desc
+
+    def _both(key):
+        a, b = kp0.get(key), kp1.get(key)
+        return None if a is None else int(a) + int(b or 0)
+
     return {
         "loss": loss,
         "loss_kp": loss_kp,
         "loss_desc": desc,
+        "loss_fn": kp0["loss_fn"] + kp1["loss_fn"],
+        "loss_fp": kp0["loss_fp"] + kp1["loss_fp"],
+        "n_pos": _both("n_pos"),
+        "n_neg": _both("n_neg"),
+        "n_mask": _both("n_mask"),
         "theta_mean": float(sum(batch["theta_deg"]) / max(1, len(batch["theta_deg"]))),
     }
 
@@ -358,17 +416,23 @@ def train_step(
         "loss_total": float(loss.detach().cpu()),
         "loss_kp": float(parts["loss_kp"].detach().cpu()),
         "loss_desc": float(parts["loss_desc"].detach().cpu()),
+        "loss_fn": float(parts["loss_fn"].detach().cpu()),
+        "loss_fp": float(parts["loss_fp"].detach().cpu()),
+        "n_pos": parts.get("n_pos"),
+        "n_neg": parts.get("n_neg"),
+        "n_mask": parts.get("n_mask"),
         "theta_mean": parts["theta_mean"],
     }
 
 
 @torch.no_grad()
-def eval_loss(model, loader, device, cfg: dict) -> dict:
+def eval_loss(model, loader, device, cfg: dict, gt_cache=None) -> dict:
     model.eval()
     totals = {"loss_total": 0.0, "loss_kp": 0.0, "loss_desc": 0.0}
     n = 0
     for batch in loader:
-        parts = _forward_losses(model, batch, device, cfg)
+        gt = gt_cache.get(batch) if gt_cache is not None else batch.get("gt_base")
+        parts = _forward_losses(model, batch, device, cfg, gt_base=gt)
         totals["loss_total"] += float(parts["loss"].detach().cpu())
         totals["loss_kp"] += float(parts["loss_kp"].detach().cpu())
         totals["loss_desc"] += float(parts["loss_desc"].detach().cpu())

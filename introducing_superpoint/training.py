@@ -66,8 +66,9 @@ def _monitor(message: str) -> None:
             f.flush()
 
 
-def build_model(weights_path=DEFAULT_WEIGHTS, device="cpu"):
-    model = SuperPoint()
+def build_model(weights_path=DEFAULT_WEIGHTS, device="cpu", **conf):
+    """conf overrides SuperPoint.default_conf (nms_radius, detection_threshold, ...)."""
+    model = SuperPoint(**{k: v for k, v in conf.items() if v is not None})
     state_dict = torch.load(weights_path, map_location=device)
     model.load_state_dict(state_dict)
     return model.to(device)

@@ -66,6 +66,26 @@ def cmd_create(args: argparse.Namespace) -> None:
         cfg["eval_max_tiles"] = int(args.eval_max_tiles)
     if args.run_baseline:
         cfg["skip_baseline"] = False
+    for name in (
+        "depth",
+        "max_steps",
+        "eval_every_steps",
+        "ckpt_every_steps",
+        "eval_step_tiles",
+        "desc_max_cells",
+        "desc_lambda",
+        "kp_loss",
+        "num_workers",
+        "gt_nms_dist",
+        "gt_conf_thresh",
+    ):
+        v = getattr(args, name, None)
+        if v is not None:
+            cfg[name] = v
+    if args.eval_angles:
+        cfg["eval_angles"] = [float(x) for x in args.eval_angles.split(",") if x.strip()]
+    if args.frozen_gt:
+        cfg["frozen_gt"] = True
     try:
         man = store.create_run(args.name, config=cfg, run_id=args.id)
         emit({"ok": True, "run": man})
@@ -127,9 +147,18 @@ def cmd_logs(args: argparse.Namespace) -> None:
 
 
 def _build_model(cfg: dict, device: torch.device):
+    """Detector settings here are the *eval* ones: in-training eval extracts with this
+    model's own nms_radius/detection_threshold, so they must match sp_rot_train_eval.
+    GT density is a separate knob owned by the frozen teacher in sp_rot_gt_cache."""
     from training import build_model
 
-    return build_model(cfg.get("init_weights"), device=device)
+    return build_model(
+        cfg.get("init_weights"),
+        device=device,
+        nms_radius=int(cfg["sp_nms_dist"]),
+        detection_threshold=float(cfg.get("eval_conf_thresh") or 0.015),
+        max_num_keypoints=cfg.get("gt_max_kpts"),
+    )
 
 
 def _make_loader(tiles: list[dict], cfg: dict, *, shuffle: bool, drop_last: bool) -> DataLoader:
@@ -153,6 +182,66 @@ def _make_loader(tiles: list[dict], cfg: dict, *, shuffle: bool, drop_last: bool
         kwargs["persistent_workers"] = True
         kwargs["prefetch_factor"] = 2
     return DataLoader(ds, **kwargs)
+
+
+def _matcher_eval(
+    model,
+    tiles: list[dict],
+    angles: list[float],
+    cfg: dict,
+    device,
+    *,
+    step: int,
+    eval_log_path=None,
+    tag: str = "eval",
+) -> dict:
+    """Dual-matcher eval condensed to one line per matcher: per-angle match counts + passing angles."""
+    from setup.coarse_to_fine import sp_rot_train_eval as beval
+
+    ev = beval.evaluate_tile_matchers(
+        model,
+        tiles,
+        angles=angles,
+        device=device,
+        extract_resize=int(cfg["extract_resize"]),
+        nms=int(cfg["sp_nms_dist"]),
+        depth=int(cfg["depth"]),
+        preview_level=int(cfg["preview_level"]),
+        src_size=int(cfg["src_size"]),
+        out_size=int(cfg["out_size"]),
+        dataset=str(cfg.get("dataset") or "muromi"),
+    )
+    compact = {"step": step, "tag": tag, "n_tiles": len(tiles)}
+    for kind in ("nn", "lg"):
+        part = ev[kind]
+        by_angle = part.get("by_angle") or {}
+        matches = {}
+        for c in part.get("cells") or []:
+            matches.setdefault(f"{float(c['angle']):g}", []).append(int(c.get("n_matches") or 0))
+        compact[kind] = {
+            "n_pass": part.get("n_pass"),
+            "n_total": part.get("n_total"),
+            "pass_rate": part.get("pass_rate"),
+            "n_error": part.get("n_error"),
+            "by_angle": by_angle,
+            "matches_mean": {k: round(sum(v) / len(v), 1) for k, v in matches.items()},
+        }
+        counts = ",".join(f"{k}:{v}" for k, v in compact[kind]["matches_mean"].items())
+        ok = ",".join(
+            f"{float(a):g}:{(r or {}).get('pass_rate') or 0:.2f}"
+            for a, r in sorted(by_angle.items(), key=lambda kv: float(kv[0]))
+        )
+        _safe_print(
+            f"{tag} step={step} matcher={kind} k={part['n_pass']}/{part['n_total']} "
+            f"matches[{counts}] ok[{ok}]",
+            flush=True,
+        )
+    if eval_log_path is not None:
+        store.append_jsonl(eval_log_path, compact)
+    model.train()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    return compact
 
 
 def _run_eval(run_id: str, model, device, cfg: dict, tiles: list[dict], *, kind: str, step: int, epoch: int) -> dict:
@@ -236,6 +325,12 @@ def _run_loop(run_id: str, *, resume: bool) -> None:
     test_tiles = list(split["test"])
     train_loader = _make_loader(train_tiles, cfg, shuffle=True, drop_last=True)
     val_loader = _make_loader(val_tiles, cfg, shuffle=False, drop_last=False)
+    gt_cache = None
+    if bool(cfg.get("frozen_gt")):
+        from setup.coarse_to_fine import sp_rot_gt_cache as gtc
+
+        gt_cache = gtc.GtCache(cfg, device)
+        _safe_print(f"frozen GT cache at {gt_cache.dir}", flush=True)
     opt = torch.optim.Adam(model.parameters(), lr=float(cfg["lr"]))
     max_epochs = int(cfg["max_epochs"])
     store.update_status(
@@ -245,9 +340,11 @@ def _run_loop(run_id: str, *, resume: bool) -> None:
     if completed_epochs == 0 and step == 0 and not bool(cfg.get("skip_baseline")):
         _run_eval(run_id, model, device, cfg, val_tiles, kind="baseline", step=0, epoch=0)
 
-    while completed_epochs < max_epochs:
+    max_steps = int(cfg.get("max_steps") or 0)
+    while completed_epochs < max_epochs and not (max_steps and step >= max_steps):
         cfg = store.load_config(run_id)
         max_epochs = int(cfg["max_epochs"])
+        max_steps = int(cfg.get("max_steps") or 0)
         for g in opt.param_groups:
             g["lr"] = float(cfg["lr"])
 
@@ -259,6 +356,8 @@ def _run_loop(run_id: str, *, resume: bool) -> None:
         for batch in train_loader:
             if store.stop_flag(run_id).is_file():
                 store.save_checkpoint(run_id, model, step, completed_epochs)
+                if gt_cache is not None:
+                    gt_cache.flush()
                 store.update_status(
                     run_id, state="stopped", step=step, epoch=completed_epochs, detail="stopped"
                 )
@@ -266,6 +365,8 @@ def _run_loop(run_id: str, *, resume: bool) -> None:
                 return
             if store.pause_flag(run_id).is_file():
                 store.save_checkpoint(run_id, model, step, completed_epochs)
+                if gt_cache is not None:
+                    gt_cache.flush()
                 store.pause_flag(run_id).unlink(missing_ok=True)
                 store.update_status(
                     run_id, state="paused", step=step, epoch=completed_epochs, detail="paused"
@@ -276,7 +377,14 @@ def _run_loop(run_id: str, *, resume: bool) -> None:
             cfg = store.load_config(run_id)
             for g in opt.param_groups:
                 g["lr"] = float(cfg["lr"])
-            metrics = store.train_step(model, batch, opt, device, cfg)
+            metrics = store.train_step(
+                model,
+                batch,
+                opt,
+                device,
+                cfg,
+                gt_base=gt_cache.get(batch) if gt_cache is not None else None,
+            )
             step += 1
             train_loss_sum += metrics["loss_total"]
             train_n += 1
@@ -297,9 +405,39 @@ def _run_loop(run_id: str, *, resume: bool) -> None:
                     "ts": int(time.time()),
                 }
                 store.append_jsonl(store.loss_log_path(run_id), row)
+                _safe_print(
+                    f"step={step} loss={metrics['loss_total']:.4f} "
+                    f"kp={metrics['loss_kp']:.4f} ce_kp={metrics['loss_fn']:.4f} "
+                    f"ce_dust={metrics['loss_fp']:.6f} desc={metrics['loss_desc']:.4f} "
+                    f"theta={metrics['theta_mean']:.0f}",
+                    flush=True,
+                )
+
+            eval_every = int(cfg.get("eval_every_steps") or 0)
+            if eval_every > 0 and step % eval_every == 0:
+                _matcher_eval(
+                    model,
+                    val_tiles[: int(cfg.get("eval_step_tiles") or 2)],
+                    [float(a) for a in cfg["eval_angles"]],
+                    cfg,
+                    device,
+                    step=step,
+                    eval_log_path=store.eval_log_path(run_id),
+                    tag="eval",
+                )
+
+            ckpt_every = int(cfg.get("ckpt_every_steps") or 0)
+            if ckpt_every > 0 and step % ckpt_every == 0:
+                store.save_checkpoint(run_id, model, step, completed_epochs)
+                if gt_cache is not None:
+                    gt_cache.flush()
+                    _safe_print(f"gt_cache {gt_cache.stats()}", flush=True)
+
+            if max_steps and step >= max_steps:
+                break
 
         epoch_s = time.time() - t0
-        val_m = store.eval_loss(model, val_loader, device, cfg)
+        val_m = store.eval_loss(model, val_loader, device, cfg, gt_cache=gt_cache)
         completed_epochs = epoch
         store.save_checkpoint(run_id, model, step, completed_epochs)
         epoch_row = {
@@ -338,6 +476,9 @@ def _run_loop(run_id: str, *, resume: bool) -> None:
             )
 
     store.save_checkpoint(run_id, model, step, completed_epochs)
+    if gt_cache is not None:
+        gt_cache.flush()
+        _safe_print(f"gt_cache final {gt_cache.stats()}", flush=True)
     ev = _run_eval(
         run_id, model, device, cfg, test_tiles, kind="test", step=step, epoch=completed_epochs
     )
@@ -392,6 +533,12 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     cfg = {**cfg, "desc_max_cells": desc_max}
     if args.lr is not None:
         cfg["lr"] = float(args.lr)
+    if getattr(args, "desc_lambda", None) is not None:
+        cfg["desc_lambda"] = float(args.desc_lambda)
+    if getattr(args, "src_size", None) is not None:
+        cfg["src_size"] = int(args.src_size)
+    if getattr(args, "out_size", None) is not None:
+        cfg["out_size"] = int(args.out_size)
     ds.set_active_dataset(cfg.get("dataset") or "muromi")
 
     split = store.load_split(run_id)
@@ -429,7 +576,9 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     side = str(args.side)
     steps = int(args.steps)
     log_every = max(1, int(args.log_every))
-    exp_dir = store.TRAIN_ROOT / "_overfit"
+    kp_loss = str(getattr(args, "kp_loss", "") or "matching")
+    cfg = {**cfg, "kp_loss": kp_loss}
+    exp_dir = store.TRAIN_ROOT / str(getattr(args, "exp_subdir", "") or "_overfit")
     exp_dir.mkdir(parents=True, exist_ok=True)
     experiments_path = exp_dir / "experiments.jsonl"
 
@@ -500,6 +649,9 @@ def cmd_overfit(args: argparse.Namespace) -> None:
         n_gt = int(sum(int(g.shape[0]) for s in samples for g in s["gt_base"]))
         if n_gt == 0:
             raise RuntimeError("frozen pseudo-GT empty for product set")
+        if args.init_weights:
+            store.load_checkpoint(model, Path(args.init_weights), device)
+            _safe_print(f"overfit product loaded weights {args.init_weights}", flush=True)
 
         def _gather(idxs: list[int]):
             batch = {
@@ -532,27 +684,131 @@ def cmd_overfit(args: argparse.Namespace) -> None:
             return tot / max(1, n)
 
         opt = torch.optim.Adam(model.parameters(), lr=float(cfg["lr"]))
+        eval_every = max(0, int(getattr(args, "eval_every", 0) or 0))
+        stop_on_collapse = not bool(getattr(args, "no_collapse_stop", False))
+        start_step = max(0, int(getattr(args, "start_step", 0) or 0))
+        tag = str(getattr(args, "tag", "") or "").strip()
+        stem = (
+            f"overfit_product_t{len(tiles)}_a{len(angles)}"
+            f"_b{batch_size}_d{int(cfg['desc_max_cells'])}"
+        )
+        if tag:
+            stem = f"{stem}_{tag}"
+        ckpt_path = exp_dir / f"{stem}.pt"
+        ckpt_every = max(0, int(getattr(args, "ckpt_every", 0) or 0))
+        tile_image = str(args.tile_image) if getattr(args, "tile_image", None) else None
         log_path = None
+        eval_log_path = None
         if args.log:
-            log_path = (
-                exp_dir
-                / (
-                    f"overfit_product_t{len(tiles)}_a{len(angles)}"
-                    f"_b{batch_size}_d{int(cfg['desc_max_cells'])}.jsonl"
-                )
-            )
+            log_path = exp_dir / f"{stem}.jsonl"
+            eval_log_path = exp_dir / f"{stem}_eval.jsonl"
             if log_path.is_file():
                 log_path.unlink()
+            if eval_log_path.is_file():
+                eval_log_path.unlink()
+            store.append_jsonl(
+                log_path,
+                {
+                    "step": int(start_step),
+                    "event": "start",
+                    "tile_image": tile_image,
+                    "tiles": [{"pair_id": int(t["pair_id"]), "loc": t.get("loc")} for t in tiles],
+                    "ckpt_path": str(ckpt_path),
+                    "ckpt_every": ckpt_every,
+                    "start_step": int(start_step),
+                    "steps": int(steps),
+                    "init_weights": str(args.init_weights) if args.init_weights else None,
+                    "kp_loss": kp_loss,
+                    "src_size": int(cfg["src_size"]),
+                    "out_size": int(cfg["out_size"]),
+                },
+            )
+        _safe_print(
+            f"overfit product tile_image={tile_image} ckpt_every={ckpt_every} "
+            f"src_size={cfg['src_size']} out_size={cfg['out_size']} "
+            f"same_fov={int(cfg['src_size'])==int(cfg['out_size'])} ckpt={ckpt_path}",
+            flush=True,
+        )
+
+        def _save_latest() -> None:
+            torch.save(model.state_dict(), ckpt_path)
+            _safe_print(f"overfit product saved {ckpt_path}", flush=True)
+
+        def _overfit_eval(step: int) -> dict:
+            ev = beval.evaluate_tile_matchers(
+                model,
+                tiles,
+                angles=angles,
+                device=device,
+                extract_resize=int(cfg["extract_resize"]),
+                nms=int(cfg["sp_nms_dist"]),
+                depth=int(cfg["depth"]),
+                preview_level=int(cfg["preview_level"]),
+                src_size=int(cfg["src_size"]),
+                out_size=int(cfg["out_size"]),
+                dataset=str(cfg.get("dataset") or "muromi"),
+            )
+            compact = {"step": step}
+            for kind in ("nn", "lg"):
+                part = ev[kind]
+                compact[kind] = {
+                    "n_pass": part.get("n_pass"),
+                    "n_total": part.get("n_total"),
+                    "pass_rate": part.get("pass_rate"),
+                    "n_error": part.get("n_error"),
+                    "by_angle": part.get("by_angle"),
+                    "cells": [
+                        {
+                            "angle": c.get("angle"),
+                            "auto_pass": c.get("auto_pass"),
+                            "rot_err_deg": c.get("rot_err_deg"),
+                            "trans_err_rel": c.get("trans_err_rel"),
+                            "n_matches": c.get("n_matches"),
+                            "n_inliers": c.get("n_inliers"),
+                            "n_kp0": c.get("n_kp0"),
+                            "n_kp1": c.get("n_kp1"),
+                            "error": c.get("error"),
+                        }
+                        for c in part.get("cells") or []
+                    ],
+                }
+            for kind in ("nn", "lg"):
+                part = compact[kind]
+                counts = ",".join(
+                    f"{float(c['angle']):g}:{c.get('n_matches')}" for c in part["cells"]
+                )
+                passed = sorted(
+                    float(c["angle"]) for c in part["cells"] if c.get("auto_pass")
+                )
+                _safe_print(
+                    f"overfit product eval step={step} matcher={kind} "
+                    f"k={part['n_pass']}/{part['n_total']} "
+                    f"matches[{counts}] ok_angles={passed}",
+                    flush=True,
+                )
+            if eval_log_path is not None:
+                store.append_jsonl(eval_log_path, compact)
+            model.train()
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+            return compact
 
         kp0 = _mean_kp()
-        _safe_print(f"overfit product step0_mean_kp={kp0:.6f} n_gt={n_gt}", flush=True)
-        step0 = {"step": 0, "loss_kp": kp0, "loss_total": None, "loss_desc": None}
+        _safe_print(
+            f"overfit product step{start_step}_mean_kp={kp0:.6f} n_gt={n_gt} "
+            f"start_step={start_step} steps={steps}",
+            flush=True,
+        )
+        step0 = {"step": int(start_step), "loss_kp": kp0, "loss_total": None, "loss_desc": None}
+        evals = []
+        if eval_every > 0:
+            evals.append(_overfit_eval(int(start_step)))
         first_collapse_step = None
         step_n = None
         history = []
         order = list(range(len(samples)))
         cursor = 0
-        for step in range(1, steps + 1):
+        for step in range(start_step + 1, steps + 1):
             if cursor + batch_size > len(order):
                 import random as _rnd
 
@@ -565,20 +821,30 @@ def cmd_overfit(args: argparse.Namespace) -> None:
                 model, batch, opt, device, cfg, gt_base=gt_base, gt_warp=gt_warp
             )
             mean_kp = None
-            if step % log_every == 0 or step == 1 or step == steps:
+            if step % log_every == 0 or step == start_step + 1 or step == steps:
                 mean_kp = _mean_kp()
                 ratio = mean_kp / kp0 if kp0 > 0 else None
+                is_ce = str(cfg.get("kp_loss") or "matching") == "paper_ce"
+                lo, hi = ("ce_kp", "ce_dust") if is_ce else ("fn", "fp")
+                terms = (
+                    f"{lo}={metrics['loss_fn']:.6f} {hi}={metrics['loss_fp']:.6f} "
+                    f"desc={metrics['loss_desc']:.6f}"
+                )
+                if metrics.get("n_mask"):
+                    terms += (
+                        f" cells={metrics['n_pos']}/{metrics['n_mask']}"
+                    )
                 if ratio is not None:
                     _safe_print(
                         f"overfit product step={step}/{steps} "
                         f"batch_kp={metrics['loss_kp']:.6f} mean_kp={mean_kp:.6f} "
-                        f"ratio={ratio:.4f}",
+                        f"ratio={ratio:.4f} {terms}",
                         flush=True,
                     )
                 else:
                     _safe_print(
                         f"overfit product step={step}/{steps} "
-                        f"batch_kp={metrics['loss_kp']:.6f}",
+                        f"batch_kp={metrics['loss_kp']:.6f} {terms}",
                         flush=True,
                     )
                 if (
@@ -600,7 +866,15 @@ def cmd_overfit(args: argparse.Namespace) -> None:
             history.append(row)
             if log_path is not None:
                 store.append_jsonl(log_path, row)
-            if first_collapse_step is not None:
+            just_collapsed = first_collapse_step == step
+            do_eval = eval_every > 0 and (
+                step % eval_every == 0 or step == steps or just_collapsed
+            )
+            if do_eval:
+                evals.append(_overfit_eval(step))
+            if ckpt_every > 0 and step % ckpt_every == 0:
+                _save_latest()
+            if first_collapse_step is not None and stop_on_collapse:
                 step_n = {
                     "step": step,
                     "loss_kp": mean_kp if mean_kp is not None else metrics["loss_kp"],
@@ -617,6 +891,8 @@ def cmd_overfit(args: argparse.Namespace) -> None:
                     "loss_desc": metrics["loss_desc"],
                 }
 
+        if ckpt_every <= 0 or steps % ckpt_every != 0:
+            _save_latest()
         kp_n = float(step_n["loss_kp"]) if step_n else None
         ratio = (kp_n / kp0) if kp0 and kp_n is not None and kp0 > 0 else None
         summary = {
@@ -633,7 +909,13 @@ def cmd_overfit(args: argparse.Namespace) -> None:
             "each_tile": False,
             "fresh_weights": "once",
             "steps": steps,
+            "start_step": start_step,
             "steps_ran": len(history),
+            "stop_on_collapse": stop_on_collapse,
+            "ckpt_path": str(ckpt_path),
+            "ckpt_every": ckpt_every,
+            "tile_image": tile_image,
+            "init_weights": str(args.init_weights) if args.init_weights else None,
             "angles": angles,
             "side": side,
             "tiles": [{"pair_id": int(t["pair_id"]), "loc": t.get("loc")} for t in tiles],
@@ -642,7 +924,24 @@ def cmd_overfit(args: argparse.Namespace) -> None:
             "lr": float(cfg["lr"]),
             "step0": step0,
             "stepN": step_n,
+            "eval_every": eval_every,
+            "kp_loss": kp_loss,
+            "evals": [
+                {
+                    "step": e.get("step"),
+                    **{
+                        kind: {
+                            "n_pass": (e.get(kind) or {}).get("n_pass"),
+                            "n_total": (e.get(kind) or {}).get("n_total"),
+                            "pass_rate": (e.get(kind) or {}).get("pass_rate"),
+                        }
+                        for kind in ("nn", "lg")
+                    },
+                }
+                for e in evals
+            ],
             "log_path": str(log_path) if log_path else None,
+            "eval_log_path": str(eval_log_path) if eval_log_path else None,
             "experiments_path": str(experiments_path),
         }
         store.append_jsonl(experiments_path, summary)
@@ -821,6 +1120,23 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--split-seed", type=int, default=None)
     c.add_argument("--eval-max-tiles", type=int, default=None)
     c.add_argument("--run-baseline", action="store_true")
+    c.add_argument("--depth", type=int, default=None)
+    c.add_argument("--max-steps", type=int, default=None)
+    c.add_argument("--eval-every-steps", type=int, default=None)
+    c.add_argument("--ckpt-every-steps", type=int, default=None)
+    c.add_argument("--eval-step-tiles", type=int, default=None)
+    c.add_argument("--eval-angles", default=None, help="comma list of degrees")
+    c.add_argument("--desc-max-cells", type=int, default=None)
+    c.add_argument("--num-workers", type=int, default=None)
+    c.add_argument("--desc-lambda", type=float, default=None)
+    c.add_argument("--kp-loss", default=None, choices=("matching", "paper_ce"))
+    c.add_argument("--gt-nms-dist", type=int, default=None, help="teacher NMS radius for GT")
+    c.add_argument("--gt-conf-thresh", type=float, default=None)
+    c.add_argument(
+        "--frozen-gt",
+        action="store_true",
+        help="take detector targets from a frozen teacher instead of the model being trained",
+    )
     for name in ("run", "resume", "pause", "stop", "status"):
         s = sub.add_parser(name)
         s.add_argument("run_id")
@@ -853,12 +1169,66 @@ def build_parser() -> argparse.ArgumentParser:
     ov.add_argument("--pair", type=int, default=None)
     ov.add_argument("--loc", default=None)
     ov.add_argument("--log-every", type=int, default=5)
+    ov.add_argument(
+        "--eval-every",
+        type=int,
+        default=0,
+        help="product-mode rigid eval every N steps plus step 0; 0 disables",
+    )
     ov.add_argument("--log", action="store_true")
     ov.add_argument(
         "--desc-max-cells",
         type=int,
         default=576,
-        help="0 = dense Magicleap desc; default 576 subsample",
+        help="0 = dense Magicleap desc; default 576 subsample of source cells",
+    )
+    ov.add_argument(
+        "--desc-lambda",
+        type=float,
+        default=None,
+        help=(
+            "positive weight of the desc hinge. The paper's 250 assumes a 30x40 grid; "
+            "the pos/neg balance is lambda/(Hc*Wc), so scale it with resolution "
+            "(64x64 needs ~853 to match)"
+        ),
+    )
+    ov.add_argument(
+        "--no-collapse-stop",
+        action="store_true",
+        help="record collapse but keep training to --steps",
+    )
+    ov.add_argument("--init-weights", default=None)
+    ov.add_argument("--start-step", type=int, default=0)
+    ov.add_argument("--tag", default="")
+    ov.add_argument("--tile-image", default=None)
+    ov.add_argument(
+        "--src-size",
+        type=int,
+        default=None,
+        help="pre-rotation crop; set equal to --out-size for same-FOV rotate-in-place",
+    )
+    ov.add_argument(
+        "--out-size",
+        type=int,
+        default=None,
+        help="final crop fed to SuperPoint (default from run config, usually 512)",
+    )
+    ov.add_argument(
+        "--kp-loss",
+        default="matching",
+        choices=("matching", "paper_ce"),
+        help="paper_ce = original SuperPoint 65-way -log softmax on encoded labels",
+    )
+    ov.add_argument(
+        "--exp-subdir",
+        default="_overfit",
+        help="subdir under data/sp_rot_train for logs, weights and eval",
+    )
+    ov.add_argument(
+        "--ckpt-every",
+        type=int,
+        default=0,
+        help="overwrite one latest weight file every N steps; 0 = save only at end",
     )
     return p
 

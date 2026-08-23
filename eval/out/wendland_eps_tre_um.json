@@ -14,107 +14,107 @@
     0,
     1,
     2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10,
-    11,
-    12,
-    13,
-    14,
-    15,
-    16,
-    17,
-    18,
-    19
+    84,
+    85,
+    89,
+    90,
+    102,
+    103,
+    107,
+    108,
+    109,
+    137,
+    138,
+    139,
+    177,
+    178,
+    179,
+    215,
+    217
   ],
   "series": {
     "fft": [
       {
         "eps": 0.1,
-        "batch_id": "anhir-full",
+        "batch_id": "anhir-wen20-e01",
         "n": 20,
-        "mean_of_medians": 521.2525718466284,
-        "mean_of_means": 602.6932635595797,
-        "mean_of_p95": 1344.7057969107855
+        "mean_of_medians": 700.2678791229326,
+        "mean_of_means": 752.2188359151032,
+        "mean_of_p95": 1362.7805547968576
       },
       {
         "eps": 0.2,
-        "batch_id": "anhir-wen-e02",
+        "batch_id": "anhir-wen20-e02",
         "n": 20,
-        "mean_of_medians": 490.41482609103934,
-        "mean_of_means": 611.8006081673666,
-        "mean_of_p95": 1434.0202100128013
+        "mean_of_medians": 631.7948073900143,
+        "mean_of_means": 726.8219377622816,
+        "mean_of_p95": 1468.7984839422807
       },
       {
         "eps": 0.3,
-        "batch_id": "anhir-wen-e03",
+        "batch_id": "anhir-wen20-e03",
         "n": 20,
-        "mean_of_medians": 583.0184697807383,
-        "mean_of_means": 722.1958896772475,
-        "mean_of_p95": 1583.0861796131662
+        "mean_of_medians": 726.1455905076863,
+        "mean_of_means": 829.0406484352386,
+        "mean_of_p95": 1727.9884251708759
       },
       {
         "eps": 0.4,
-        "batch_id": "anhir-wen-e04",
+        "batch_id": "anhir-wen20-e04",
         "n": 20,
-        "mean_of_medians": 537.5196518305363,
-        "mean_of_means": 693.7082077190864,
-        "mean_of_p95": 1722.998346160357
+        "mean_of_medians": 662.4812791915903,
+        "mean_of_means": 780.1005470852125,
+        "mean_of_p95": 1576.0428970994512
       },
       {
         "eps": 0.5,
-        "batch_id": "anhir-wen-e05",
+        "batch_id": "anhir-wen20-e05",
         "n": 20,
-        "mean_of_medians": 536.7988259529842,
-        "mean_of_means": 676.6303171572998,
-        "mean_of_p95": 1692.914762540325
+        "mean_of_medians": 690.1180132789948,
+        "mean_of_means": 841.1209108738085,
+        "mean_of_p95": 1882.5928480546584
       }
     ],
     "superpoint_glue": [
       {
         "eps": 0.1,
-        "batch_id": "anhir-full",
+        "batch_id": "anhir-wen20-e01",
         "n": 20,
-        "mean_of_medians": 124.51910823803101,
-        "mean_of_means": 187.81060462708834,
-        "mean_of_p95": 569.8916223841609
+        "mean_of_medians": 109.54895733440901,
+        "mean_of_means": 150.04595107783305,
+        "mean_of_p95": 435.4061343080099
       },
       {
         "eps": 0.2,
-        "batch_id": "anhir-wen-e02",
+        "batch_id": "anhir-wen20-e02",
         "n": 20,
-        "mean_of_medians": 125.63501865740224,
-        "mean_of_means": 194.4138912878762,
-        "mean_of_p95": 592.5111261502782
+        "mean_of_medians": 107.1181611263949,
+        "mean_of_means": 158.13199645420542,
+        "mean_of_p95": 461.56322584886146
       },
       {
         "eps": 0.3,
-        "batch_id": "anhir-wen-e03",
+        "batch_id": "anhir-wen20-e03",
         "n": 20,
-        "mean_of_medians": 131.5343038822774,
-        "mean_of_means": 203.03267487960136,
-        "mean_of_p95": 663.7971118092271
+        "mean_of_medians": 99.4488131312999,
+        "mean_of_means": 160.98055090166764,
+        "mean_of_p95": 557.2369657964971
       },
       {
         "eps": 0.4,
-        "batch_id": "anhir-wen-e04",
+        "batch_id": "anhir-wen20-e04",
         "n": 20,
-        "mean_of_medians": 129.3076318545471,
-        "mean_of_means": 216.54810844609673,
-        "mean_of_p95": 739.1016422369631
+        "mean_of_medians": 104.55093761613769,
+        "mean_of_means": 173.77378915942276,
+        "mean_of_p95": 638.5886496345456
       },
       {
         "eps": 0.5,
-        "batch_id": "anhir-wen-e05",
+        "batch_id": "anhir-wen20-e05",
         "n": 20,
-        "mean_of_medians": 131.8745938257806,
-        "mean_of_means": 205.96457092739394,
-        "mean_of_p95": 629.0045149368607
+        "mean_of_medians": 107.44469148557828,
+        "mean_of_means": 175.13609203620425,
+        "mean_of_p95": 540.6620724886477
       }
     ]
   },
@@ -149,175 +149,175 @@
       "src_h": 13812,
       "um_per_canvas_px": 2.348843023255814
     },
-    "3": {
-      "case": "COAD_01",
-      "tissue": "COAD",
-      "scale": "scale-25pc",
-      "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 10724,
-      "src_h": 14131,
-      "um_per_canvas_px": 2.403091569767442
+    "84": {
+      "case": "breast_1",
+      "tissue": "breast",
+      "scale": "scale-20pc",
+      "scale_frac": 0.2,
+      "mpp_full_um": 0.2528,
+      "src_w": 13518,
+      "src_h": 14358,
+      "um_per_canvas_px": 1.6486656976744187
     },
-    "4": {
-      "case": "COAD_01",
-      "tissue": "COAD",
-      "scale": "scale-25pc",
-      "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 10724,
-      "src_h": 14131,
-      "um_per_canvas_px": 2.403091569767442
+    "85": {
+      "case": "breast_2",
+      "tissue": "breast",
+      "scale": "scale-20pc",
+      "scale_frac": 0.2,
+      "mpp_full_um": 0.2528,
+      "src_w": 12376,
+      "src_h": 11735,
+      "um_per_canvas_px": 1.3474781976744186
     },
-    "5": {
-      "case": "COAD_01",
-      "tissue": "COAD",
-      "scale": "scale-25pc",
-      "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 11381,
-      "src_h": 15052,
-      "um_per_canvas_px": 2.55971511627907
+    "89": {
+      "case": "gastric_1",
+      "tissue": "gastric",
+      "scale": "scale-15pc",
+      "scale_frac": 0.15,
+      "mpp_full_um": 0.2528,
+      "src_w": 7171,
+      "src_h": 9916,
+      "um_per_canvas_px": 1.5181472868217059
     },
-    "6": {
-      "case": "COAD_02",
-      "tissue": "COAD",
-      "scale": "scale-25pc",
-      "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 8649,
-      "src_h": 9551,
-      "um_per_canvas_px": 1.6242252906976746
+    "90": {
+      "case": "gastric_2",
+      "tissue": "gastric",
+      "scale": "scale-15pc",
+      "scale_frac": 0.15,
+      "mpp_full_um": 0.2528,
+      "src_w": 9860,
+      "src_h": 10961,
+      "um_per_canvas_px": 1.6781375968992251
     },
-    "7": {
-      "case": "COAD_02",
-      "tissue": "COAD",
+    "102": {
+      "case": "kidney_1",
+      "tissue": "kidney",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 8649,
-      "src_h": 9551,
-      "um_per_canvas_px": 1.6242252906976746
+      "mpp_full_um": 0.2528,
+      "src_w": 6902,
+      "src_h": 14283,
+      "um_per_canvas_px": 1.312043023255814
     },
-    "8": {
-      "case": "COAD_02",
-      "tissue": "COAD",
+    "103": {
+      "case": "kidney_2",
+      "tissue": "kidney",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 8649,
-      "src_h": 9551,
-      "um_per_canvas_px": 1.6242252906976746
+      "mpp_full_um": 0.2528,
+      "src_w": 5950,
+      "src_h": 12766,
+      "um_per_canvas_px": 1.1726906976744187
     },
-    "9": {
-      "case": "COAD_02",
-      "tissue": "COAD",
+    "107": {
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 8197,
-      "src_h": 10396,
-      "um_per_canvas_px": 1.7679244186046514
+      "mpp_full_um": 0.174,
+      "src_w": 6930,
+      "src_h": 4369,
+      "um_per_canvas_px": 0.2943896484375
     },
-    "10": {
-      "case": "COAD_02",
-      "tissue": "COAD",
+    "108": {
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 8197,
-      "src_h": 10396,
-      "um_per_canvas_px": 1.7679244186046514
+      "mpp_full_um": 0.174,
+      "src_w": 6930,
+      "src_h": 4369,
+      "um_per_canvas_px": 0.2943896484375
     },
-    "11": {
-      "case": "COAD_02",
-      "tissue": "COAD",
+    "109": {
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 8998,
-      "src_h": 10782,
-      "um_per_canvas_px": 1.8335668604651165
+      "mpp_full_um": 0.174,
+      "src_w": 6930,
+      "src_h": 4369,
+      "um_per_canvas_px": 0.2943896484375
     },
-    "12": {
-      "case": "COAD_03",
-      "tissue": "COAD",
-      "scale": "scale-25pc",
-      "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 10916,
-      "src_h": 14182,
-      "um_per_canvas_px": 2.411764534883721
+    "137": {
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes",
+      "scale": "scale-100pc",
+      "scale_frac": 1.0,
+      "mpp_full_um": 1.274,
+      "src_w": 6842,
+      "src_h": 11692,
+      "um_per_canvas_px": 1.3531620639534885
     },
-    "13": {
-      "case": "COAD_04",
-      "tissue": "COAD",
-      "scale": "scale-25pc",
-      "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 8794,
-      "src_h": 13915,
-      "um_per_canvas_px": 2.366359011627907
+    "138": {
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes",
+      "scale": "scale-100pc",
+      "scale_frac": 1.0,
+      "mpp_full_um": 1.274,
+      "src_w": 6842,
+      "src_h": 11692,
+      "um_per_canvas_px": 1.3531620639534885
     },
-    "14": {
-      "case": "COAD_05",
-      "tissue": "COAD",
-      "scale": "scale-25pc",
-      "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 9911,
-      "src_h": 8064,
-      "um_per_canvas_px": 1.3713488372093023
+    "139": {
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes",
+      "scale": "scale-100pc",
+      "scale_frac": 1.0,
+      "mpp_full_um": 1.274,
+      "src_w": 6842,
+      "src_h": 11692,
+      "um_per_canvas_px": 1.3531620639534885
     },
-    "15": {
-      "case": "COAD_05",
-      "tissue": "COAD",
+    "177": {
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 9911,
-      "src_h": 8064,
-      "um_per_canvas_px": 1.3713488372093023
+      "mpp_full_um": 2.294,
+      "src_w": 8918,
+      "src_h": 2946,
+      "um_per_canvas_px": 4.9946025390625
     },
-    "16": {
-      "case": "COAD_05",
-      "tissue": "COAD",
+    "178": {
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 9911,
-      "src_h": 8064,
-      "um_per_canvas_px": 1.3713488372093023
+      "mpp_full_um": 2.294,
+      "src_w": 8918,
+      "src_h": 2946,
+      "um_per_canvas_px": 4.9946025390625
     },
-    "17": {
-      "case": "COAD_05",
-      "tissue": "COAD",
+    "179": {
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 9850,
-      "src_h": 8282,
-      "um_per_canvas_px": 1.408421511627907
+      "mpp_full_um": 2.294,
+      "src_w": 8918,
+      "src_h": 2946,
+      "um_per_canvas_px": 4.9946025390625
     },
-    "18": {
-      "case": "COAD_05",
-      "tissue": "COAD",
+    "215": {
+      "case": "mice-kidney_1",
+      "tissue": "mice-kidney",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 9850,
-      "src_h": 8282,
-      "um_per_canvas_px": 1.408421511627907
+      "mpp_full_um": 0.227,
+      "src_w": 9216,
+      "src_h": 7552,
+      "um_per_canvas_px": 0.6229302325581396
     },
-    "19": {
-      "case": "COAD_05",
-      "tissue": "COAD",
+    "217": {
+      "case": "mice-kidney_1",
+      "tissue": "mice-kidney",
       "scale": "scale-25pc",
       "scale_frac": 0.25,
-      "mpp_full_um": 0.468,
-      "src_w": 9830,
-      "src_h": 8381,
-      "um_per_canvas_px": 1.4252572674418607
+      "mpp_full_um": 0.227,
+      "src_w": 9216,
+      "src_h": 7552,
+      "um_per_canvas_px": 0.6229302325581396
     }
   }
 }

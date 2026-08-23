@@ -14,107 +14,107 @@
     0,
     1,
     2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10,
-    11,
-    12,
-    13,
-    14,
-    15,
-    16,
-    17,
-    18,
-    19
+    84,
+    85,
+    89,
+    90,
+    102,
+    103,
+    107,
+    108,
+    109,
+    137,
+    138,
+    139,
+    177,
+    178,
+    179,
+    215,
+    217
   ],
   "series": {
     "fft": [
       {
         "eps": 0.1,
-        "batch_id": "anhir-full",
+        "batch_id": "anhir-wen20-e01",
         "n": 20,
-        "mean_of_medians": 240.21567313501473,
-        "mean_of_means": 280.4446306607298,
-        "mean_of_p95": 630.7918933671698
+        "mean_of_medians": 549.9231366106159,
+        "mean_of_means": 568.9868113299715,
+        "mean_of_p95": 896.8477101689941
       },
       {
         "eps": 0.2,
-        "batch_id": "anhir-wen-e02",
+        "batch_id": "anhir-wen20-e02",
         "n": 20,
-        "mean_of_medians": 231.41404222834484,
-        "mean_of_means": 289.34222084277206,
-        "mean_of_p95": 680.6641218392487
+        "mean_of_medians": 544.2368493231232,
+        "mean_of_means": 587.1992426759307,
+        "mean_of_p95": 957.2226796451465
       },
       {
         "eps": 0.3,
-        "batch_id": "anhir-wen-e03",
+        "batch_id": "anhir-wen20-e03",
         "n": 20,
-        "mean_of_medians": 270.89055197896283,
-        "mean_of_means": 338.0337922683513,
-        "mean_of_p95": 759.4239756383699
+        "mean_of_medians": 607.5865113671045,
+        "mean_of_means": 646.652708284871,
+        "mean_of_p95": 1102.8800744361806
       },
       {
         "eps": 0.4,
-        "batch_id": "anhir-wen-e04",
+        "batch_id": "anhir-wen20-e04",
         "n": 20,
-        "mean_of_medians": 255.86169903087006,
-        "mean_of_means": 330.4698191105668,
-        "mean_of_p95": 824.020786803578
+        "mean_of_medians": 580.3301789536661,
+        "mean_of_means": 625.4083429108647,
+        "mean_of_p95": 1102.9026035738802
       },
       {
         "eps": 0.5,
-        "batch_id": "anhir-wen-e05",
+        "batch_id": "anhir-wen20-e05",
         "n": 20,
-        "mean_of_medians": 254.52870145979827,
-        "mean_of_means": 321.23410452158953,
-        "mean_of_p95": 802.9946452742525
+        "mean_of_medians": 612.2630440812577,
+        "mean_of_means": 653.5543573140473,
+        "mean_of_p95": 1204.1593899591119
       }
     ],
     "superpoint_glue": [
       {
         "eps": 0.1,
-        "batch_id": "anhir-full",
+        "batch_id": "anhir-wen20-e01",
         "n": 20,
-        "mean_of_medians": 62.88893079294819,
-        "mean_of_means": 94.7353875302289,
-        "mean_of_p95": 287.557010588357
+        "mean_of_medians": 86.3418674033885,
+        "mean_of_means": 112.98250525767658,
+        "mean_of_p95": 297.991546887884
       },
       {
         "eps": 0.2,
-        "batch_id": "anhir-wen-e02",
+        "batch_id": "anhir-wen20-e02",
         "n": 20,
-        "mean_of_medians": 62.89824473354629,
-        "mean_of_means": 97.14621040766392,
-        "mean_of_p95": 294.3781598416846
+        "mean_of_medians": 80.29086528425253,
+        "mean_of_means": 119.71809793554898,
+        "mean_of_p95": 349.56502051305654
       },
       {
         "eps": 0.3,
-        "batch_id": "anhir-wen-e03",
+        "batch_id": "anhir-wen20-e03",
         "n": 20,
-        "mean_of_medians": 65.92139793402905,
-        "mean_of_means": 100.76987195376576,
-        "mean_of_p95": 324.0984662458981
+        "mean_of_medians": 73.45550908721177,
+        "mean_of_means": 114.61430827236536,
+        "mean_of_p95": 379.6043804463406
       },
       {
         "eps": 0.4,
-        "batch_id": "anhir-wen-e04",
+        "batch_id": "anhir-wen20-e04",
         "n": 20,
-        "mean_of_medians": 64.64332235681087,
-        "mean_of_means": 106.80563809953699,
-        "mean_of_p95": 358.29495953565885
+        "mean_of_medians": 80.1855081682504,
+        "mean_of_means": 129.2729097356073,
+        "mean_of_p95": 443.0046040022271
       },
       {
         "eps": 0.5,
-        "batch_id": "anhir-wen-e05",
+        "batch_id": "anhir-wen20-e05",
         "n": 20,
-        "mean_of_medians": 65.74557663835512,
-        "mean_of_means": 102.41023525992469,
-        "mean_of_p95": 311.5854768021718
+        "mean_of_medians": 83.43532607726516,
+        "mean_of_means": 139.8265802142625,
+        "mean_of_p95": 428.6632967051074
       }
     ]
   }

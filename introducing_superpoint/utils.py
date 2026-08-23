@@ -230,6 +230,173 @@ def keypoint_matching_loss(
     )["loss"]
 
 
+def encode_keypoint_labels(gt_coords, Hc, Wc, cell_size=8, dustbin_idx=64, device=None):
+    """
+    Original SuperPoint label encoding.
+
+    gt_coords: list[Tensor(Ni, 3)] — (x, y, conf) in CNN pixels
+    returns Y: (B, Hc, Wc) long in {0..dustbin_idx}; dustbin where no GT point
+    falls in the cell. On collision the highest-conf point wins (paper keeps one
+    interest point per cell).
+    """
+    B = len(gt_coords)
+    device = device or (gt_coords[0].device if B else torch.device("cpu"))
+    Y = torch.full((B, Hc, Wc), dustbin_idx, dtype=torch.long, device=device)
+    for b, gt in enumerate(gt_coords):
+        if gt.numel() == 0:
+            continue
+        xy = gt[:, :2].to(device)
+        conf = gt[:, 2].to(device) if gt.shape[1] > 2 else torch.ones(gt.shape[0], device=device)
+        col = torch.div(xy[:, 0], cell_size, rounding_mode="floor").long()
+        row = torch.div(xy[:, 1], cell_size, rounding_mode="floor").long()
+        inside = (row >= 0) & (row < Hc) & (col >= 0) & (col < Wc)
+        if not bool(inside.any()):
+            continue
+        xy, conf, row, col = xy[inside], conf[inside], row[inside], col[inside]
+        bin_row = (xy[:, 1] - row.float() * cell_size).long().clamp(0, cell_size - 1)
+        bin_col = (xy[:, 0] - col.float() * cell_size).long().clamp(0, cell_size - 1)
+        label = bin_row * cell_size + bin_col
+        cell = row * Wc + col
+        # Two stable sorts give cell-major, confidence-ascending order; taking the
+        # last entry of each cell run makes the highest-conf winner deterministic,
+        # which duplicate-index assignment does not guarantee on CUDA.
+        order = conf.argsort(stable=True)
+        order = order[cell[order].argsort(stable=True)]
+        cell, label = cell[order], label[order]
+        keep = torch.ones_like(cell, dtype=torch.bool)
+        keep[:-1] = cell[1:] != cell[:-1]
+        Y[b].view(-1)[cell[keep]] = label[keep]
+    return Y
+
+
+def cell_valid_from_mask(valid_mask, Hc, Wc, cell_size=8):
+    """
+    valid_mask: (B, H, W) or (B, 1, H, W) — 1 where pixel is usable.
+    returns (B, Hc, Wc) bool — True only if every pixel in the 8×8 cell is valid.
+    """
+    if valid_mask.dim() == 3:
+        vm = valid_mask.unsqueeze(1).float()
+    else:
+        vm = valid_mask.float()
+    vm = F.pixel_unshuffle(vm, cell_size)
+    return torch.prod(vm, dim=1) > 0.5
+
+
+def cell_fov_overlap_mask(homographies, Hc, Wc, cell_size=8, side="src", valid_dst=None):
+    """
+    Per-cell FOV overlap under H (base→warped).
+
+    side="src": cells in the base frame; keep if H maps them into the warped image.
+    side="dst": cells in the warped frame; keep if H^{-1} maps them into the base
+    image. A cell is kept only when all four of its extreme pixels map inside, so
+    cells straddling the overlap boundary are rejected rather than half-counted.
+    If valid_dst is set and side="src", also require every mapped corner to land on
+    a valid warped pixel (rotation fill excluded).
+    homographies: (B, 3, 3)
+    returns (B, Hc, Wc) bool
+    """
+    device = homographies.device
+    B = homographies.shape[0]
+    out_h = Hc * cell_size
+    out_w = Wc * cell_size
+    gs = float(cell_size)
+    r0 = torch.arange(Hc, device=device, dtype=torch.float32) * gs
+    c0 = torch.arange(Wc, device=device, dtype=torch.float32) * gs
+    dy, dx = torch.meshgrid(
+        torch.tensor([0.0, gs - 1.0], device=device),
+        torch.tensor([0.0, gs - 1.0], device=device),
+        indexing="ij",
+    )
+    xx = c0.view(1, Wc, 1) + dx.reshape(1, 1, 4)
+    yy = r0.view(Hc, 1, 1) + dy.reshape(1, 1, 4)
+    xx = xx.expand(Hc, Wc, 4)
+    yy = yy.expand(Hc, Wc, 4)
+    pts = torch.stack([xx, yy, torch.ones_like(xx)], dim=-1).reshape(1, Hc * Wc * 4, 3)
+    pts = pts.expand(B, -1, -1)
+    H = homographies.to(device=device, dtype=torch.float32)
+    if side == "dst":
+        H = torch.linalg.inv(H)
+    elif side != "src":
+        raise ValueError(f"unknown side {side!r}")
+    mapped = torch.bmm(pts, H.transpose(1, 2))
+    xy = mapped[..., :2] / mapped[..., 2:].clamp(min=1e-6)
+    ok = (
+        (xy[..., 0] >= 0)
+        & (xy[..., 0] < float(out_w))
+        & (xy[..., 1] >= 0)
+        & (xy[..., 1] < float(out_h))
+    )
+    if side == "src" and valid_dst is not None:
+        vm = valid_dst
+        if vm.dim() == 4:
+            vm = vm[:, 0]
+        grid = torch.stack(
+            [
+                xy[..., 0] / max(float(out_w) - 1.0, 1.0) * 2.0 - 1.0,
+                xy[..., 1] / max(float(out_h) - 1.0, 1.0) * 2.0 - 1.0,
+            ],
+            dim=-1,
+        ).view(B, Hc * Wc * 4, 1, 2)
+        sampled = F.grid_sample(
+            vm.float().unsqueeze(1),
+            grid,
+            mode="nearest",
+            padding_mode="zeros",
+            align_corners=True,
+        ).view(B, Hc * Wc * 4)
+        ok = ok & (sampled > 0.5)
+    return ok.view(B, Hc, Wc, 4).all(dim=-1)
+
+
+def detector_ce_loss(
+    logits,
+    gt_coords,
+    cell_size=8,
+    dustbin_idx=64,
+    cell_mask=None,
+):
+    """
+    Original SuperPoint detector loss (eq 3): per-cell 65-way -log softmax
+    against encoded labels. No NMS, no radius matching.
+
+    logits:    (B, 65, Hc, Wc) raw detector head
+    gt_coords: list[Tensor(Ni, 3)] — (x, y, conf) already in this frame
+    cell_mask: optional (B, Hc, Wc) bool — cells outside the mask are excluded
+    from the mean (FOV non-overlap / invalid warp fill).
+
+    "loss_fn" and "loss_fp" are the same CE restricted to interest cells and to
+    dustbin cells respectively; they are diagnostics, not separate penalties, and
+    are already contained in "loss".
+    """
+    B, _, Hc, Wc = logits.shape
+    Y = encode_keypoint_labels(
+        gt_coords, Hc, Wc, cell_size=cell_size, dustbin_idx=dustbin_idx, device=logits.device
+    )
+    per_cell = F.cross_entropy(logits, Y, reduction="none")
+    if cell_mask is None:
+        mask = torch.ones((B, Hc, Wc), dtype=torch.bool, device=logits.device)
+    else:
+        mask = cell_mask.to(device=logits.device, dtype=torch.bool)
+        if mask.shape != per_cell.shape:
+            raise ValueError(f"cell_mask shape {tuple(mask.shape)} != {tuple(per_cell.shape)}")
+    pos = mask & (Y != dustbin_idx)
+    neg = mask & (Y == dustbin_idx)
+    n_pos = int(pos.sum())
+    n_neg = int(neg.sum())
+    n_mask = int(mask.sum())
+    loss = per_cell[mask].mean() if n_mask else logits.sum() * 0.0
+    loss_fn = per_cell[pos].mean() if n_pos else logits.sum() * 0.0
+    loss_fp = per_cell[neg].mean() if n_neg else logits.sum() * 0.0
+    return {
+        "loss": loss,
+        "loss_fn": loss_fn,
+        "loss_fp": loss_fp,
+        "n_pos": n_pos,
+        "n_neg": n_neg,
+        "n_mask": n_mask,
+    }
+
+
 def compute_keypoint_kpis(
     logits_he, logits_ihc, gt_coords, cell_size=8, radius=12,
     match_mode="conf_distance", match_epsilon=1.0,
@@ -272,44 +439,43 @@ def compute_keypoint_kpis(
         "fn": fn,
     }
 
-def _identity_correspondence(Hc, Wc, device):
-    r = torch.arange(Hc, device=device)
-    c = torch.arange(Wc, device=device)
-    return (
-        (r.view(Hc, 1, 1, 1) == r.view(1, 1, Hc, 1))
-        & (c.view(1, Wc, 1, 1) == c.view(1, 1, 1, Wc))
-    ).float()
-
-
-def warp_correspondence(homographies, Hc, Wc, grid_size, device):
+def _map_cells_to_dst(homographies, rows, cols, Hc, Wc, grid_size):
     """
-    homographies: (B, 3, 3) mapping pixel coords in descriptors → other_descriptors.
-    Returns s: (B, Hc, Wc, Hc, Wc) with 1 at the destination cell of each source cell centre.
+    Map cell centres through H and report the destination cell index.
+
+    rows, cols: (M,) long — source cell coordinates
+    returns (dest, inside): dest (B, M) long flat index clamped into range,
+    inside (B, M) bool — False when the centre lands outside the destination grid.
     """
-    B = homographies.shape[0]
+    device = homographies.device
     gs = float(grid_size)
-    yy, xx = torch.meshgrid(
-        (torch.arange(Hc, device=device, dtype=torch.float32) + 0.5) * gs,
-        (torch.arange(Wc, device=device, dtype=torch.float32) + 0.5) * gs,
-        indexing="ij",
-    )
-    ones = torch.ones(Hc, Wc, device=device, dtype=torch.float32)
-    pts = torch.stack([xx, yy, ones], dim=-1).view(1, Hc * Wc, 3).expand(B, -1, -1)
+    xx = (cols.to(torch.float32) + 0.5) * gs
+    yy = (rows.to(torch.float32) + 0.5) * gs
+    pts = torch.stack([xx, yy, torch.ones_like(xx)], dim=-1).unsqueeze(0)
+    pts = pts.expand(homographies.shape[0], -1, -1)
     H = homographies.to(device=device, dtype=torch.float32)
     mapped = torch.bmm(pts, H.transpose(1, 2))
-    denom = mapped[..., 2:].clamp(min=1e-6)
-    xy = mapped[..., :2] / denom
-    col = (xy[..., 0] / gs).long()
-    row = (xy[..., 1] / gs).long()
-    inside = (row >= 0) & (row < Hc) & (col >= 0) & (col < Wc)
-    row = row.clamp(0, Hc - 1)
-    col = col.clamp(0, Wc - 1)
-    s = torch.zeros(B, Hc * Wc, Hc * Wc, device=device, dtype=torch.float32)
-    src = torch.arange(Hc * Wc, device=device).view(1, -1).expand(B, -1)
-    dst = row * Wc + col
-    b_idx = torch.arange(B, device=device).unsqueeze(1).expand_as(src)
-    s[b_idx[inside], src[inside], dst[inside]] = 1.0
-    return s.view(B, Hc, Wc, Hc, Wc)
+    xy = mapped[..., :2] / mapped[..., 2:].clamp(min=1e-6)
+    dcol = torch.div(xy[..., 0], gs, rounding_mode="floor").long()
+    drow = torch.div(xy[..., 1], gs, rounding_mode="floor").long()
+    inside = (drow >= 0) & (drow < Hc) & (dcol >= 0) & (dcol < Wc)
+    dest = drow.clamp(0, Hc - 1) * Wc + dcol.clamp(0, Wc - 1)
+    return dest, inside
+
+
+def _cell_weights(valid_mask, cell_mask, batch_size, N, Hc, Wc, gs, device):
+    """
+    Combine an optional pixel-level valid mask with an optional cell-level mask
+    into a single (B, N) float weight in {0, 1}.
+    """
+    w = torch.ones(batch_size, N, device=device, dtype=torch.float32)
+    if valid_mask is not None:
+        vm = valid_mask.unsqueeze(1).float() if valid_mask.dim() == 3 else valid_mask.float()
+        vm = F.pixel_unshuffle(vm, gs)
+        w = w * (torch.prod(vm, dim=1) > 0.5).to(torch.float32).view(batch_size, N)
+    if cell_mask is not None:
+        w = w * cell_mask.to(device=device, dtype=torch.float32).view(batch_size, N)
+    return w
 
 
 def descriptor_loss(
@@ -318,87 +484,54 @@ def descriptor_loss(
     config,
     valid_mask=None,
     homographies=None,
+    cell_mask_src=None,
+    cell_mask_dst=None,
 ):
     """
-    Dense Magicleap descriptor loss. For large maps (e.g. 512px → 64×64 cells)
-    randomly subsample cells so the BxNxN similarity stays tractable.
+    Magicleap descriptor hinge (SuperPoint eq. 4-5) on the raw cosine similarity
+    of L2-unit descriptors.
+
+    descriptors:       (B, D, Hc, Wc) raw descriptor head in the source frame
+    other_descriptors: (B, D, Hc, Wc) raw descriptor head in the destination frame
+    homographies:      (B, 3, 3) source pixels → destination pixels; None means identity
+    valid_mask:        (B, H, W) or (B, 1, H, W) destination-frame pixel validity
+    cell_mask_src:     (B, Hc, Wc) usable source cells, e.g. FOV overlap
+    cell_mask_dst:     (B, Hc, Wc) usable destination cells
+
+    config["desc_max_cells"] caps the number of *source* cells; every destination
+    cell is always scored, so a kept source never loses its correspondence.
+    returns scalar
     """
     batch_size, _, Hc, Wc = descriptors.shape
     device = descriptors.device
     gs = int(config["grid_size"])
-    max_cells = int(config.get("desc_max_cells") or 0)
     N = Hc * Wc
-    desc = F.normalize(descriptors, p=2, dim=1)
-    other_desc = F.normalize(other_descriptors, p=2, dim=1)
+    max_cells = int(config.get("desc_max_cells") or 0)
+    desc = F.normalize(descriptors, p=2, dim=1).view(batch_size, -1, N)
+    other = F.normalize(other_descriptors, p=2, dim=1).view(batch_size, -1, N)
 
-    if max_cells > 0 and N > max_cells:
-        idx = torch.randperm(N, device=device)[:max_cells]
-        desc_flat = desc.view(batch_size, -1, N)[:, :, idx]
-        other_desc_flat = other_desc.view(batch_size, -1, N)[:, :, idx]
-        M = max_cells
-        rows = torch.div(idx, Wc, rounding_mode="floor")
-        cols = idx % Wc
-        if valid_mask is None:
-            cell_valid = torch.ones(batch_size, M, device=device, dtype=torch.float32)
-        else:
-            vm = valid_mask.unsqueeze(1).float() if valid_mask.dim() == 3 else valid_mask.float()
-            vm = F.pixel_unshuffle(vm, gs)
-            vm = torch.prod(vm, dim=1).view(batch_size, N)
-            cell_valid = vm[:, idx]
-        if homographies is None:
-            s = torch.eye(M, device=device, dtype=torch.float32).unsqueeze(0).expand(batch_size, -1, -1)
-        else:
-            yy = (rows.float() + 0.5) * gs
-            xx = (cols.float() + 0.5) * gs
-            ones = torch.ones_like(xx)
-            pts = torch.stack([xx, yy, ones], dim=-1).unsqueeze(0).expand(batch_size, -1, -1)
-            H = homographies.to(device=device, dtype=torch.float32)
-            mapped = torch.bmm(pts, H.transpose(1, 2))
-            xy = mapped[..., :2] / mapped[..., 2:].clamp(min=1e-6)
-            dcol = (xy[..., 0] / gs).long()
-            drow = (xy[..., 1] / gs).long()
-            dest = drow * Wc + dcol
-            inside = (drow >= 0) & (drow < Hc) & (dcol >= 0) & (dcol < Wc)
-            pos = idx.view(1, 1, M) == dest.unsqueeze(-1)
-            s = (pos & inside.unsqueeze(-1)).float()
-        dots = torch.bmm(desc_flat.transpose(1, 2), other_desc_flat)
-        dots = F.relu(dots)
-        dots = F.normalize(dots, p=2, dim=2)
-        dots = F.normalize(dots, p=2, dim=1)
-        positive_dist = torch.clamp(config["positive_margin"] - dots, min=0.0)
-        negative_dist = torch.clamp(dots - config["negative_margin"], min=0.0)
-        loss = config["lambda_d"] * s * positive_dist + (1 - s) * negative_dist
-        mask = cell_valid.unsqueeze(2) * cell_valid.unsqueeze(1)
-        normalization = torch.sum(mask)
-        return torch.sum(mask * loss) / (normalization + 1e-8)
+    w_dst = _cell_weights(valid_mask, cell_mask_dst, batch_size, N, Hc, Wc, gs, device)
+    w_src = _cell_weights(None, cell_mask_src, batch_size, N, Hc, Wc, gs, device)
 
-    desc_flat = desc.view(batch_size, -1, N)
-    other_desc_flat = other_desc.view(batch_size, -1, N)
-    dot_product_desc = torch.bmm(desc_flat.transpose(1, 2), other_desc_flat)
-    dot_product_desc = F.relu(dot_product_desc)
-    dot_product_desc = dot_product_desc.view(batch_size, Hc, Wc, N)
-    dot_product_desc = F.normalize(dot_product_desc, p=2, dim=3)
-    dot_product_desc = dot_product_desc.view(batch_size, N, Hc, Wc)
-    dot_product_desc = F.normalize(dot_product_desc, p=2, dim=1)
-    dot_product_desc = dot_product_desc.view(batch_size, Hc, Wc, Hc, Wc)
-
-    if homographies is None:
-        s = _identity_correspondence(Hc, Wc, device)
-        if s.dim() == 4:
-            s = s.unsqueeze(0).expand(batch_size, -1, -1, -1, -1)
+    if 0 < max_cells < N:
+        sel = torch.randperm(N, device=device)[:max_cells]
     else:
-        s = warp_correspondence(homographies, Hc, Wc, gs, device)
+        sel = torch.arange(N, device=device)
+    w_src = w_src[:, sel]
 
-    positive_dist = torch.clamp(config["positive_margin"] - dot_product_desc, min=0.0)
-    negative_dist = torch.clamp(dot_product_desc - config["negative_margin"], min=0.0)
-    loss = config["lambda_d"] * s * positive_dist + (1 - s) * negative_dist
-    if valid_mask is None:
-        mask_h, mask_w = Hc * gs, Wc * gs
-        valid_mask = torch.ones((batch_size, 1, mask_h, mask_w), dtype=torch.float32, device=device)
-    elif valid_mask.dim() == 3:
-        valid_mask = valid_mask.unsqueeze(1).float()
-    valid_mask = F.pixel_unshuffle(valid_mask, gs)
-    valid_mask = torch.prod(valid_mask, dim=1, keepdim=True)
-    valid_mask = valid_mask.view(batch_size, 1, 1, Hc, Wc)
-    normalization = torch.sum(valid_mask) * N
-    return torch.sum(valid_mask * loss) / (normalization + 1e-8)
+    s = torch.zeros(batch_size, sel.shape[0], N, device=device, dtype=torch.float32)
+    if homographies is None:
+        s.scatter_(2, sel.view(1, -1, 1).expand(batch_size, -1, 1), 1.0)
+    else:
+        rows = torch.div(sel, Wc, rounding_mode="floor")
+        cols = sel % Wc
+        dest, inside = _map_cells_to_dst(homographies, rows, cols, Hc, Wc, gs)
+        s.scatter_(2, dest.unsqueeze(-1), inside.unsqueeze(-1).to(torch.float32))
+
+    dots = torch.bmm(desc[:, :, sel].transpose(1, 2), other)
+    positive_dist = torch.clamp(float(config["positive_margin"]) - dots, min=0.0)
+    negative_dist = torch.clamp(dots - float(config["negative_margin"]), min=0.0)
+    pair = float(config["lambda_d"]) * s * positive_dist + (1.0 - s) * negative_dist
+    total = torch.einsum("bmn,bm,bn->", pair, w_src, w_dst)
+    norm = torch.einsum("bm,bn->", w_src, w_dst)
+    return total / (norm + 1e-8)

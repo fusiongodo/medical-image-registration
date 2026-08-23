@@ -1,5 +1,5 @@
 """
-Wendland ε vs TRE for ANHIR pairs 0–19.
+Wendland ε vs TRE for the stratified 20-pair ANHIR subset (anhir-wen20-e0*).
 
   python eval/plot_wendland_eps.py
   python eval/plot_wendland_eps.py --out eval/out/wendland_eps_tre.png
@@ -30,11 +30,11 @@ EVAL_RUNS = REPO / "data" / "eval_runs"
 LAMS = ("fft", "superpoint_glue")
 LAM_TITLE = {"fft": "FFT", "superpoint_glue": "SuperPoint + LightGlue"}
 BATCH_IDS = (
-    "anhir-full",
-    "anhir-wen-e02",
-    "anhir-wen-e03",
-    "anhir-wen-e04",
-    "anhir-wen-e05",
+    "anhir-wen20-e01",
+    "anhir-wen20-e02",
+    "anhir-wen20-e03",
+    "anhir-wen20-e04",
+    "anhir-wen20-e05",
 )
 
 CANVAS_W = rpaths.CANVAS_W

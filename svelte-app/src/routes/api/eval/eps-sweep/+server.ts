@@ -54,10 +54,9 @@ export const GET: RequestHandler = ({ url }) => {
 	const byEps = new Map<number, Cand>();
 
 	for (const name of readdirSync(EVAL_ROOT)) {
-		if (name !== 'anhir-full' && !name.startsWith('anhir-wen')) continue;
+		if (!name.startsWith('anhir-wen20-')) continue;
 		const man = readJson(join(EVAL_ROOT, name, 'manifest.json'));
 		if (!man) continue;
-		if (name !== 'anhir-full' && !name.startsWith('anhir-wen')) continue;
 		const ds = typeof man.dataset === 'string' ? man.dataset : 'muromi';
 		if (ds !== dataset) continue;
 		const estimators = Array.isArray(man.estimators) ? man.estimators : [];

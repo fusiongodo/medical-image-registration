@@ -273,5 +273,6 @@ def collate_rot(batch: list[dict]) -> dict:
         "homography": torch.stack([b["homography"] for b in batch], dim=0),
         "theta_deg": [b["theta_deg"] for b in batch],
         "pair_id": [b["pair_id"] for b in batch],
+        "loc": [b["loc"] for b in batch],
         "side": [b["side"] for b in batch],
     }
