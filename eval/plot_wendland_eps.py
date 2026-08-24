@@ -21,6 +21,7 @@ from PIL import Image
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 import conf
+from eval.anhir_core_table import pair_geom
 from regWSI import paths as rpaths
 from setup import datasets
 from setup.anhir.ingest import _open_zip, _zip_prefix
@@ -220,6 +221,26 @@ def to_um(data: dict) -> dict:
     return out
 
 
+def to_rtre(data: dict) -> dict:
+    geom = pair_geom(data["pairs"])
+    scales = [float(geom[pid]["rtre_factor"]) for pid in data["pairs"]]
+    out = copy.deepcopy(data)
+    out["unit"] = "rTRE"
+    out["rtre_per_pair"] = {str(pid): geom[pid] for pid in data["pairs"]}
+    for rows in out["series"].values():
+        for row in rows:
+            means = [v * s for v, s in zip(row["pair_means"], scales)]
+            medians = [v * s for v, s in zip(row["pair_medians"], scales)]
+            p95s = [v * s for v, s in zip(row["pair_p95s"], scales)]
+            row["pair_means"] = means
+            row["pair_medians"] = medians
+            row["pair_p95s"] = p95s
+            row["mean_of_means"] = _mean(means)
+            row["mean_of_medians"] = _mean(medians)
+            row["mean_of_p95"] = _mean(p95s)
+    return out
+
+
 def _draw_panel(ax, rows: list[dict], ylabel: str, *, legend: bool) -> None:
     xs = [r["eps"] for r in rows]
     med = [r["mean_of_medians"] for r in rows]
@@ -233,7 +254,9 @@ def _draw_panel(ax, rows: list[dict], ylabel: str, *, legend: bool) -> None:
     ax.set_xlim(min(xs) - 0.03, max(xs) + 0.03)
     ys = [v for v in med + avg if v is not None]
     lo, hi = min(ys), max(ys)
-    pad = max(4.0, (hi - lo) * 0.18)
+    pad = max((hi - lo) * 0.18, 0.05 * hi)
+    if pad <= 0:
+        pad = 0.001
     ax.set_ylim(lo - pad, hi + pad)
     if legend:
         ax.legend(loc="best", frameon=False, fontsize=7)
@@ -299,6 +322,8 @@ def _write(data: dict, out: Path, ylabel: str) -> dict:
     }
     if "um_per_pair" in data:
         table["um_per_pair"] = data["um_per_pair"]
+    if "rtre_per_pair" in data:
+        table["rtre_per_pair"] = data["rtre_per_pair"]
     summary = out.with_suffix(".json")
     summary.write_text(json.dumps(table, indent=2))
     return {
@@ -316,9 +341,9 @@ def main() -> None:
         default=REPO / "eval" / "out" / "wendland_eps_tre.png",
     )
     ap.add_argument(
-        "--out-um",
+        "--out-rtre",
         type=Path,
-        default=REPO / "eval" / "out" / "wendland_eps_tre_um.png",
+        default=REPO / "eval" / "out" / "wendland_eps_tre_rtre.png",
     )
     ap.add_argument(
         "--paper-dir",
@@ -328,16 +353,16 @@ def main() -> None:
     args = ap.parse_args()
     data = load_sweep()
     px = _write(data, args.out, "TRE (L5 canvas px)")
-    data_um = to_um(data)
-    um = _write(data_um, args.out_um, "TRE (µm)")
-    paper = plot_paper_panels(data_um, args.paper_dir, r"TRE ($\mathrm{\mu}$m)")
+    data_rtre = to_rtre(data)
+    rtre = _write(data_rtre, args.out_rtre, "rTRE")
+    paper = plot_paper_panels(data_rtre, args.paper_dir, "rTRE")
     print(
         json.dumps(
             {
                 "px": px,
-                "um": um,
+                "rtre": rtre,
                 "paper": paper,
-                "series_um": {
+                "series_rtre": {
                     lam: [
                         {
                             "eps": r["eps"],
@@ -346,7 +371,7 @@ def main() -> None:
                         }
                         for r in rows
                     ]
-                    for lam, rows in data_um["series"].items()
+                    for lam, rows in data_rtre["series"].items()
                 },
             },
             indent=2,

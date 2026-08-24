@@ -1,0 +1,363 @@
+{
+  "unit": "rTRE",
+  "canvas": [
+    16384,
+    11008
+  ],
+  "diagonal": 19738.579482830064,
+  "level": 5,
+  "tile": [
+    512,
+    344
+  ],
+  "pairs": [
+    0,
+    1,
+    2,
+    84,
+    85,
+    89,
+    90,
+    102,
+    103,
+    107,
+    108,
+    109,
+    137,
+    138,
+    139,
+    177,
+    178,
+    179,
+    215,
+    217
+  ],
+  "series": {
+    "fft": [
+      {
+        "eps": 0.1,
+        "batch_id": "anhir-wen20-e01",
+        "n": 20,
+        "mean_of_medians": 0.03411183676245803,
+        "mean_of_means": 0.035374814504687185,
+        "mean_of_p95": 0.05663168860850239
+      },
+      {
+        "eps": 0.2,
+        "batch_id": "anhir-wen20-e02",
+        "n": 20,
+        "mean_of_medians": 0.03379616170335856,
+        "mean_of_means": 0.03658864679285157,
+        "mean_of_p95": 0.06048395541071645
+      },
+      {
+        "eps": 0.3,
+        "batch_id": "anhir-wen20-e03",
+        "n": 20,
+        "mean_of_medians": 0.03800483157390421,
+        "mean_of_means": 0.04049599977397033,
+        "mean_of_p95": 0.06959806766166471
+      },
+      {
+        "eps": 0.4,
+        "batch_id": "anhir-wen20-e04",
+        "n": 20,
+        "mean_of_medians": 0.035967089497811314,
+        "mean_of_means": 0.03901895811245634,
+        "mean_of_p95": 0.06999497282043783
+      },
+      {
+        "eps": 0.5,
+        "batch_id": "anhir-wen20-e05",
+        "n": 20,
+        "mean_of_medians": 0.03776966592751217,
+        "mean_of_means": 0.04054295822821323,
+        "mean_of_p95": 0.07593377771201179
+      }
+    ],
+    "superpoint_glue": [
+      {
+        "eps": 0.1,
+        "batch_id": "anhir-wen20-e01",
+        "n": 20,
+        "mean_of_medians": 0.00538958616149699,
+        "mean_of_means": 0.007075706882125709,
+        "mean_of_p95": 0.018807163420024843
+      },
+      {
+        "eps": 0.2,
+        "batch_id": "anhir-wen20-e02",
+        "n": 20,
+        "mean_of_medians": 0.0050746048902986325,
+        "mean_of_means": 0.007484766991887227,
+        "mean_of_p95": 0.02169337334843176
+      },
+      {
+        "eps": 0.3,
+        "batch_id": "anhir-wen20-e03",
+        "n": 20,
+        "mean_of_medians": 0.004663613619960882,
+        "mean_of_means": 0.007263328959091354,
+        "mean_of_p95": 0.024116151652082682
+      },
+      {
+        "eps": 0.4,
+        "batch_id": "anhir-wen20-e04",
+        "n": 20,
+        "mean_of_medians": 0.005046500199663113,
+        "mean_of_means": 0.008178256513074467,
+        "mean_of_p95": 0.02827049212110334
+      },
+      {
+        "eps": 0.5,
+        "batch_id": "anhir-wen20-e05",
+        "n": 20,
+        "mean_of_medians": 0.005243639313364626,
+        "mean_of_means": 0.008624546255350658,
+        "mean_of_p95": 0.02615279114627666
+      }
+    ]
+  },
+  "rtre_per_pair": {
+    "0": {
+      "src_w": 10496,
+      "src_h": 13812,
+      "fit_scale": 0.7969881262670142,
+      "downsample": 1.0,
+      "diag_medium": 17347.54622417822,
+      "rtre_factor": 7.232860607458855e-05,
+      "case": "COAD_01",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "csv_diagonal": 17347.5
+    },
+    "1": {
+      "src_w": 10496,
+      "src_h": 13812,
+      "fit_scale": 0.7969881262670142,
+      "downsample": 1.0,
+      "diag_medium": 17347.54622417822,
+      "rtre_factor": 7.232860607458855e-05,
+      "case": "COAD_01",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "csv_diagonal": 17347.5
+    },
+    "2": {
+      "src_w": 10496,
+      "src_h": 13812,
+      "fit_scale": 0.7969881262670142,
+      "downsample": 1.0,
+      "diag_medium": 17347.54622417822,
+      "rtre_factor": 7.232860607458855e-05,
+      "case": "COAD_01",
+      "tissue": "COAD",
+      "scale": "scale-25pc",
+      "csv_diagonal": 17347.5
+    },
+    "84": {
+      "src_w": 13518,
+      "src_h": 14358,
+      "fit_scale": 0.7666805961833124,
+      "downsample": 1.0,
+      "diag_medium": 19720.255779274263,
+      "rtre_factor": 6.61413392658834e-05,
+      "case": "breast_1",
+      "tissue": "breast",
+      "scale": "scale-20pc",
+      "csv_diagonal": 19720.3
+    },
+    "85": {
+      "src_w": 12376,
+      "src_h": 11735,
+      "fit_scale": 0.938048572645931,
+      "downsample": 1.0,
+      "diag_medium": 17055.075520208055,
+      "rtre_factor": 6.250590193188263e-05,
+      "case": "breast_2",
+      "tissue": "breast",
+      "scale": "scale-20pc",
+      "csv_diagonal": 17055.1
+    },
+    "89": {
+      "src_w": 7171,
+      "src_h": 9916,
+      "fit_scale": 1.1101250504235578,
+      "downsample": 1.0,
+      "diag_medium": 12237.25038560542,
+      "rtre_factor": 7.361125990069259e-05,
+      "case": "gastric_1",
+      "tissue": "gastric",
+      "scale": "scale-15pc",
+      "csv_diagonal": 12237.3
+    },
+    "90": {
+      "src_w": 9860,
+      "src_h": 10961,
+      "fit_scale": 1.0042879299334002,
+      "downsample": 1.0,
+      "diag_medium": 14743.239840686307,
+      "rtre_factor": 6.753809804810344e-05,
+      "case": "gastric_2",
+      "tissue": "gastric",
+      "scale": "scale-15pc",
+      "csv_diagonal": 14743.2
+    },
+    "102": {
+      "src_w": 6902,
+      "src_h": 14283,
+      "fit_scale": 0.7707064342225023,
+      "downsample": 1.0,
+      "diag_medium": 15863.2182422105,
+      "rtre_factor": 8.179367397910714e-05,
+      "case": "kidney_1",
+      "tissue": "kidney",
+      "scale": "scale-25pc",
+      "csv_diagonal": 15863.2
+    },
+    "103": {
+      "src_w": 5950,
+      "src_h": 12766,
+      "fit_scale": 0.8622904590318032,
+      "downsample": 1.0,
+      "diag_medium": 14084.504109126456,
+      "rtre_factor": 8.233886162397858e-05,
+      "case": "kidney_2",
+      "tissue": "kidney",
+      "scale": "scale-25pc",
+      "csv_diagonal": 14084.5
+    },
+    "107": {
+      "src_w": 6930,
+      "src_h": 4369,
+      "fit_scale": 2.364213564213564,
+      "downsample": 1.0,
+      "diag_medium": 8192.256160545763,
+      "rtre_factor": 5.163090905891811e-05,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion",
+      "scale": "scale-25pc",
+      "csv_diagonal": 8192.3
+    },
+    "108": {
+      "src_w": 6930,
+      "src_h": 4369,
+      "fit_scale": 2.364213564213564,
+      "downsample": 1.0,
+      "diag_medium": 8192.256160545763,
+      "rtre_factor": 5.163090905891811e-05,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion",
+      "scale": "scale-25pc",
+      "csv_diagonal": 8192.3
+    },
+    "109": {
+      "src_w": 6930,
+      "src_h": 4369,
+      "fit_scale": 2.364213564213564,
+      "downsample": 1.0,
+      "diag_medium": 8192.256160545763,
+      "rtre_factor": 5.163090905891811e-05,
+      "case": "lung-lesion_2",
+      "tissue": "lung-lesion",
+      "scale": "scale-25pc",
+      "csv_diagonal": 8192.3
+    },
+    "137": {
+      "src_w": 6842,
+      "src_h": 11692,
+      "fit_scale": 0.9414984604858022,
+      "downsample": 1.0,
+      "diag_medium": 13546.801393686997,
+      "rtre_factor": 7.840497524396774e-05,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes",
+      "scale": "scale-100pc",
+      "csv_diagonal": 13546.8
+    },
+    "138": {
+      "src_w": 6842,
+      "src_h": 11692,
+      "fit_scale": 0.9414984604858022,
+      "downsample": 1.0,
+      "diag_medium": 13546.801393686997,
+      "rtre_factor": 7.840497524396774e-05,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes",
+      "scale": "scale-100pc",
+      "csv_diagonal": 13546.8
+    },
+    "139": {
+      "src_w": 6842,
+      "src_h": 11692,
+      "fit_scale": 0.9414984604858022,
+      "downsample": 1.0,
+      "diag_medium": 13546.801393686997,
+      "rtre_factor": 7.840497524396774e-05,
+      "case": "lung-lobes_1",
+      "tissue": "lung-lobes",
+      "scale": "scale-100pc",
+      "csv_diagonal": 13546.8
+    },
+    "177": {
+      "src_w": 8918,
+      "src_h": 2946,
+      "fit_scale": 1.837183224938327,
+      "downsample": 1.0,
+      "diag_medium": 9391.99872231678,
+      "rtre_factor": 5.795481233873417e-05,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland",
+      "scale": "scale-25pc",
+      "csv_diagonal": 9392.0
+    },
+    "178": {
+      "src_w": 8918,
+      "src_h": 2946,
+      "fit_scale": 1.837183224938327,
+      "downsample": 1.0,
+      "diag_medium": 9391.99872231678,
+      "rtre_factor": 5.795481233873417e-05,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland",
+      "scale": "scale-25pc",
+      "csv_diagonal": 9392.0
+    },
+    "179": {
+      "src_w": 8918,
+      "src_h": 2946,
+      "fit_scale": 1.837183224938327,
+      "downsample": 1.0,
+      "diag_medium": 9391.99872231678,
+      "rtre_factor": 5.795481233873417e-05,
+      "case": "mammary-gland_1",
+      "tissue": "mammary-gland",
+      "scale": "scale-25pc",
+      "csv_diagonal": 9392.0
+    },
+    "215": {
+      "src_w": 9216,
+      "src_h": 7552,
+      "fit_scale": 1.4576271186440677,
+      "downsample": 1.0,
+      "diag_medium": 11915.005665126642,
+      "rtre_factor": 5.7578362185412795e-05,
+      "case": "mice-kidney_1",
+      "tissue": "mice-kidney",
+      "scale": "scale-25pc",
+      "csv_diagonal": 11915.0
+    },
+    "217": {
+      "src_w": 9216,
+      "src_h": 7552,
+      "fit_scale": 1.4576271186440677,
+      "downsample": 1.0,
+      "diag_medium": 11915.005665126642,
+      "rtre_factor": 5.7578362185412795e-05,
+      "case": "mice-kidney_1",
+      "tissue": "mice-kidney",
+      "scale": "scale-25pc",
+      "csv_diagonal": 11915.0
+    }
+  }
+}
